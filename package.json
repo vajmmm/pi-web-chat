@@ -32,7 +32,8 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n server,web \"npm:dev:server\" \"npm:dev:web\"",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "tsx server/index.ts",
+    "dev:watch": "concurrently -k -n server,web \"tsx watch server/index.ts\" \"npm:dev:web\"",
     "dev:web": "wait-on -t 30s tcp:3141 && vite",
     "build": "node scripts/build.mjs",
     "build:web": "vite build",

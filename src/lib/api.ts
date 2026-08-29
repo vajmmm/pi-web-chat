@@ -15,6 +15,7 @@ import type {
   UISessionFileResponse,
   UISessionInfo,
   UISkillsResponse,
+  UISubscriptionModelsResponse,
   UIToolItem,
 } from "../../shared/protocol";
 
@@ -281,5 +282,21 @@ export function useLLMTurns(
     staleTime: 0,
     refetchInterval,
   });
+}
+
+export const SUBSCRIPTION_MODELS_QUERY_KEY = ["subscription-models"] as const;
+
+export function useSubscriptionModels(enabled = true) {
+  return useQuery({
+    queryKey: SUBSCRIPTION_MODELS_QUERY_KEY,
+    queryFn: () => fetchJson<UISubscriptionModelsResponse>("/api/subscription-models"),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useInvalidateSubscriptionModels() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: SUBSCRIPTION_MODELS_QUERY_KEY });
 }
 

@@ -35,6 +35,7 @@ import type {
   UITokenUsageStats,
   UIToolItem,
   UIToolSchema,
+  UISubscriptionModelsResponse,
 } from "../shared/protocol.ts";
 import { createCoordinatorExtension } from "./coordinator-tools.ts";
 import { performSessionCompaction } from "./compact.ts";
@@ -1154,6 +1155,40 @@ const httpServer = createServer(async (req, res) => {
           })),
         ),
       );
+      return;
+    }
+
+    if (url.pathname === "/api/subscription-models") {
+      const SUBSCRIPTION_PROVIDERS = [
+        { id: "openai-codex", name: "OpenAI Codex", envKey: "OPENAI_API_KEY" },
+        { id: "xai", name: "xAI Grok", envKey: "XAI_API_KEY" },
+        { id: "opencode", name: "OpenCode", envKey: "OPENCODE_API_KEY" },
+        { id: "opencode-go", name: "OpenCode Go", envKey: "OPENCODE_API_KEY" },
+      ];
+
+      const providers = SUBSCRIPTION_PROVIDERS
+        .map((p) => {
+          const authStatus = modelRuntime.getProviderAuthStatus(p.id);
+          const provider = modelRuntime.getProvider(p.id);
+          const models = provider?.getModels() ?? [];
+          return {
+            id: p.id,
+            name: p.name,
+            envKey: p.envKey,
+            configured: authStatus.configured,
+            authSource: authStatus.source,
+            models: models.map((m) => ({
+              id: m.id,
+              name: m.name,
+              reasoning: m.reasoning,
+            })),
+          };
+        })
+        .filter((p) => p.configured);
+
+      const response: UISubscriptionModelsResponse = { providers };
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(response));
       return;
     }
 

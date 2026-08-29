@@ -1,8 +1,15 @@
 import { Dialog } from "@base-ui-components/react/dialog";
 import { useEffect, useState } from "react";
 import type { UICustomApi, UICustomModel, UICustomProvider } from "../../shared/protocol";
-import { saveCustomModels, useCustomModels, useInvalidateModels } from "../lib/api";
+import {
+  saveCustomModels,
+  useCustomModels,
+  useInvalidateModels,
+  useInvalidateSubscriptionModels,
+  useSubscriptionModels,
+} from "../lib/api";
 import { useT } from "../lib/i18n";
+import type { UISubscriptionProvider } from "../../shared/protocol";
 
 const APIS: UICustomApi[] = [
   "openai-completions",
@@ -227,6 +234,129 @@ function ProviderCard({
   );
 }
 
+function SubscriptionModelsSection() {
+  const { data, isLoading, isRefetching, refetch } = useSubscriptionModels();
+  const invalidate = useInvalidateSubscriptionModels();
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleRefresh = () => {
+    invalidate();
+    void refetch();
+  };
+
+  const providers = data?.providers ?? [];
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[11px] font-bold uppercase tracking-wide text-muted">
+          订阅制模型
+        </h3>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefetching}
+          className="rounded-lg px-2 py-0.5 text-[11px] text-accent hover:bg-hover disabled:opacity-40"
+        >
+          {isRefetching ? "刷新中…" : "刷新状态"}
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="py-3 text-center font-mono text-xs text-faint">加载中…</div>
+      )}
+
+      {!isLoading && providers.length === 0 && (
+        <div className="py-3 text-center font-mono text-xs text-faint">
+          暂无订阅制模型提供方
+        </div>
+      )}
+
+      {providers.map((provider) => (
+        <SubscriptionProviderCard
+          key={provider.id}
+          provider={provider}
+          expanded={expanded.has(provider.id)}
+          onToggle={() => toggle(provider.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SubscriptionProviderCard({
+  provider,
+  expanded,
+  onToggle,
+}: {
+  provider: UISubscriptionProvider;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-canvas/40 p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] font-semibold text-ink">{provider.name}</span>
+        <span
+          className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+            provider.configured
+              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+              : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+          }`}
+        >
+          {provider.configured ? "已配置" : "未配置"}
+        </span>
+        <span className="ml-auto font-mono text-[10px] text-faint">{provider.envKey}</span>
+      </div>
+
+      {provider.models.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex items-center gap-1 text-[11px] text-muted hover:text-ink"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className={`size-3.5 fill-none stroke-current stroke-2 transition-transform ${
+                expanded ? "rotate-90" : ""
+              }`}
+            >
+              <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            可用模型 ({provider.models.length})
+          </button>
+          {expanded && (
+            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+              {provider.models.map((model) => (
+                <li
+                  key={model.id}
+                  className="rounded-md border border-line bg-card px-2 py-0.5 font-mono text-[11px] text-ink shadow-[var(--pixel-shadow-sm)]"
+                  title={model.name ?? model.id}
+                >
+                  {model.name ?? model.id}
+                  {model.reasoning && (
+                    <span className="ml-1 text-[9px] text-faint">推理</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ModelsDialog({
   open,
   onOpenChange,
@@ -325,6 +455,10 @@ export function ModelsDialog({
             >
               + {t("addProvider")}
             </button>
+
+            <div className="border-t-2 border-line pt-3">
+              <SubscriptionModelsSection />
+            </div>
           </div>
 
           <div className="flex items-center gap-2 border-t-2 border-line px-4 py-3">

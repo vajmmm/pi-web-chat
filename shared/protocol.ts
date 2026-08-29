@@ -490,6 +490,23 @@ export interface UILLMTurnsResponse {
   turns: UILLMTurnRecord[];
 }
 
+export interface UISubscriptionProvider {
+  id: string;
+  name: string;
+  envKey: string;
+  configured: boolean;
+  authSource?: string;
+  models: Array<{
+    id: string;
+    name?: string;
+    reasoning?: boolean;
+  }>;
+}
+
+export interface UISubscriptionModelsResponse {
+  providers: UISubscriptionProvider[];
+}
+
 export type ServerEvent =
   | { type: "snapshot"; snapshot: UISnapshot }
   | { type: "session_bound"; sessionId: string }
