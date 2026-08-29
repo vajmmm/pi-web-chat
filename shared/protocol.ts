@@ -1,5 +1,3 @@
-/** 서버 <-> 클라이언트 공용 프로토콜 타입 */
-
 export type UIContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
@@ -8,15 +6,23 @@ export type UIContentBlock =
       id: string;
       name: string;
       args: unknown;
-      /** 페어링된 tool result (있으면) */
       result?: { text: string; isError: boolean };
     }
   | { type: "image"; dataUrl?: string };
+
+export interface UIMessageUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  totalTokens?: number;
+}
 
 export interface UIMessage {
   role: "user" | "assistant" | "custom";
   content: UIContentBlock[];
   errorMessage?: string;
+  usage?: UIMessageUsage;
 }
 
 export interface UIModel {
@@ -28,26 +34,276 @@ export interface UIModel {
 
 export type UIThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
+export type AgentRole =
+  | "default"
+  | "coordinator"
+  | "fullstack"
+  | "junior_fe"
+  | "junior_be"
+  | "reviewer"
+  | "tester"
+  | "deployer"
+  | (string & {});
+
+export interface RoleDefinition {
+  id: AgentRole;
+  name: string;
+  description: string;
+  responsibilities: string[];
+  strictProhibitions: string[];
+  /** 角色专属工作方法、流程与判断原则 */
+  instructions?: string;
+  allowedSkills?: string[];
+  permissionProfileId: string;
+  defaultModel?: {
+    provider?: string;
+    modelId: string;
+    thinkingLevel?: UIThinkingLevel;
+  };
+  isLegacy?: boolean;
+  legacySystemPrompt?: string;
+  legacyAllowedTools?: string[];
+}
+
+export interface RoleConfig {
+  id: AgentRole;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  model?: {
+    provider?: string;
+    modelId: string;
+    thinkingLevel?: UIThinkingLevel;
+  };
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  allowedSkills?: string[];
+  requiresWorktree: boolean;
+  /** V2 架构下的结构化角色定义 (若存在) */
+  definition?: RoleDefinition;
+}
+
+export type DeliverableType =
+  | "summary"
+  | "changed_files"
+  | "test_report"
+  | "review_verdict"
+  | "deploy_evidence";
+
+export interface TaskScope {
+  include?: string[];
+  exclude?: string[];
+}
+
+export interface TaskContract {
+  taskId: string;
+  parentSessionId: string;
+  role: string;
+  goal: string;
+  scope?: TaskScope;
+  contextFiles?: string[];
+  constraints?: string[];
+  acceptanceCriteria: string[];
+  expectedDeliverables: DeliverableType[];
+  dependencies?: string[];
+  meta?: Record<string, unknown>;
+}
+
+export type TaskExecutionStatus =
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "rejected"
+  | "cancelled";
+
+export type VerificationStatus = "passed" | "failed" | "blocked" | "not_run";
+
+export interface VerificationEvidence {
+  kind: "test" | "build" | "typecheck" | "lint" | "command" | "manual";
+  command?: string;
+  status: VerificationStatus;
+  exitCode?: number;
+  summary?: string;
+}
+
+export interface ReviewIssue {
+  severity: "blocker" | "high" | "medium" | "low";
+  file?: string;
+  line?: number;
+  description: string;
+  suggestion?: string;
+}
+
+export interface ReviewVerdictReport {
+  verdict: "APPROVE" | "REQUEST_CHANGES";
+  summary?: string;
+  issues?: ReviewIssue[];
+}
+
+export interface DeployEvidenceReport {
+  targetHost?: string;
+  releaseVersion?: string;
+  healthCheckPassed: boolean;
+  verifyLogSnippet?: string;
+}
+
+export interface TaskResult {
+  taskId: string;
+  role: string;
+  status: TaskExecutionStatus;
+  summary: string;
+  changedFiles?: string[];
+  commit?: string;
+  verification?: VerificationEvidence[];
+  reviewReport?: ReviewVerdictReport;
+  deployEvidence?: DeployEvidenceReport;
+  unresolvedItems?: string[];
+  completedAt: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface UISkillItem {
+  name: string;
+  description: string;
+  path: string;
+  scope: "project" | "user";
+}
+
+export interface UISkillsResponse {
+  skills: UISkillItem[];
+}
+
+export interface UIRolesResponse {
+  roles: RoleConfig[];
+  path: string;
+}
+
+export interface UIToolItem {
+  name: string;
+  label?: string;
+  description: string;
+  category?: "core" | "subagents" | "custom";
+}
+
+export interface UISubagentTask {
+  taskId: string;
+  parentSessionId: string;
+  role: AgentRole;
+  taskTitle: string;
+  taskPrompt: string;
+  branchName?: string;
+  worktreePath?: string;
+  targetCwd?: string;
+  status:
+    | "running"
+    | "completed"
+    | "failed"
+    | "aborted"
+    | "interrupted"
+    | "blocked"
+    | "rejected"
+    | "cancelled";
+  createdAt: string;
+  completedAt?: string;
+  summary?: string;
+  changedFiles?: string[];
+  testStatus?: "pass" | "fail" | "none";
+  logs?: string[];
+  error?: string;
+  /** Subagent 的完整对话会话与工具调用流 */
+  messages?: UIMessage[];
+  /** Subagent 实际使用的模型 */
+  model?: { provider: string; id: string; name?: string };
+  /** 结构化任务契约 */
+  taskContract?: TaskContract;
+  /** 结构化交付结果 */
+  taskResult?: TaskResult;
+}
+
+export interface UITokenUsageByRole {
+  role: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+}
+
+export interface UITokenUsageStats {
+  /** Cumulative input tokens for this parent session (all turns). */
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  /** Cumulative parent-session tokens (input+output, excluding cache read unless counted in total). */
+  totalTokens: number;
+  totalCost?: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  latestTurnTokens?: number;
+  /** Current context window occupancy (last turn input + cache read). */
+  contextTokens?: number;
+  contextWindow?: number;
+  contextPercent?: number;
+  /** Sum of all subagent run tokens for this parent session. */
+  subagentTokens?: number;
+  /** Parent + subagent cumulative tokens. */
+  runTokens?: number;
+  byRole?: UITokenUsageByRole[];
+}
+
 export interface UISnapshot {
   messages: UIMessage[];
   isStreaming: boolean;
+  isCompacting?: boolean;
   model: UIModel | null;
   thinkingLevel: UIThinkingLevel;
-  /** 현재 모델이 지원하는 thinking level 목록 */
   thinkingLevels: UIThinkingLevel[];
   sessionFile?: string;
-  /** URL(/s/:id)에 쓰는 세션 식별자 */
   sessionId?: string;
+  /** 当前工作目录 */
+  cwd?: string;
+  /** 当前工作目录简短名称 (如项目文件夹名) */
+  cwdName?: string;
+  /** 当前工作目录是否在 Git 仓库内 */
+  isGitRepo?: boolean;
+  /** 当前 Git 分支 (如果在仓库内) */
+  gitBranch?: string;
+  activeRole?: AgentRole;
+  /** 当前主会话派发的子智能体列表 */
+  subagents?: UISubagentTask[];
+  /** 会话 Token 用量与上下文窗口统计 */
+  tokenUsage?: UITokenUsageStats;
 }
 
 export interface UISessionInfo {
-  /** URL(/s/:id)에 쓰는 세션 식별자 */
   id: string;
   path: string;
   name?: string;
   firstMessage: string;
   modified: string;
+  relativeTime?: string;
   messageCount: number;
+  cwd?: string;
+}
+
+export interface UIProjectFolder {
+  path: string;
+  name: string;
+  displayPath: string;
+  branch?: string;
+  isMain?: boolean;
+  sessions: UISessionInfo[];
+}
+
+export interface UIProjectItem {
+  id: string;
+  name: string;
+  cwd: string;
+  projectRoot: string;
+  displayPath: string;
+  isGitRepo?: boolean;
+  gitBranch?: string;
+  lastModified: string;
+  folders: UIProjectFolder[];
+  sessions: UISessionInfo[];
 }
 
 export interface UIForkPoint {
@@ -56,37 +312,27 @@ export interface UIForkPoint {
 }
 
 export interface UIExtensionInfo {
-  /** 표시용 이름 (파일명 또는 패키지 내 경로) */
   name: string;
-  /** 패키지 확장이면 패키지명 (예: "pi-subagents") */
   packageName?: string;
-  /** 홈디렉토리를 ~ 로 축약한 경로 */
   path: string;
   scope: "user" | "project" | "temporary";
-  /** 등록된 커스텀 툴 이름 */
   tools: string[];
-  /** 등록된 슬래시 커맨드 */
   commands: string[];
-  /** 등록된 플래그 */
   flags: string[];
-  /** 핸들러가 등록된 이벤트 이름 */
   events: string[];
 }
 
 export interface UIExtensionsResponse {
   extensions: UIExtensionInfo[];
-  /** 로드에 실패한 확장 */
   errors: { path: string; error: string }[];
 }
 
-/** ~/.pi/agent/models.json 의 커스텀 모델 (편집 가능한 필드만 노출) */
 export interface UICustomModel {
   id: string;
   name?: string;
   reasoning?: boolean;
   contextWindow?: number;
   maxTokens?: number;
-  /** 입력 모달리티 (기본 ["text"]) */
   input?: ("text" | "image")[];
 }
 
@@ -97,45 +343,167 @@ export type UICustomApi =
   | "google-generative-ai";
 
 export interface UICustomProvider {
-  /** models.json 의 providers 키 (예: "ollama") */
   key: string;
   baseUrl: string;
   api: UICustomApi;
-  /** 값 또는 "$ENV_VAR" 형식 */
   apiKey?: string;
   models: UICustomModel[];
 }
 
 export interface UICustomModelsResponse {
-  /** ~ 로 축약한 models.json 경로 */
   path: string;
   providers: UICustomProvider[];
-  /** 파싱 실패 시 메시지 (이 경우 편집 저장은 위험하므로 UI에서 경고) */
   parseError?: string;
-  /** 저장 후 재시작 없이 반영되지 않은 경우의 안내 */
   warning?: string;
 }
 
 export interface UIImageAttachment {
-  /** base64 (data URL 아님) */
   data: string;
   mimeType: string;
 }
 
+export interface UICwdValidateResponse {
+  ok: boolean;
+  path: string;
+  displayPath: string;
+  name: string;
+  isGitRepo: boolean;
+  gitBranch?: string;
+  error?: string;
+}
+
+export interface UIPickDirectoryResponse {
+  ok: boolean;
+  path?: string;
+  canceled?: boolean;
+  error?: string;
+  fallback?: boolean;
+}
+
+export interface UIFsItem {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  isGitRepo?: boolean;
+}
+
+export interface UIFsListResponse {
+  ok: boolean;
+  currentPath: string;
+  parentPath: string | null;
+  homePath: string;
+  items: UIFsItem[];
+  error?: string;
+}
+
+export interface UIToolSchema {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  promptGuidelines?: string[];
+}
+
+export interface UIPromptInspection {
+  systemPrompt: string;
+  rolePrompt?: string;
+  workspacePrompt?: string;
+  activeRole: AgentRole;
+  cwd: string;
+  cwdName: string;
+  gitBranch?: string;
+  model: UIModel | null;
+  thinkingLevel: UIThinkingLevel;
+  messages: UIMessage[];
+  rawMessagesCount: number;
+  tools: UIToolSchema[];
+  estimatedTokens?: {
+    systemPrompt: number;
+    messages: number;
+    tools: number;
+    total: number;
+  };
+  subagentRoles?: Array<{
+    id: AgentRole;
+    name: string;
+    description: string;
+    systemPrompt: string;
+    model?: {
+      provider?: string;
+      modelId: string;
+      thinkingLevel?: UIThinkingLevel;
+    };
+  }>;
+}
+
+export interface UISessionFileLine {
+  lineNumber: number;
+  type: string;
+  raw: string;
+  parsed?: Record<string, unknown>;
+}
+
+export interface UISessionFileResponse {
+  sessionId: string;
+  sessionFile: string;
+  exists: boolean;
+  size: number;
+  modified: string;
+  relativeTime?: string;
+  lineCount: number;
+  lines: UISessionFileLine[];
+  rawContent: string;
+}
+
+export interface UILLMToolDefinition {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface UILLMTurnRecord {
+  turnIndex: number;
+  timestamp: number;
+  timeStr: string;
+  model: {
+    provider: string;
+    id: string;
+    name?: string;
+  };
+  thinkingLevel?: string;
+  systemPrompt: string | Record<string, unknown>;
+  messages: unknown[];
+  tools: UILLMToolDefinition[];
+  vendorPayload?: Record<string, unknown>;
+  tokenEstimate?: {
+    systemPromptTokens: number;
+    messagesTokens: number;
+    toolsTokens: number;
+    totalTokens: number;
+  };
+}
+
+export interface UILLMTurnsResponse {
+  sessionId: string;
+  sessionFile?: string;
+  totalTurns: number;
+  turns: UILLMTurnRecord[];
+}
+
 export type ServerEvent =
   | { type: "snapshot"; snapshot: UISnapshot }
-  /**
-   * 이 연결이 URL에 공개된 세션.
-   * 기존 /s/:id 접속 시 즉시, `/` 초안은 첫 prompt 때 전송 → 클라이언트는 /s/:id 로 교체.
-   * 포크 등으로 id가 바뀌면 다시 전송.
-   */
   | { type: "session_bound"; sessionId: string }
   | { type: "delta"; kind: "text" | "thinking"; delta: string }
   | { type: "tool_start"; toolCallId: string; toolName: string }
   | { type: "tool_end"; toolCallId: string; toolName: string; isError: boolean }
   | { type: "agent_start" }
   | { type: "agent_end" }
+  | { type: "compaction_start" }
+  | { type: "compaction_end" }
   | { type: "forked"; selectedText?: string }
+  | { type: "subagent_spawned"; task: UISubagentTask }
+  | { type: "subagent_updated"; task: UISubagentTask }
+  | { type: "subagent_reported"; task: UISubagentTask; reportText: string }
   | { type: "error"; message: string };
 
 export type ClientCommand =
@@ -143,4 +511,10 @@ export type ClientCommand =
   | { type: "abort" }
   | { type: "set_model"; provider: string; id: string }
   | { type: "set_thinking_level"; level: UIThinkingLevel }
-  | { type: "fork"; entryId: string };
+  | { type: "set_session_role"; role: AgentRole }
+  | { type: "set_session_cwd"; cwd: string }
+  | { type: "abort_subagent"; taskId: string }
+  | { type: "fork"; entryId: string }
+  | { type: "compact"; customInstructions?: string }
+  | { type: "delete_subagent_task"; taskId: string }
+  | { type: "clear_subagent_tasks" };

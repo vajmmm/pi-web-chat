@@ -2,8 +2,6 @@
 
 Web UI for the [pi](https://pi.dev) coding agent (OpenWebUI-style, mobile-friendly).
 
-[한국어](./README.ko.md)
-
 ## Install & run
 
 Intended flow:

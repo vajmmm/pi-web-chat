@@ -18,14 +18,12 @@ const rootRoute = createRootRoute({
   component: () => <Outlet />,
 });
 
-/** 새 대화 초안 — 첫 메시지 전송 시 서버 session_bound 로 /s/$sessionId 교체 */
 const chatRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: ChatPage,
 });
 
-/** 세션별 딥링크 */
 const sessionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/s/$sessionId",

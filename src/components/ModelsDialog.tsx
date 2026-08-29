@@ -12,7 +12,7 @@ const APIS: UICustomApi[] = [
 ];
 
 const inputClass =
-  "w-full rounded-lg border border-line bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-faint";
+  "w-full border-2 border-line bg-canvas px-2.5 py-1.5 font-mono text-xs text-ink outline-none placeholder:text-faint focus:border-accent";
 
 function Field({
   label,
@@ -227,7 +227,6 @@ function ProviderCard({
   );
 }
 
-/** ~/.pi/agent/models.json 커스텀 프로바이더/모델 관리 */
 export function ModelsDialog({
   open,
   onOpenChange,
@@ -242,7 +241,6 @@ export function ModelsDialog({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
 
-  // 서버 데이터 → 편집 초안 (다이얼로그 열릴 때 1회)
   useEffect(() => {
     if (open && data && draft === null) setDraft(structuredClone(data.providers));
   }, [open, data, draft]);
@@ -281,10 +279,10 @@ export function ModelsDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 bg-black/40 transition-opacity data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
-        <Dialog.Popup className="fixed top-1/2 left-1/2 flex max-h-[82vh] w-[94vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-line bg-card shadow-xl outline-none">
-          <div className="border-b border-line px-4 py-3">
-            <Dialog.Title className="text-sm font-semibold">{t("manageModels")}</Dialog.Title>
+        <Dialog.Backdrop className="fixed inset-0 bg-black/50 transition-opacity data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
+        <Dialog.Popup className="fixed top-1/2 left-1/2 flex max-h-[82vh] w-[94vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col border-2 border-line-bright bg-card font-mono shadow-[var(--pixel-shadow)] outline-none">
+          <div className="border-b-2 border-line px-4 py-3">
+            <Dialog.Title className="text-sm font-bold text-ink">{t("manageModels")}</Dialog.Title>
             <Dialog.Description className="mt-0.5 font-mono text-xs text-faint">
               {t("customModelsDescription", { path: data?.path ?? "models.json" })}
             </Dialog.Description>
@@ -292,7 +290,7 @@ export function ModelsDialog({
 
           <div className="thin-scroll flex flex-1 flex-col gap-3 overflow-y-auto p-4">
             {data?.parseError && (
-              <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+              <div className="border-2 border-red-300 bg-red-50 px-3 py-2 font-mono text-xs text-red-600 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
                 models.json parse error: {data.parseError}
               </div>
             )}
@@ -307,7 +305,7 @@ export function ModelsDialog({
               />
             ))}
             {draft && draft.length === 0 && (
-              <div className="py-6 text-center text-sm text-faint">{t("noCustomProviders")}</div>
+              <div className="py-6 text-center font-mono text-xs text-faint">{t("noCustomProviders")}</div>
             )}
             <button
               type="button"
@@ -323,13 +321,13 @@ export function ModelsDialog({
                   },
                 ])
               }
-              className="self-start rounded-lg border border-line px-3 py-1.5 text-[13px] font-medium text-accent hover:bg-hover"
+              className="self-start border-2 border-line-bright bg-card px-3 py-1.5 font-mono text-xs font-bold text-accent shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent hover:bg-hover"
             >
               + {t("addProvider")}
             </button>
           </div>
 
-          <div className="flex items-center gap-2 border-t border-line px-4 py-3">
+          <div className="flex items-center gap-2 border-t-2 border-line px-4 py-3">
             <div className="min-w-0 flex-1 truncate text-xs">
               {error ? (
                 <span className="text-red-500 dark:text-red-400">{error}</span>
@@ -340,7 +338,7 @@ export function ModelsDialog({
             <button
               type="button"
               onClick={close}
-              className="rounded-lg px-3 py-1.5 text-[13px] text-muted hover:bg-hover hover:text-ink"
+              className="border-2 border-transparent px-3 py-1.5 font-mono text-xs text-muted hover:border-line hover:bg-hover hover:text-ink"
             >
               {t("cancel")}
             </button>
@@ -348,7 +346,7 @@ export function ModelsDialog({
               type="button"
               onClick={() => void save()}
               disabled={status === "saving" || draft === null}
-              className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="border-2 border-accent bg-accent px-3.5 py-1.5 font-mono text-xs font-bold text-accent-ink shadow-[2px_2px_0_rgba(119,68,180,0.3)] transition-all hover:translate-x-[1px] hover:translate-y-[1px] disabled:opacity-40 disabled:hover:translate-x-0 disabled:hover:translate-y-0"
             >
               {status === "saving" ? t("saving") : t("save")}
             </button>

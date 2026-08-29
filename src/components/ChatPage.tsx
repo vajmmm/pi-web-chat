@@ -1,15 +1,20 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { chatClient, useChat } from "../lib/chat";
 import { requestOpenSessionsDrawer } from "../lib/drawer";
 import { useT } from "../lib/i18n";
 import { useSidebarPinned } from "../lib/sidebar";
 import { useLeftEdgeSwipe } from "../lib/useEdgeSwipe";
 import { Composer } from "./Composer";
+import { CwdSelector } from "./CwdSelector";
+import { LLMTurnsModal } from "./LLMTurnsModal";
 import { MessageList } from "./MessageList";
 import { ModelMenu } from "./ModelMenu";
+import { PromptInspectorModal } from "./PromptInspectorModal";
+import { RoleSelector } from "./RoleSelector";
 import { SessionsDrawer, SessionsSidebar } from "./SessionsDrawer";
 import { SettingsMenu } from "./SettingsMenu";
+import { SubagentDrawer } from "./SubagentDrawer";
 import { ThinkingMenu } from "./ThinkingMenu";
 
 function connectionDotClass(connection: "connecting" | "connected" | "disconnected"): string {
@@ -39,70 +44,151 @@ function connectionLabel(
 
 export function ChatPage() {
   const t = useT();
-  const { connection, sessionId, snapshot, streamText, streamThinking, activeTools } = useChat();
-  const isStreaming = snapshot?.isStreaming ?? false;
-  const sidebarPinned = useSidebarPinned();
-  const showConnectingOverlay = connection !== "connected" && !snapshot;
-  const params = useParams({ strict: false }) as { sessionId?: string };
-  const routeSessionId = params.sessionId ?? null;
+  const { sessionId: routeSessionId } = useParams({ strict: false });
   const navigate = useNavigate();
+  const {
+    connection,
+    sessionId,
+    snapshot,
+    streamText,
+    streamThinking,
+    activeTools,
+  } = useChat();
 
-  // URL → 연결 ("/"는 아직 id 없는 초안, 첫 입력 때 서버가 session_bound)
+  const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const [promptInspectorOpen, setPromptInspectorOpen] = useState(false);
+  const [llmTurnsOpen, setLlmTurnsOpen] = useState(false);
+  const isStreaming = snapshot?.isStreaming ?? false;
+  const showConnectingOverlay = connection === "disconnected";
+  const sidebarPinned = useSidebarPinned();
+  const subagents = snapshot?.subagents ?? [];
+  const runningSubagents = subagents.filter((s) => s.status === "running").length;
+
   useEffect(() => {
-    chatClient.connect(routeSessionId);
+    chatClient.connect(routeSessionId ?? null);
   }, [routeSessionId]);
 
-  // 연결 → URL (첫 메시지 / 포크 등으로 세션이 공개되면 주소 교체).
-  // 렌더 시점 값이 아닌 현재 상태를 읽어 "/"로 갔다가 즉시 되돌아오는 경합을 막는다.
   useEffect(() => {
-    const bound = chatClient.state.sessionId;
-    if (bound && bound !== routeSessionId) {
+    if (sessionId && sessionId !== routeSessionId) {
       void navigate({
         to: "/s/$sessionId",
-        params: { sessionId: bound },
-        replace: true,
+        params: { sessionId },
+        replace: routeSessionId === undefined,
       });
     }
   }, [sessionId, routeSessionId, navigate]);
 
-  // 왼쪽 가장자리 → 오른쪽 스와이프로 세션 드로어 열기 (고정 사이드바 아닐 때)
   useLeftEdgeSwipe({
     enabled: !sidebarPinned,
     onSwipeRight: requestOpenSessionsDrawer,
   });
 
-  // #root is the flex/dvh shell; fill it (no position:fixed — iOS 26 safe).
   return (
     <div className="flex h-full min-h-0 w-full flex-1 bg-sidebar">
       {sidebarPinned && <SessionsSidebar currentSessionFile={snapshot?.sessionFile} />}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas md:my-2 md:mr-2 md:rounded-2xl md:border md:border-line md:shadow-sm">
-        <header className="flex shrink-0 items-center gap-1 px-2.5 py-2 pt-[max(0.5rem,var(--safe-top))]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas md:border-l-2 md:border-line">
+        <header className="flex shrink-0 items-center gap-2 border-b-2 border-line bg-sidebar/80 px-3 py-2.5 pt-[max(0.6rem,var(--safe-top))]">
           <SessionsDrawer currentSessionFile={snapshot?.sessionFile} />
           <div className="flex min-w-0 items-center gap-2 px-1">
-            {!sidebarPinned && <span className="truncate text-sm font-medium text-ink">pi</span>}
-            <span
-              className={`size-1.5 shrink-0 rounded-full ${connectionDotClass(connection)}`}
-              title={connectionLabel(connection, t)}
-              aria-label={connectionLabel(connection, t)}
-            />
+            {!sidebarPinned && (
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 shrink-0 items-center justify-center border-2 border-accent bg-purple-dark text-sm font-black text-accent shadow-[var(--pixel-shadow-sm)]">
+                  π
+                </div>
+                <span className="hidden truncate font-mono text-xs font-black tracking-wider text-ink sm:inline">
+                  PI // CHAT
+                </span>
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 font-mono text-xs text-muted">
+              <span
+                className={`size-2 shrink-0 rounded-full ${connectionDotClass(connection)}`}
+                title={connectionLabel(connection, t)}
+                aria-label={connectionLabel(connection, t)}
+              />
+              <span className="hidden text-[11px] text-faint sm:inline">
+                {connectionLabel(connection, t)}
+              </span>
+            </div>
           </div>
           <div className="flex-1" />
-          <ThinkingMenu
-            current={snapshot?.thinkingLevel ?? "off"}
-            levels={snapshot?.thinkingLevels ?? ["off"]}
-          />
-          <ModelMenu current={snapshot?.model ?? null} />
-          <SettingsMenu />
+          <div className="flex items-center gap-1.5">
+            <CwdSelector
+              cwd={snapshot?.cwd}
+              cwdName={snapshot?.cwdName}
+              isGitRepo={snapshot?.isGitRepo}
+              gitBranch={snapshot?.gitBranch}
+              onSelectCwd={(newCwd) => {
+                chatClient.send({ type: "set_session_cwd", cwd: newCwd });
+              }}
+            />
+            <RoleSelector />
+
+            <button
+              type="button"
+              onClick={() => setLlmTurnsOpen(true)}
+              className="flex h-7.5 items-center gap-1 border-2 border-line-bright bg-card px-2 font-mono text-xs font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
+              title="实时查看与监视每次 Turn 真实发往大模型（LLM）的全量 Payload、SystemPrompt、Messages 与 Tools"
+            >
+              <span>🧠 LLM TURNS</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPromptInspectorOpen(true)}
+              className="flex h-7.5 items-center gap-1 border-2 border-line-bright bg-card px-2 font-mono text-xs font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
+              title="查看当前会话上下文估算（不等于真正发往 Provider 的最终 Request）"
+            >
+              <span>👁️ CONTEXT</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSubagentsOpen(true)}
+              className="relative flex h-7.5 items-center gap-1 border-2 border-line-bright bg-card px-2.5 font-mono text-xs font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
+              title="查看子任务协同看板"
+            >
+              <span>⚡ SUBAGENTS</span>
+              {runningSubagents > 0 ? (
+                <span className="flex size-4 items-center justify-center bg-emerald-500 text-[9px] font-black text-white">
+                  {runningSubagents}
+                </span>
+              ) : subagents.length > 0 ? (
+                <span className="flex size-4 items-center justify-center border border-line bg-canvas text-[9px] font-bold text-muted">
+                  {subagents.length}
+                </span>
+              ) : null}
+            </button>
+
+            <ThinkingMenu
+              current={snapshot?.thinkingLevel ?? "off"}
+              levels={snapshot?.thinkingLevels ?? ["off"]}
+            />
+            <ModelMenu current={snapshot?.model ?? null} />
+            <SettingsMenu />
+          </div>
         </header>
+
+        <SubagentDrawer open={subagentsOpen} onOpenChange={setSubagentsOpen} />
+        <LLMTurnsModal
+          open={llmTurnsOpen}
+          onOpenChange={setLlmTurnsOpen}
+          sessionId={sessionId}
+        />
+        <PromptInspectorModal
+          open={promptInspectorOpen}
+          onOpenChange={setPromptInspectorOpen}
+          sessionId={sessionId}
+        />
 
         {showConnectingOverlay ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
             <span
-              className={`size-2.5 rounded-full ${connectionDotClass(connection)}`}
+              className={`size-3 rounded-full ${connectionDotClass(connection)}`}
               aria-hidden
             />
-            <p className="text-sm text-muted">
+            <p className="font-mono text-xs text-muted">
               {connection === "disconnected" ? t("connectionLost") : t("connectingHint")}
             </p>
           </div>

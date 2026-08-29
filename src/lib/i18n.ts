@@ -1,85 +1,46 @@
 import { useSyncExternalStore } from "react";
-import { en, type Messages } from "../i18n/en";
-import { ja } from "../i18n/ja";
-import { ko } from "../i18n/ko";
+import type { Messages } from "../i18n/en";
 import { zh } from "../i18n/zh";
 
-export type Locale = "ko" | "en" | "ja" | "zh";
+export type Locale = "zh";
 
 export const LOCALES: { value: Locale; label: string; nativeLabel: string }[] = [
-  { value: "ko", label: "Korean", nativeLabel: "한국어" },
-  { value: "en", label: "English", nativeLabel: "English" },
-  { value: "ja", label: "Japanese", nativeLabel: "日本語" },
-  { value: "zh", label: "Chinese", nativeLabel: "中文" },
+  { value: "zh", label: "Chinese", nativeLabel: "简体中文" },
 ];
 
-const STORAGE_KEY = "pi-web-chat-locale";
-const catalogs: Record<Locale, Messages> = { ko, en, ja, zh };
-const localeSet = new Set<string>(LOCALES.map((l) => l.value));
+const catalogs: Record<Locale, Messages> = { zh };
 const listeners = new Set<() => void>();
 
-const LOCALE_TAGS: Record<Locale, string> = {
-  ko: "ko-KR",
-  en: "en-US",
-  ja: "ja-JP",
-  zh: "zh-CN",
-};
-
-function notify() {
-  for (const l of listeners) l();
-}
-
 export function isLocale(value: unknown): value is Locale {
-  return typeof value === "string" && localeSet.has(value);
+  return value === "zh";
 }
 
-function browserLocale(): Locale {
-  const langs = navigator.languages?.length ? navigator.languages : [navigator.language];
-  for (const raw of langs) {
-    const code = raw.toLowerCase();
-    if (code === "ko" || code.startsWith("ko-")) return "ko";
-    if (code === "ja" || code.startsWith("ja-")) return "ja";
-    if (code === "zh" || code.startsWith("zh-")) return "zh";
-    if (code === "en" || code.startsWith("en-")) return "en";
-  }
-  return "en";
-}
+let current: Locale = "zh";
 
-function readLocale(): Locale {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (isLocale(stored)) return stored;
-  return browserLocale();
-}
-
-let current: Locale = "en";
-
-/** 앱 시작 시 1회 호출 (렌더 전) */
 export function initLocale() {
-  current = readLocale();
-  document.documentElement.lang = current === "zh" ? "zh-CN" : current;
+  current = "zh";
+  document.documentElement.lang = "zh-CN";
 }
 
 export function getLocale(): Locale {
-  return current;
+  return "zh";
 }
 
-export function setLocale(locale: Locale) {
-  if (locale === current) return;
-  current = locale;
-  localStorage.setItem(STORAGE_KEY, locale);
-  document.documentElement.lang = locale === "zh" ? "zh-CN" : locale;
-  notify();
+export function setLocale(_locale: Locale) {
+  current = "zh";
+  document.documentElement.lang = "zh-CN";
+  for (const l of listeners) l();
 }
 
-export function getMessages(locale: Locale = current): Messages {
-  return catalogs[locale] ?? catalogs.en;
+export function getMessages(_locale: Locale = current): Messages {
+  return catalogs.zh;
 }
 
 type Vars = Record<string, string | number>;
 
-/** 간단 템플릿: "Hello {name}" + { name: "a" } → "Hello a" */
-export function t(key: keyof Messages, vars?: Vars, locale: Locale = current): string {
-  const template = getMessages(locale)[key] ?? getMessages("en")[key] ?? String(key);
+/** 模板渲染: "Hello {name}" + { name: "a" } → "Hello a" */
+export function t(key: keyof Messages, vars?: Vars, _locale: Locale = current): string {
+  const template = zh[key] ?? String(key);
   if (!vars) return template;
   return template.replace(/\{(\w+)\}/g, (_, name: string) =>
     vars[name] !== undefined ? String(vars[name]) : `{${name}}`,
@@ -92,16 +53,16 @@ function subscribe(listener: () => void) {
 }
 
 export function useLocale(): Locale {
-  return useSyncExternalStore(subscribe, () => current, () => "en");
+  return useSyncExternalStore(subscribe, () => current, () => "zh");
 }
 
-/** 현재 locale의 번역 함수. locale 변경 시 리렌더됨. */
+/** 当前 locale 的翻译函数 */
 export function useT() {
   const locale = useLocale();
   return (key: keyof Messages, vars?: Vars) => t(key, vars, locale);
 }
 
-/** 날짜/시간 표시용 BCP 47 태그 */
-export function localeTag(locale: Locale = current): string {
-  return LOCALE_TAGS[locale] ?? "en-US";
+/** 日期时间显示用 BCP 47 标签 */
+export function localeTag(_locale: Locale = current): string {
+  return "zh-CN";
 }

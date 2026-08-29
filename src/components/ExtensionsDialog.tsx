@@ -15,7 +15,6 @@ function DetailRow({ label, items }: { label: string; items: string[] }) {
   );
 }
 
-/** 현재 세션에 로드된 확장 목록 */
 export function ExtensionsDialog({
   open,
   onOpenChange,
@@ -43,10 +42,10 @@ export function ExtensionsDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 bg-black/40 transition-opacity data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
-        <Dialog.Popup className="fixed top-1/2 left-1/2 flex max-h-[75vh] w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-line bg-card shadow-xl outline-none">
-          <div className="border-b border-line px-4 py-3">
-            <Dialog.Title className="text-sm font-semibold">{t("activeExtensions")}</Dialog.Title>
+        <Dialog.Backdrop className="fixed inset-0 bg-black/50 transition-opacity data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
+        <Dialog.Popup className="fixed top-1/2 left-1/2 flex max-h-[75vh] w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col border-2 border-line-bright bg-card font-mono shadow-[var(--pixel-shadow)] outline-none">
+          <div className="border-b-2 border-line px-4 py-3">
+            <Dialog.Title className="text-sm font-bold text-ink">{t("activeExtensions")}</Dialog.Title>
             <Dialog.Description className="mt-0.5 text-xs text-faint">
               {data
                 ? t("extensionsLoaded", { count: extensions.length })

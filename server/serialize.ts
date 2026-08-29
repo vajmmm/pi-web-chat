@@ -20,14 +20,9 @@ function textFromContent(content: unknown): string {
   return "";
 }
 
-/**
- * pi의 AgentMessage[] 를 UI용 메시지로 변환.
- * toolResult 메시지는 해당 toolCall 블록에 페어링해서 합친다.
- */
 export function serializeMessages(messages: unknown[]): UIMessage[] {
   const msgs = messages as AnyMessage[];
 
-  // toolCallId -> result 매핑
   const results = new Map<string, { text: string; isError: boolean }>();
   for (const m of msgs) {
     if (m.role === "toolResult" && typeof m.toolCallId === "string") {
@@ -40,7 +35,7 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
 
   const out: UIMessage[] = [];
   for (const m of msgs) {
-    if (m.role === "toolResult") continue; // toolCall에 합쳐짐
+    if (m.role === "toolResult") continue;
 
     if (m.role === "user") {
       const blocks: UIContentBlock[] = [];
@@ -83,16 +78,33 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
         }
       }
       if (blocks.length > 0 || m.errorMessage) {
+        const u = m.usage as {
+          input?: number;
+          output?: number;
+          cacheRead?: number;
+          cacheWrite?: number;
+          totalTokens?: number;
+        } | undefined;
+        const usage = u
+          ? {
+              input: typeof u.input === "number" ? u.input : undefined,
+              output: typeof u.output === "number" ? u.output : undefined,
+              cacheRead: typeof u.cacheRead === "number" ? u.cacheRead : undefined,
+              cacheWrite: typeof u.cacheWrite === "number" ? u.cacheWrite : undefined,
+              totalTokens: typeof u.totalTokens === "number" ? u.totalTokens : undefined,
+            }
+          : undefined;
+
         out.push({
           role: "assistant",
           content: blocks,
           errorMessage: typeof m.errorMessage === "string" ? m.errorMessage : undefined,
+          usage,
         });
       }
       continue;
     }
 
-    // custom/기타 메시지: 텍스트가 있으면 표시
     const text = textFromContent(m.content);
     if (text) out.push({ role: "custom", content: [{ type: "text", text }] });
   }

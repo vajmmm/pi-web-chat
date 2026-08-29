@@ -23,7 +23,6 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
     return (models ?? []).filter((m) => matchesQuery(m, q));
   }, [models, query]);
 
-  // Menu 내부 focus manager가 먼저 잡은 뒤 검색창으로 재포커스
   useEffect(() => {
     if (!open) return;
     setQuery("");
@@ -38,14 +37,15 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
 
   return (
     <Menu.Root open={open} onOpenChange={setOpen}>
-      <Menu.Trigger className="max-w-[40vw] truncate rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-ink sm:max-w-xs">
-        {current ? (current.name ?? current.id) : t("selectModel")}
+      <Menu.Trigger className="flex max-w-[40vw] items-center gap-1.5 truncate border-2 border-line-bright bg-card px-2.5 py-1 font-mono text-xs font-bold text-ink shadow-[var(--pixel-shadow-sm)] transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent hover:bg-hover sm:max-w-xs">
+        <span className="truncate">{current ? (current.name ?? current.id) : t("selectModel")}</span>
+        <span className="text-[10px] text-accent">▾</span>
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={6} align="end">
-          <Menu.Popup className="flex w-72 flex-col overflow-hidden rounded-xl border border-line bg-card shadow-xl outline-none">
-            <div className="border-b border-line p-2">
-              <div className="flex items-center gap-2 rounded-lg bg-hover px-2.5">
+          <Menu.Popup className="flex w-72 flex-col overflow-hidden border-2 border-accent bg-card font-mono shadow-[var(--pixel-shadow)] outline-none">
+            <div className="border-b-2 border-line p-2">
+              <div className="flex items-center gap-2 border-2 border-line bg-canvas px-2.5">
                 <svg
                   viewBox="0 0 24 24"
                   className="size-4 shrink-0 fill-none stroke-current stroke-2 text-faint"
@@ -61,11 +61,9 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
                   placeholder={t("searchModels")}
                   aria-label={t("searchModels")}
                   autoFocus
-                  className="w-full bg-transparent py-2 text-sm text-ink outline-none placeholder:text-faint"
-                  // 메뉴 typeahead / 화살표 네비와 충돌 방지
+                  className="w-full bg-transparent py-1.5 font-mono text-xs text-ink outline-none placeholder:text-faint"
                   onKeyDown={(e) => {
                     if (e.key === "Escape") return;
-                    // 아래 화살표는 목록으로 넘김
                     if (e.key === "ArrowDown") {
                       e.preventDefault();
                       e.currentTarget.blur();
@@ -102,17 +100,17 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
                     onClick={() =>
                       chatClient.send({ type: "set_model", provider: m.provider, id: m.id })
                     }
-                    className={`flex cursor-pointer flex-col px-3 py-2 text-sm outline-none data-[highlighted]:bg-hover ${
-                      active ? "text-accent" : "text-ink"
+                    className={`flex cursor-pointer flex-col px-3 py-2 text-xs outline-none data-[highlighted]:bg-hover ${
+                      active ? "bg-hover font-bold text-accent" : "text-ink"
                     }`}
                   >
                     <span className="truncate">{m.name ?? m.id}</span>
-                    <span className="text-xs text-faint">{m.provider}</span>
+                    <span className="text-[10px] text-faint">{m.provider}</span>
                   </Menu.Item>
                 );
               })}
               {filtered.length === 0 && (
-                <div className="px-3 py-6 text-center text-sm text-faint">
+                <div className="px-3 py-6 text-center text-xs text-faint">
                   {models && models.length === 0 ? t("noModelsAvailable") : t("noSearchResults")}
                 </div>
               )}

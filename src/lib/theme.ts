@@ -13,11 +13,9 @@ function systemTheme(): Theme {
 function readPreference(): ThemePreference {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === "dark" || stored === "light" || stored === "system") return stored;
-  // 예전 버전 호환: 키 없음 = 시스템 추종
   return "system";
 }
 
-/** 실제 적용 중인 테마 (system이면 OS 설정 반영) */
 export function currentTheme(): Theme {
   const pref = readPreference();
   return pref === "system" ? systemTheme() : pref;
@@ -38,7 +36,6 @@ function notify() {
   for (const l of listeners) l();
 }
 
-/** 앱 시작 시 1회 호출 (렌더 전) */
 export function initTheme() {
   apply(currentTheme());
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

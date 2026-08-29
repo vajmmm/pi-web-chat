@@ -1,5 +1,3 @@
-// PWA 아이콘 생성 스크립트 (외부 의존성 없음)
-// 실행: node scripts/generate-icons.mjs
 import { deflateSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -8,7 +6,6 @@ import { fileURLToPath } from "node:url";
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 mkdirSync(OUT_DIR, { recursive: true });
 
-// --- 최소 PNG 인코더 ---
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -31,11 +28,11 @@ function encodePNG(size, pixels) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // RGBA
+  ihdr[8] = 8;
+  ihdr[9] = 6;
   const raw = Buffer.alloc(size * (size * 4 + 1));
   for (let y = 0; y < size; y++) {
-    raw[y * (size * 4 + 1)] = 0; // filter: none
+    raw[y * (size * 4 + 1)] = 0;
     pixels.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
   }
   return Buffer.concat([
@@ -46,10 +43,9 @@ function encodePNG(size, pixels) {
   ]);
 }
 
-// --- 아이콘 그리기: 어두운 배경 + π 글리프 ---
-const BG = [10, 10, 10]; // #0a0a0a
-const FG = [250, 250, 250]; // π 색상
-const ACCENT = [96, 165, 250]; // 하단 포인트 (#60a5fa)
+const BG = [10, 10, 10];
+const FG = [250, 250, 250];
+const ACCENT = [96, 165, 250];
 
 function drawIcon(size, { paddingRatio, rounded }) {
   const px = Buffer.alloc(size * size * 4);
@@ -73,25 +69,19 @@ function drawIcon(size, { paddingRatio, rounded }) {
         if (x >= 0 && y >= 0 && x < size && y < size) set(x, y, color);
   };
 
-  // 배경
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) if (inRoundedRect(x, y)) set(x, y, BG);
 
-  // π 글리프 (safe zone 안에 배치)
-  const p = size * paddingRatio; // 패딩
-  const gw = size - p * 2; // 글리프 영역 너비
-  const gh = gw * 0.82; // 글리프 영역 높이
+  const p = size * paddingRatio;
+  const gw = size - p * 2;
+  const gh = gw * 0.82;
   const gx = p;
   const gy = p + (size - p * 2 - gh) / 2;
   const stroke = gw * 0.16;
 
-  // 상단 가로 획
   rect(gx, gy, gw, stroke, FG);
-  // 왼쪽 다리
   rect(gx + gw * 0.18, gy, stroke, gh, FG);
-  // 오른쪽 다리
   rect(gx + gw - gw * 0.18 - stroke, gy, stroke, gh, FG);
-  // 왼쪽 다리 아래 액센트 점
   rect(gx + gw * 0.18, gy + gh + stroke * 0.6, stroke, stroke, ACCENT);
 
   return px;
@@ -100,11 +90,8 @@ function drawIcon(size, { paddingRatio, rounded }) {
 const icons = [
   { file: "pwa-192x192.png", size: 192, paddingRatio: 0.2, rounded: false },
   { file: "pwa-512x512.png", size: 512, paddingRatio: 0.2, rounded: false },
-  // maskable: 안전 영역(중앙 80%) 확보를 위해 패딩 확대, 전체 배경 채움
   { file: "maskable-512x512.png", size: 512, paddingRatio: 0.32, rounded: false },
-  // iOS 홈 화면용 (불투명)
   { file: "apple-touch-icon.png", size: 180, paddingRatio: 0.2, rounded: false },
-  // 파비콘 대용
   { file: "favicon-64.png", size: 64, paddingRatio: 0.16, rounded: true },
 ];
 

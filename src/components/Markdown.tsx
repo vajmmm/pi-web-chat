@@ -3,17 +3,6 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
-/**
- * remark-gfm의 취소선(~~, ~) 문법만 제거한다.
- *
- * 한국어 채팅 텍스트는 물결표가 문장 부호처럼 쓰여 의도치 않은 삭선이 자주
- * 생긴다 ("가격이 ~~2만원~~ 이었는데", "서울~부산~ 고고~"). 특히 이 버전의
- * remark-gfm은 singleTilde가 기본 활성이라 단일 물결표(~x~)마저 삭선이 된다.
- *
- * remark-gfm에는 취소선만 끄는 옵션이 없어서, micromark 확장에서
- * strikethrough 토크나이저(코드 126 = ~)가 등록된 3군데를 직접 제거한다.
- * attacher는 unified가 processor를 this로 바인딩해 호출한다.
- */
 function remarkNoStrikethrough(this: unknown) {
   const data = (this as { data?: () => unknown }).data?.() as
     | Record<string, unknown>
@@ -65,7 +54,6 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
         remarkPlugins={[remarkGfm, remarkNoStrikethrough]}
         rehypePlugins={[rehypeHighlight]}
         components={{
-          // 모바일에서 넓은 표가 화면을 뚫고 나가지 않도록 가로 스크롤 컨테이너로 감싼다.
           table: ({ node: _node, ...props }) => (
             <div className="overflow-x-auto">
               <table {...props} />

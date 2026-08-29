@@ -1,6 +1,6 @@
 import { Menu } from "@base-ui-components/react/menu";
 import { useState } from "react";
-import { isLocale, LOCALES, setLocale, useLocale, useT } from "../lib/i18n";
+import { useT } from "../lib/i18n";
 import {
   setThemePreference,
   useThemePreference,
@@ -9,17 +9,18 @@ import {
 import { ExtensionsDialog } from "./ExtensionsDialog";
 import { ForkDialog } from "./ForkDialog";
 import { ModelsDialog } from "./ModelsDialog";
+import { RolesDialog } from "./RolesDialog";
 
 const itemClass =
-  "flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-ink outline-none data-[highlighted]:bg-hover";
+  "flex cursor-pointer items-center gap-2 px-3 py-2 text-xs text-ink outline-none data-[highlighted]:bg-hover";
 
 export function SettingsMenu() {
   const t = useT();
   const preference = useThemePreference();
-  const locale = useLocale();
   const [forkOpen, setForkOpen] = useState(false);
   const [extensionsOpen, setExtensionsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [rolesOpen, setRolesOpen] = useState(false);
 
   const themeOptions: { value: ThemePreference; label: string }[] = [
     { value: "system", label: t("themeSystem") },
@@ -31,11 +32,11 @@ export function SettingsMenu() {
     <>
       <Menu.Root>
         <Menu.Trigger
-          className="flex size-9 items-center justify-center rounded-lg text-faint transition-colors hover:bg-hover hover:text-ink"
+          className="flex size-7.5 items-center justify-center border-2 border-line-bright bg-card text-muted shadow-[var(--pixel-shadow-sm)] transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent hover:text-ink"
           aria-label={t("settings")}
           title={t("settings")}
         >
-          <svg viewBox="0 0 24 24" className="size-5 fill-none stroke-current stroke-2">
+          <svg viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-2">
             <circle cx="12" cy="12" r="3" />
             <path
               d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1.1 1.5 1.1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"
@@ -46,9 +47,9 @@ export function SettingsMenu() {
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner sideOffset={6} align="end">
-            <Menu.Popup className="w-52 rounded-xl border border-line bg-card py-1 shadow-xl outline-none">
+            <Menu.Popup className="w-56 border-2 border-accent bg-card py-1 font-mono shadow-[var(--pixel-shadow)] outline-none">
               <Menu.Group>
-                <Menu.GroupLabel className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-faint uppercase">
+                <Menu.GroupLabel className="px-3 pt-2 pb-1 font-mono text-[10px] font-bold tracking-wide text-faint uppercase">
                   {t("theme")}
                 </Menu.GroupLabel>
                 <Menu.RadioGroup
@@ -66,10 +67,10 @@ export function SettingsMenu() {
                       closeOnClick
                       className={itemClass}
                     >
-                      <span className="flex size-3.5 items-center justify-center rounded-full border border-faint">
-                        <Menu.RadioItemIndicator className="size-1.5 rounded-full bg-accent" />
+                      <span className="flex size-3.5 items-center justify-center border border-faint">
+                        <Menu.RadioItemIndicator className="size-1.5 bg-accent" />
                       </span>
-                      <span className={preference === opt.value ? "font-medium text-accent" : undefined}>
+                      <span className={preference === opt.value ? "font-bold text-accent" : undefined}>
                         {opt.label}
                       </span>
                     </Menu.RadioItem>
@@ -79,35 +80,10 @@ export function SettingsMenu() {
 
               <div className="my-1 border-t border-line" />
 
-              <Menu.Group>
-                <Menu.GroupLabel className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-faint uppercase">
-                  {t("language")}
-                </Menu.GroupLabel>
-                <Menu.RadioGroup
-                  value={locale}
-                  onValueChange={(value) => {
-                    if (isLocale(value)) setLocale(value);
-                  }}
-                >
-                  {LOCALES.map((opt) => (
-                    <Menu.RadioItem
-                      key={opt.value}
-                      value={opt.value}
-                      closeOnClick
-                      className={itemClass}
-                    >
-                      <span className="flex size-3.5 items-center justify-center rounded-full border border-faint">
-                        <Menu.RadioItemIndicator className="size-1.5 rounded-full bg-accent" />
-                      </span>
-                      <span className={locale === opt.value ? "font-medium text-accent" : undefined}>
-                        {opt.nativeLabel}
-                      </span>
-                    </Menu.RadioItem>
-                  ))}
-                </Menu.RadioGroup>
-              </Menu.Group>
-
-              <div className="my-1 border-t border-line" />
+              <Menu.Item className={itemClass} onClick={() => setRolesOpen(true)}>
+                <span className="text-sm">👥</span>
+                <span>角色看板与配置…</span>
+              </Menu.Item>
 
               <Menu.Item className={itemClass} onClick={() => setModelsOpen(true)}>
                 <svg viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-2">
@@ -145,7 +121,7 @@ export function SettingsMenu() {
               </Menu.Item>
 
               <div className="my-1 border-t border-line" />
-              <div className="px-3 pt-1 pb-2 text-[11px] text-faint">
+              <div className="px-3 pt-1 pb-2 font-mono text-[10px] text-faint">
                 pi-web-chat v{__APP_VERSION__}
               </div>
             </Menu.Popup>
@@ -153,6 +129,7 @@ export function SettingsMenu() {
         </Menu.Portal>
       </Menu.Root>
 
+      <RolesDialog open={rolesOpen} onOpenChange={setRolesOpen} />
       <ModelsDialog open={modelsOpen} onOpenChange={setModelsOpen} />
       <ForkDialog open={forkOpen} onOpenChange={setForkOpen} />
       <ExtensionsDialog open={extensionsOpen} onOpenChange={setExtensionsOpen} />

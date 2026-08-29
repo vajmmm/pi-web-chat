@@ -2,18 +2,18 @@
 @plugin "@tailwindcss/typography";
 @import "highlight.js/styles/github-dark.css";
 
-/* class 기반 다크모드 (html.dark) */
+/* class based dark mode (html.dark) */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Claude / ChatGPT desktop 스타일 토큰.
- * 실제 색은 --c-* 에서 오고, .dark 에서 값만 갈아끼운다.
+ * pi-web-vaj retro pixel aesthetic tokens
  */
 @theme {
   --color-canvas: var(--c-canvas);
   --color-sidebar: var(--c-sidebar);
   --color-card: var(--c-card);
   --color-line: var(--c-line);
+  --color-line-bright: var(--c-line-bright);
   --color-ink: var(--c-ink);
   --color-muted: var(--c-muted);
   --color-faint: var(--c-faint);
@@ -23,10 +23,13 @@
   --color-bubble: var(--c-bubble);
   --color-hover: var(--c-hover);
   --color-selected: var(--c-selected);
+  --color-mint: var(--c-mint);
+  --color-yellow: var(--c-yellow);
+  --color-red: var(--c-red);
+  --color-purple-dark: var(--c-purple-dark);
 
-  --font-sans:
-    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-    "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
+  --font-mono: "Courier New", "Noto Sans Mono", monospace;
+  --font-sans: "Courier New", "Noto Sans Mono", monospace;
 }
 
 :root {
@@ -36,42 +39,57 @@
   --composer-pad-top: 0.5rem;
   --composer-safe-bottom-max: 34px;
 
-  /* light — Claude 특유의 따뜻한 아이보리 */
-  --c-canvas: #faf9f5;
-  --c-sidebar: #f2f0e9;
-  --c-card: #ffffff;
-  --c-line: #e6e3da;
-  --c-ink: #1f1e1d;
-  --c-muted: #6f6d66;
-  --c-faint: #9c9a93;
-  --c-accent: #c96442;
+  /* Light mode — pi-web-vaj cream / purple / mint palette */
+  --c-canvas: #f7f1e7;
+  --c-sidebar: #fffaf2;
+  --c-card: #fffdf8;
+  --c-line: #d8cddd;
+  --c-line-bright: #b89fc8;
+  --c-ink: #30263d;
+  --c-muted: #75677f;
+  --c-faint: #998ca1;
+  --c-accent: #7744b4;
   --c-accent-ink: #ffffff;
-  --c-accent-soft: #f2e3dc;
-  --c-bubble: #f0eee6;
-  --c-hover: rgba(0, 0, 0, 0.045);
-  --c-selected: rgba(0, 0, 0, 0.075);
+  --c-accent-soft: #dcc7ed;
+  --c-bubble: #f1e7fb;
+  --c-hover: #f0e5fb;
+  --c-selected: #e4d3f5;
+  --c-mint: #17845f;
+  --c-yellow: #c88710;
+  --c-red: #c34e6d;
+  --c-purple-dark: #dcc7ed;
+
+  --pixel-shadow: 4px 4px 0 rgba(91, 65, 103, 0.16);
+  --pixel-shadow-sm: 2px 2px 0 rgba(91, 65, 103, 0.14);
 }
 
 .dark {
-  --c-canvas: #262624;
-  --c-sidebar: #1c1c1b;
-  --c-card: #30302e;
-  --c-line: #3c3c39;
-  --c-ink: #f2f0e9;
-  --c-muted: #a3a099;
-  --c-faint: #7d7a73;
-  --c-accent: #d97757;
-  --c-accent-ink: #1f1e1d;
-  --c-accent-soft: #3a2d27;
-  --c-bubble: #373734;
-  --c-hover: rgba(255, 255, 255, 0.06);
-  --c-selected: rgba(255, 255, 255, 0.1);
+  /* Dark mode — cyber retro terminal palette */
+  --c-canvas: #15131a;
+  --c-sidebar: #1d1924;
+  --c-card: #24202d;
+  --c-line: #3f364d;
+  --c-line-bright: #685382;
+  --c-ink: #f0eaf7;
+  --c-muted: #b0a3be;
+  --c-faint: #817291;
+  --c-accent: #a56ae0;
+  --c-accent-ink: #ffffff;
+  --c-accent-soft: #432863;
+  --c-bubble: #2d2639;
+  --c-hover: rgba(165, 106, 224, 0.15);
+  --c-selected: rgba(165, 106, 224, 0.25);
+  --c-mint: #2ec491;
+  --c-yellow: #f0ad35;
+  --c-red: #eb6085;
+  --c-purple-dark: #432863;
+
+  --pixel-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+  --pixel-shadow-sm: 2px 2px 0 rgba(0, 0, 0, 0.4);
 }
 
 /*
- * Lock the page: body is fixed to the screen so iOS can't scroll the whole
- * app up when the keyboard opens. #root stays in normal flow (not fixed —
- * that truncates content on iOS 26+) and is sized from visualViewport.
+ * Lock the page & grid background texture
  */
 html,
 body {
@@ -82,12 +100,37 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;
+  font-family: "Courier New", "Noto Sans Mono", monospace;
 }
 
 body {
   position: fixed;
   inset: 0;
-  @apply bg-canvas text-ink antialiased;
+  color: var(--c-ink);
+  background: var(--c-canvas);
+}
+
+body::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  opacity: 0.42;
+  background:
+    linear-gradient(rgba(119, 68, 180, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(119, 68, 180, 0.055) 1px, transparent 1px),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(119, 68, 180, 0.045) 3px 4px);
+  background-size: 24px 24px, 24px 24px, 100% 4px;
+}
+
+.dark body::before {
+  opacity: 0.25;
+  background:
+    linear-gradient(rgba(165, 106, 224, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(165, 106, 224, 0.08) 1px, transparent 1px),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(165, 106, 224, 0.06) 3px 4px);
+  background-size: 24px 24px, 24px 24px, 100% 4px;
 }
 
 #root {
@@ -114,27 +157,24 @@ body {
   display: none;
 }
 
-/* 얇은 스크롤바 (데스크톱 앱 느낌) */
+/* Thin scrollbar */
 .thin-scroll {
   scrollbar-width: thin;
-  scrollbar-color: var(--c-faint) transparent;
+  scrollbar-color: var(--c-line-bright) transparent;
 }
 .thin-scroll::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--c-faint) 55%, transparent);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
+  background-color: var(--c-line-bright);
+  border: 1px solid transparent;
 }
 .thin-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
 /*
- * Bottom bar: floor padding + capped home-indicator inset. When the keyboard
- * is open there is no home indicator, so drop the safe-area entirely.
+ * Bottom bar
  */
 .composer-bar {
   padding-top: var(--composer-pad-top);
@@ -149,7 +189,7 @@ html.ua-keyboard .composer-bar {
   padding-bottom: 0.5rem;
 }
 
-/* 마크다운 본문 색을 토큰에 맞춤 (라이트/다크 자동) */
+/* Markdown prose styling */
 .prose {
   --tw-prose-body: var(--c-ink);
   --tw-prose-headings: var(--c-ink);
@@ -162,16 +202,40 @@ html.ua-keyboard .composer-bar {
   --tw-prose-quotes: var(--c-muted);
   --tw-prose-quote-borders: var(--c-line);
   --tw-prose-captions: var(--c-muted);
-  --tw-prose-code: var(--c-ink);
+  --tw-prose-code: var(--c-accent);
   --tw-prose-th-borders: var(--c-line);
   --tw-prose-td-borders: var(--c-line);
+  font-family: var(--font-mono);
 }
 
 .prose pre {
-  @apply rounded-xl border border-neutral-800 bg-[#0d1117] text-[13px];
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-left: 3px solid var(--c-line-bright);
+  border-top: 1px solid var(--c-line);
+  border-right: 1px solid var(--c-line);
+  border-bottom: 1px solid var(--c-line);
+  color: var(--c-ink);
+  background: #fffaf1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  border-radius: 0;
+}
+
+.dark .prose pre {
+  background: #191522;
+  border-left-color: var(--c-accent);
 }
 
 .prose :not(pre) > code {
+  padding: 1px 4px;
+  border: 1px solid var(--c-line);
+  color: var(--c-accent);
   background-color: var(--c-bubble);
-  @apply rounded px-1.5 py-0.5 text-[13px] font-normal before:content-none after:content-none;
+  font-size: 0.92em;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  border-radius: 0;
 }
