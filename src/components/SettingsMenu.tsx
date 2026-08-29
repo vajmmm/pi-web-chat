@@ -1,6 +1,6 @@
 import { Menu } from "@base-ui-components/react/menu";
 import { useState } from "react";
-import { useT } from "../lib/i18n";
+import { isLocale, LOCALES, setLocale, useLocale, useT } from "../lib/i18n";
 import {
   setThemePreference,
   useThemePreference,
@@ -16,6 +16,7 @@ const itemClass =
 
 export function SettingsMenu() {
   const t = useT();
+  const locale = useLocale();
   const preference = useThemePreference();
   const [forkOpen, setForkOpen] = useState(false);
   const [extensionsOpen, setExtensionsOpen] = useState(false);
@@ -72,6 +73,38 @@ export function SettingsMenu() {
                       </span>
                       <span className={preference === opt.value ? "font-bold text-accent" : undefined}>
                         {opt.label}
+                      </span>
+                    </Menu.RadioItem>
+                  ))}
+                </Menu.RadioGroup>
+              </Menu.Group>
+
+              <div className="my-1 border-t border-line" />
+
+              <Menu.Group>
+                <Menu.GroupLabel className="px-3 pt-2 pb-1 font-mono text-[10px] font-bold tracking-wide text-faint uppercase">
+                  {t("language")}
+                </Menu.GroupLabel>
+                <Menu.RadioGroup
+                  value={locale}
+                  onValueChange={(value) => {
+                    if (isLocale(value)) {
+                      setLocale(value);
+                    }
+                  }}
+                >
+                  {LOCALES.map((opt) => (
+                    <Menu.RadioItem
+                      key={opt.value}
+                      value={opt.value}
+                      closeOnClick
+                      className={itemClass}
+                    >
+                      <span className="flex size-3.5 items-center justify-center border border-faint">
+                        <Menu.RadioItemIndicator className="size-1.5 bg-accent" />
+                      </span>
+                      <span className={locale === opt.value ? "font-bold text-accent" : undefined}>
+                        {opt.nativeLabel}
                       </span>
                     </Menu.RadioItem>
                   ))}
