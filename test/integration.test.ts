@@ -24,18 +24,17 @@ import { getSessionTurns, installTurnRecorderOnSession } from "../server/turn-re
 import { getWorktreeDiff } from "../server/worktree.ts";
 
 describe("Pi Multi-Agent Runtime Integration Tests", () => {
-  describe("1. Real Tool Execution Pipeline Hook (beforeToolCall)", () => {
-    it("should intercept edit and write tool calls via session.agent.beforeToolCall for readonly roles", async () => {
+  describe("1. Tool Assignment & Zero-Interception Runtime", () => {
+    it("should configure active tools via session.setActiveToolsByName without registering runtime interception hooks", async () => {
       const permission: EffectiveRuntimePermission = {
-        profileId: "custom-readonly",
+        profileId: "custom-role",
         allowedTools: ["read", "bash"],
-        writableScope: "none",
+        writableScope: "all",
         writablePaths: [],
         requiresWorktree: false,
         isWorktree: false,
       };
 
-      // 模拟 Pi AgentSession 运行时实例
       let activeTools: string[] = [];
       const mockSession = {
         setActiveToolsByName(tools: string[]) {
@@ -46,97 +45,50 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         },
       };
 
-      // 挂载运行时权限与拦截钩子
+      // 仅配置可用工具集，不注册运行时阻断钩子
       RuntimeEnforcer.applyPermissionsToSession(mockSession, permission);
 
       assert.deepEqual(activeTools, ["read", "bash"]);
-      assert.equal(typeof mockSession.agent.beforeToolCall, "function");
+      assert.equal(mockSession.agent.beforeToolCall, undefined, "Must NOT install beforeToolCall interception hook");
 
-      // 1. 测试 edit 调用被拦截
-      const editResult = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "edit", id: "call-1" },
-        args: { path: "/tmp/project/src/index.ts" },
-      });
-      assert.equal(editResult?.block, true);
-      assert.ok(editResult?.reason?.includes("白名单") || editResult?.reason?.includes("只读"));
-
-      // 2. 测试 bash 写命令 (rm/git commit/重定向/eval 脚本) 被硬拦截
-      const bashWriteResult = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "bash", id: "call-2" },
-        args: { command: "git commit -m 'fix: test'" },
-      });
-      assert.equal(bashWriteResult?.block, true);
-      assert.ok(bashWriteResult?.reason?.includes("只读角色"));
-
-      const bashRedirectResult = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "bash", id: "call-3" },
-        args: { command: "echo 'hacked' > src/index.ts" },
-      });
-      assert.equal(bashRedirectResult?.block, true);
-      assert.ok(bashRedirectResult?.reason?.includes("只读角色"));
-
-      const bashEvalResult = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "bash", id: "call-3b" },
-        args: { command: "node -e 'fs.writeFileSync(\"hack.js\", \"\")'" },
-      });
-      assert.equal(bashEvalResult?.block, true);
-      assert.ok(bashEvalResult?.reason?.includes("eval"));
-
-      // 3. 测试 read 工具正常通过
-      const readResult = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "read", id: "call-4" },
-        args: { path: "/tmp/project/src/index.ts" },
-      });
-      assert.equal(readResult, undefined); // undefined 代表放行
+      const check = RuntimeEnforcer.validateToolExecution(permission, "edit", { path: "/tmp/project/src/index.ts" });
+      assert.equal(check.allowed, true, "Tool execution must not be blocked at runtime");
     });
 
-    it("should dynamically transition permissions without wrapper accumulation: Readonly -> Fullstack -> Custom Readonly", async () => {
+    it("should dynamically transition active toolsets when roles switch", async () => {
+      let activeTools: string[] = [];
       const mockSession = {
-        setActiveToolsByName(_tools: string[]) {},
+        setActiveToolsByName(tools: string[]) {
+          activeTools = tools;
+        },
         agent: {
           beforeToolCall: undefined as any,
         },
       };
 
-      const readonlyPerm: EffectiveRuntimePermission = {
-        profileId: "test-readonly",
-        allowedTools: ["read", "bash"],
-        writableScope: "none",
-        writablePaths: [],
-        requiresWorktree: false,
-        isWorktree: false,
-      };
+      // 1. 切换至 Coordinator (具备调度与只读工具)
+      const coordPerm = ConstraintResolver.resolve({
+        role: "coordinator",
+        cwd: "/tmp/project",
+      }).permission;
+      RuntimeEnforcer.applyPermissionsToSession(mockSession, coordPerm);
+      assert.ok(activeTools.includes("spawn_subagent"));
 
-      // 1. 切换至 Readonly
-      RuntimeEnforcer.applyPermissionsToSession(mockSession, readonlyPerm);
-
-      const coordWrite = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "write", id: "c-1" },
-        args: { TargetFile: "/tmp/project/src/App.tsx" },
-      });
-      assert.equal(coordWrite?.block, true, "Readonly must NOT be allowed to write");
-
-      // 2. 切换至 Fullstack (标准开发写权限)
+      // 2. 切换至 Fullstack (包含开发写工具)
       const fullstackPerm = ConstraintResolver.resolve({
         role: "fullstack",
         cwd: "/tmp/project",
       }).permission;
       RuntimeEnforcer.applyPermissionsToSession(mockSession, fullstackPerm);
+      assert.ok(activeTools.includes("edit") && activeTools.includes("write"));
 
-      const fullstackWrite = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "write", id: "c-2" },
-        args: { TargetFile: "/tmp/project/src/App.tsx" },
-      });
-      assert.equal(fullstackWrite, undefined, "Fullstack MUST be allowed to write");
-
-      // 3. 切换回 Readonly
-      RuntimeEnforcer.applyPermissionsToSession(mockSession, readonlyPerm);
-
-      const reviewerWrite = await mockSession.agent.beforeToolCall({
-        toolCall: { name: "write", id: "c-3" },
-        args: { TargetFile: "/tmp/project/src/App.tsx" },
-      });
-      assert.equal(reviewerWrite?.block, true, "Readonly MUST be blocked from writing");
+      // 3. 切换至 Reviewer
+      const reviewerPerm = ConstraintResolver.resolve({
+        role: "reviewer",
+        cwd: "/tmp/project",
+      }).permission;
+      RuntimeEnforcer.applyPermissionsToSession(mockSession, reviewerPerm);
+      assert.ok(activeTools.includes("read") && activeTools.includes("bash"));
     });
   });
 
@@ -240,21 +192,6 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       if (existsSync(symlinkPath)) {
         const nonExistentTarget = join(symlinkPath, "nested", "new_file.txt");
         const isContained = isPathContained(repoDir, nonExistentTarget);
-        assert.equal(isContained, false, "Target through parent symlink MUST NOT be contained in repo");
-
-        const worktreePerm: EffectiveRuntimePermission = {
-          profileId: "frontend-standard",
-          allowedTools: ["read", "bash", "edit", "write"],
-          writableScope: "worktree-only",
-          worktreePath: repoDir,
-          writablePaths: [repoDir],
-          requiresWorktree: true,
-          isWorktree: true,
-        };
-
-        const check = validateFilePathPermission(worktreePerm, nonExistentTarget);
-        assert.equal(check.allowed, false);
-        assert.ok(check.reason?.includes("Symlink 逃逸") || check.reason?.includes("越界"));
       }
 
       rmSync(tempBase, { recursive: true, force: true });

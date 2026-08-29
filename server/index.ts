@@ -350,7 +350,13 @@ function accumulateUsageFromMessages(messages: unknown[]): {
   let estimatedContextTokens = 0;
   for (const m of messages as any[]) {
     if (!m || typeof m !== "object") continue;
-    const str = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+    // compactionSummary stores content in 'summary', not 'content'
+    const str =
+      typeof m.summary === "string" && m.role === "compactionSummary"
+        ? m.summary
+        : typeof m.content === "string"
+          ? m.content
+          : JSON.stringify(m.content ?? "");
     estimatedContextTokens += Math.ceil(str.length / 3.5);
 
     const u = m.usage;
@@ -368,7 +374,12 @@ function accumulateUsageFromMessages(messages: unknown[]): {
     cacheWrite += cw;
     cost += c;
     latestTurnTokens = i + cr + o;
-    contextTokens = i + cr;
+    // Only assistant messages carry meaningful context window occupancy (input + cacheRead).
+    // toolResult messages have usage from tool execution where input/cacheRead are 0,
+    // which would incorrectly overwrite the real context size.
+    if (m.role === "assistant") {
+      contextTokens = i + cr;
+    }
   }
 
   const hasCompaction = (messages as any[]).some((m) => m?.role === "compactionSummary");

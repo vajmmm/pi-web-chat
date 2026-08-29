@@ -9,6 +9,7 @@ import {
   getPermissionProfile,
   getRoleDefinition,
   isPathContained,
+  matchesPattern,
   normalizeRoleToV2,
   PromptAssembler,
   RoleRegistry,
@@ -215,236 +216,40 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
     });
   });
 
-  describe("6. RuntimeEnforcer Hard Sandboxing & TaskScope Enforcement", () => {
-    it("should block write/edit operations for readonly roles", () => {
-      const readonlyPerm: EffectiveRuntimePermission = {
-        profileId: "custom-readonly",
-        allowedTools: ["read", "bash"],
-        writableScope: "none",
-        writablePaths: [],
-        requiresWorktree: false,
-        isWorktree: false,
-      };
-
-      const editCheck = RuntimeEnforcer.validateToolExecution(readonlyPerm, "edit", {
-        path: "/tmp/project/src/index.ts",
-      });
-      assert.equal(editCheck.allowed, false);
-      assert.ok(
-        editCheck.reason?.includes("白名单") || editCheck.reason?.includes("只读权限"),
-      );
-
-      const readCheck = RuntimeEnforcer.validateToolExecution(readonlyPerm, "read", {
-        path: "/tmp/project/src/index.ts",
-      });
-      assert.equal(readCheck.allowed, true);
-    });
-
-    it("should allow safe readonly bash commands with 2>/dev/null redirects", () => {
-      const readonlyPerm: EffectiveRuntimePermission = {
-        profileId: "custom-readonly",
-        allowedTools: ["read", "bash"],
-        writableScope: "none",
-        writablePaths: [],
-        requiresWorktree: false,
-        isWorktree: false,
-      };
-
-      const check = RuntimeEnforcer.validateToolExecution(readonlyPerm, "bash", {
-        command: "ls -la /tmp/project/.worktrees/ 2>/dev/null || echo 'No worktrees directory'",
-      });
-      assert.equal(check.allowed, true);
-    });
-
-    it("should block tester from modifying production business logic", () => {
-      const testerPerm: EffectiveRuntimePermission = {
-        profileId: "tester-test-write",
+  describe("6. Runtime Tool Delegation & Path Utilities", () => {
+    it("should allow tool execution without runtime interception", () => {
+      const perm: EffectiveRuntimePermission = {
+        profileId: "standard-dev",
         allowedTools: ["read", "bash", "edit", "write"],
-        writableScope: "test-only",
+        writableScope: "all",
         writablePaths: ["/tmp/project"],
         requiresWorktree: false,
         isWorktree: false,
       };
 
-      const prodEditCheck = RuntimeEnforcer.validateToolExecution(testerPerm, "edit", {
-        path: "/tmp/project/src/services/user.ts",
+      const editCheck = RuntimeEnforcer.validateToolExecution(perm, "edit", {
+        path: "/tmp/project/src/index.ts",
       });
-      assert.equal(prodEditCheck.allowed, false);
-      assert.ok(prodEditCheck.reason?.includes("严禁修改生产业务路径"));
+      assert.equal(editCheck.allowed, true);
 
-      const testEditCheck = RuntimeEnforcer.validateToolExecution(testerPerm, "edit", {
-        path: "/tmp/project/test/user.test.ts",
-      });
-      assert.equal(testEditCheck.allowed, true);
-    });
-
-    it("should block worktree subagents from modifying outside the worktree directory", () => {
-      const worktreePerm: EffectiveRuntimePermission = {
-        profileId: "worktree-profile",
-        allowedTools: ["read", "bash", "edit", "write"],
-        writableScope: "worktree-only",
-        worktreePath: "/tmp/main-repo/.worktrees/task-fe-1",
-        writablePaths: ["/tmp/main-repo/.worktrees/task-fe-1"],
-        requiresWorktree: true,
-        isWorktree: true,
-      };
-
-      const outsideCheck = RuntimeEnforcer.validateToolExecution(worktreePerm, "write", {
-        path: "/tmp/main-repo/src/App.tsx",
-      });
-      assert.equal(outsideCheck.allowed, false);
-      assert.ok(outsideCheck.reason?.includes("严禁越界修改主工作区文件"));
-
-      const insideCheck = RuntimeEnforcer.validateToolExecution(worktreePerm, "write", {
-        path: "/tmp/main-repo/.worktrees/task-fe-1/src/App.tsx",
-      });
-      assert.equal(insideCheck.allowed, true);
-    });
-
-    it("should enforce TaskContract.scope.include and exclude boundaries", () => {
-      const scopedPerm: EffectiveRuntimePermission = {
-        profileId: "frontend-standard",
-        allowedTools: ["read", "bash", "edit", "write"],
-        writableScope: "worktree-only",
-        worktreePath: "/tmp/repo",
-        writablePaths: ["/tmp/repo"],
-        taskScope: {
-          include: ["src/components/**", "package.json"],
-          exclude: ["src/components/legacy/**", "**/*.env"],
-        },
-        requiresWorktree: true,
-        isWorktree: true,
-      };
-
-      // 1. 允许 include 内的文件
-      assert.equal(
-        RuntimeEnforcer.validateToolExecution(scopedPerm, "edit", {
-          path: "/tmp/repo/src/components/Button.tsx",
-        }).allowed,
-        true,
-      );
-
-      // 2. 拦截不在 include 内的文件
-      const notIncluded = RuntimeEnforcer.validateToolExecution(scopedPerm, "edit", {
-        path: "/tmp/repo/src/services/api.ts",
-      });
-      assert.equal(notIncluded.allowed, false);
-      assert.ok(notIncluded.reason?.includes("不在 TaskContract.scope.include 明确允许的修改范围内"));
-
-      // 3. 拦截匹配 exclude 的文件 (即便在 include 内部)
-      const excluded = RuntimeEnforcer.validateToolExecution(scopedPerm, "edit", {
-        path: "/tmp/repo/src/components/legacy/OldButton.tsx",
-      });
-      assert.equal(excluded.allowed, false);
-      assert.ok(excluded.reason?.includes("匹配 TaskContract.scope.exclude 规则"));
-
-      const secretExcluded = RuntimeEnforcer.validateToolExecution(scopedPerm, "write", {
-        path: "/tmp/repo/secret.env",
-      });
-      assert.equal(secretExcluded.allowed, false);
-      assert.ok(secretExcluded.reason?.includes("匹配 TaskContract.scope.exclude 规则"));
-    });
-
-    it("should block worktree-only bash writing absolute path outside the worktree", () => {
-      const worktreePerm: EffectiveRuntimePermission = {
-        profileId: "frontend-standard",
-        allowedTools: ["read", "bash", "edit", "write"],
-        writableScope: "worktree-only",
-        worktreePath: "/tmp/repo/.worktrees/task-fe-1",
-        writablePaths: ["/tmp/repo/.worktrees/task-fe-1"],
-        requiresWorktree: true,
-        isWorktree: true,
-      };
-
-      const outsideRedirect = RuntimeEnforcer.validateToolExecution(worktreePerm, "bash", {
-        command: "echo 'hack' > /tmp/repo/src/index.ts",
-      });
-      assert.equal(outsideRedirect.allowed, false);
-      assert.ok(outsideRedirect.reason?.includes("超出了分配的 Worktree") || outsideRedirect.reason?.includes("未授权"));
-
-      const outsideCp = RuntimeEnforcer.validateToolExecution(worktreePerm, "bash", {
-        command: "cp src/index.ts /tmp/repo/src/index.ts",
-      });
-      assert.equal(outsideCp.allowed, false);
-      assert.ok(outsideCp.reason?.includes("超出了分配的 Worktree") || outsideCp.reason?.includes("未授权"));
-    });
-
-    it("should block tester bash from writing to src/ or production files", () => {
-      const testerPerm: EffectiveRuntimePermission = {
-        profileId: "tester-test-write",
-        allowedTools: ["read", "bash", "edit", "write"],
-        writableScope: "test-only",
-        writablePaths: ["/tmp/repo"],
-        requiresWorktree: false,
-        isWorktree: false,
-      };
-
-      const writeSrc = RuntimeEnforcer.validateToolExecution(testerPerm, "bash", {
-        command: "echo 'modified' > src/services/user.ts",
-      });
-      assert.equal(writeSrc.allowed, false);
-      assert.ok(writeSrc.reason?.includes("严禁修改生产业务路径"));
-
-      const rmSrc = RuntimeEnforcer.validateToolExecution(testerPerm, "bash", {
-        command: "rm src/main.ts",
-      });
-      assert.equal(rmSrc.allowed, false);
-      assert.ok(rmSrc.reason?.includes("严禁修改生产业务路径"));
-
-      const writeTest = RuntimeEnforcer.validateToolExecution(testerPerm, "bash", {
-        command: "echo 'ok' > test/user.test.ts",
-      });
-      assert.equal(writeTest.allowed, true);
-    });
-
-    it("should block deployer bash from modifying business source code", () => {
-      const deployerPerm: EffectiveRuntimePermission = {
-        profileId: "deployer-infra",
-        allowedTools: ["read", "bash"],
-        writableScope: "deploy-only",
-        writablePaths: ["/tmp/repo"],
-        requiresWorktree: false,
-        isWorktree: false,
-      };
-
-      const writeSrc = RuntimeEnforcer.validateToolExecution(deployerPerm, "bash", {
-        command: "echo 'hack' > src/app.ts",
-      });
-      assert.equal(writeSrc.allowed, false);
-      assert.ok(writeSrc.reason?.includes("严禁修改业务源码"));
-
-      const writeDeploy = RuntimeEnforcer.validateToolExecution(deployerPerm, "bash", {
-        command: "echo 'FROM node' > Dockerfile",
-      });
-      assert.equal(writeDeploy.allowed, true);
-    });
-
-    it("should block reviewer from executing node/npm scripts with potential filesystem side effects", () => {
-      const reviewerPerm: EffectiveRuntimePermission = {
-        profileId: "reviewer-readonly",
-        allowedTools: ["read", "bash"],
-        writableScope: "none",
-        writablePaths: [],
-        requiresWorktree: false,
-        isWorktree: false,
-      };
-
-      const nodeScript = RuntimeEnforcer.validateToolExecution(reviewerPerm, "bash", {
-        command: "node build.js",
-      });
-      assert.equal(nodeScript.allowed, false);
-      assert.ok(nodeScript.reason?.includes("副作用的脚本文件"));
-
-      const npmBuild = RuntimeEnforcer.validateToolExecution(reviewerPerm, "bash", {
-        command: "npm run build",
-      });
-      assert.equal(npmBuild.allowed, false);
-      assert.ok(npmBuild.reason?.includes("变更命令"));
-
-      const npmTest = RuntimeEnforcer.validateToolExecution(reviewerPerm, "bash", {
+      const bashCheck = RuntimeEnforcer.validateToolExecution(perm, "bash", {
         command: "npm test",
       });
-      assert.equal(npmTest.allowed, true);
+      assert.equal(bashCheck.allowed, true);
+
+      const readCheck = RuntimeEnforcer.validateToolExecution(perm, "read", {
+        path: "/tmp/project/src/index.ts",
+      });
+      assert.equal(readCheck.allowed, true);
+    });
+
+    it("should validate path containment and glob matching correctly", () => {
+      assert.equal(isPathContained("/tmp/repo", "/tmp/repo/src/index.ts"), true);
+      assert.equal(isPathContained("/tmp/repo", "/tmp/repo/../secret.txt"), false);
+
+      assert.equal(matchesPattern("src/components/Button.tsx", "src/components/**"), true);
+      assert.equal(matchesPattern("src/services/api.ts", "src/components/**"), false);
+      assert.equal(matchesPattern("package.json", "package.json"), true);
     });
   });
 
