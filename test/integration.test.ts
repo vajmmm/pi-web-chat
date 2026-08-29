@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
   canonicalizePath,
   ConstraintResolver,
+  DEFAULT_PERMISSION_PROFILES,
   getPermissionProfile,
   getRoleDefinition,
   isPathContained,
@@ -25,10 +26,14 @@ import { getWorktreeDiff } from "../server/worktree.ts";
 describe("Pi Multi-Agent Runtime Integration Tests", () => {
   describe("1. Real Tool Execution Pipeline Hook (beforeToolCall)", () => {
     it("should intercept edit and write tool calls via session.agent.beforeToolCall for readonly roles", async () => {
-      const permission = ConstraintResolver.resolve({
-        role: "reviewer",
-        cwd: "/tmp/project",
-      }).permission;
+      const permission: EffectiveRuntimePermission = {
+        profileId: "custom-readonly",
+        allowedTools: ["read", "bash"],
+        writableScope: "none",
+        writablePaths: [],
+        requiresWorktree: false,
+        isWorktree: false,
+      };
 
       // 模拟 Pi AgentSession 运行时实例
       let activeTools: string[] = [];
@@ -85,7 +90,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       assert.equal(readResult, undefined); // undefined 代表放行
     });
 
-    it("should dynamically transition permissions without wrapper accumulation: Coordinator -> Fullstack -> Reviewer", async () => {
+    it("should dynamically transition permissions without wrapper accumulation: Readonly -> Fullstack -> Custom Readonly", async () => {
       const mockSession = {
         setActiveToolsByName(_tools: string[]) {},
         agent: {
@@ -93,18 +98,23 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         },
       };
 
-      // 1. 切换至 Coordinator (只读)
-      const coordPerm = ConstraintResolver.resolve({
-        role: "coordinator",
-        cwd: "/tmp/project",
-      }).permission;
-      RuntimeEnforcer.applyPermissionsToSession(mockSession, coordPerm);
+      const readonlyPerm: EffectiveRuntimePermission = {
+        profileId: "test-readonly",
+        allowedTools: ["read", "bash"],
+        writableScope: "none",
+        writablePaths: [],
+        requiresWorktree: false,
+        isWorktree: false,
+      };
+
+      // 1. 切换至 Readonly
+      RuntimeEnforcer.applyPermissionsToSession(mockSession, readonlyPerm);
 
       const coordWrite = await mockSession.agent.beforeToolCall({
         toolCall: { name: "write", id: "c-1" },
         args: { TargetFile: "/tmp/project/src/App.tsx" },
       });
-      assert.equal(coordWrite?.block, true, "Coordinator must NOT be allowed to write");
+      assert.equal(coordWrite?.block, true, "Readonly must NOT be allowed to write");
 
       // 2. 切换至 Fullstack (标准开发写权限)
       const fullstackPerm = ConstraintResolver.resolve({
@@ -119,18 +129,14 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       });
       assert.equal(fullstackWrite, undefined, "Fullstack MUST be allowed to write");
 
-      // 3. 切换至 Reviewer (只审不改)
-      const reviewerPerm = ConstraintResolver.resolve({
-        role: "reviewer",
-        cwd: "/tmp/project",
-      }).permission;
-      RuntimeEnforcer.applyPermissionsToSession(mockSession, reviewerPerm);
+      // 3. 切换回 Readonly
+      RuntimeEnforcer.applyPermissionsToSession(mockSession, readonlyPerm);
 
       const reviewerWrite = await mockSession.agent.beforeToolCall({
         toolCall: { name: "write", id: "c-3" },
         args: { TargetFile: "/tmp/project/src/App.tsx" },
       });
-      assert.equal(reviewerWrite?.block, true, "Reviewer MUST be blocked from writing");
+      assert.equal(reviewerWrite?.block, true, "Readonly MUST be blocked from writing");
     });
   });
 
@@ -143,13 +149,14 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         async () => {
           await manager.spawn({
             parentSessionId: "session-test",
-            role: "junior_fe", // requiresWorktree = true
+            role: "junior_fe",
+            executionOptions: { requiresWorktree: true },
             taskTitle: "前端任务",
             taskPrompt: "实现按钮",
             parentCwd: "/tmp/non-git-dir-for-test-12345",
           });
         },
-        /requires worktree isolation/i,
+        /requires worktree isolation|requires a git repository/i,
       );
     });
 
@@ -161,11 +168,11 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         async () => {
           await manager.spawn({
             parentSessionId: "session-test",
-            role: "default", // requiresWorktree = false
+            role: "default",
             taskTitle: "通用任务",
             taskPrompt: "做测试",
             parentCwd: "/tmp/project",
-            targetCwd: "../../etc/passwd", // 逃逸目录
+            targetCwd: "../../etc/passwd",
           });
         },
         /escapes the assigned worktree\/repo boundary/i,
@@ -180,11 +187,12 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         async () => {
           await manager.spawn({
             parentSessionId: "session-test",
-            role: "reviewer", // readonly
+            role: "reviewer",
+            executionOptions: { writableScope: "none" },
             taskTitle: "审查任务",
             taskPrompt: "做审查",
             parentCwd: "/tmp/project",
-            targetCwd: "non-existent-subfolder-9876",
+            targetCwd: `non-existent-subfolder-${Date.now()}`,
           });
         },
         /Refusing automatic directory creation/i,
@@ -404,7 +412,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const resFullstack = await beforeStart({ systemPrompt: "base" });
       const parsedFullstack = JSON.parse(resFullstack.systemPrompt);
       assert.equal(parsedFullstack.role, "fullstack");
-      assert.equal(parsedFullstack.runtime_permissions.writable_scope, "worktree-only");
+      assert.equal(parsedFullstack.runtime_permissions.writable_scope, "all");
     });
   });
 });

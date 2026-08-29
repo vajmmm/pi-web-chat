@@ -58,6 +58,8 @@ export interface SubagentExecutionOptions {
     thinkingLevel?: UIThinkingLevel;
   };
   permissionProfileId?: string;
+  writableScope?: "none" | "worktree-only" | "test-only" | "all";
+  requiresWorktree?: boolean;
   worktree?: string;
 }
 

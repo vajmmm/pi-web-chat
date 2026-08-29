@@ -170,9 +170,12 @@ export class ConstraintResolver {
       profileId: profile.id,
       allowedTools,
       disallowedTools: profile.disallowedTools ? [...profile.disallowedTools] : undefined,
-      writableScope: profile.writableScope,
+      writableScope: options.executionOptions?.writableScope ?? profile.writableScope,
       writablePaths,
-      requiresWorktree: profile.requiresWorktree,
+      requiresWorktree:
+        options.executionOptions?.requiresWorktree !== undefined
+          ? options.executionOptions.requiresWorktree
+          : profile.requiresWorktree,
       isWorktree,
       worktreePath: options.worktreePath,
       targetCwd: options.targetCwd,

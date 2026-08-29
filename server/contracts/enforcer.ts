@@ -101,7 +101,24 @@ export function validateFilePathPermission(
     isAbsolute(rawPath) ? rawPath : resolve(baseDir, rawPath),
   );
 
-  // 1. 只读角色硬检查
+  // 1. 全量写权限 (writableScope: all)
+  if (permission.writableScope === "all") {
+    // 仅当明确声明了 TaskContract scope exclude 时进行排他校验
+    if (permission.taskScope?.exclude && permission.taskScope.exclude.length > 0) {
+      const relFromBase = relative(canonicalBase, canonicalTarget).replace(/\\/g, "/");
+      for (const exc of permission.taskScope.exclude) {
+        if (matchesPattern(relFromBase, exc) || matchesPattern(rawPath, exc)) {
+          return {
+            allowed: false,
+            reason: `[RuntimeEnforcer] 目标文件 "${rawPath}" 匹配 TaskContract.scope.exclude 规则 ("${exc}")，已被硬拦截修改。`,
+          };
+        }
+      }
+    }
+    return { allowed: true };
+  }
+
+  // 2. 只读角色硬检查
   if (permission.writableScope === "none") {
     return {
       allowed: false,
@@ -333,8 +350,13 @@ function validateReadonlyBash(command: string): ToolValidationResult {
   const trimmed = command.trim();
   if (!trimmed) return { allowed: true };
 
-  // 1. 严格禁止任何重定向写入符号与管道 tee
-  if (/>|>>|\|\s*tee\b|&>/.test(trimmed)) {
+  // 1. 过滤掉无害的 /dev/null 重定向 (如 2>/dev/null, >/dev/null, &>/dev/null)
+  const strippedRedirect = trimmed
+    .replace(/\b[0-9]?\s*>>?\s*\/dev\/null/g, "")
+    .replace(/&>\s*\/dev\/null/g, "");
+
+  // 检查是否仍然存在向真实文件的重定向写入符号与管道 tee
+  if (/>|>>|\|\s*tee\b|&>/.test(strippedRedirect)) {
     return {
       allowed: false,
       reason: `[RuntimeEnforcer] 只读角色严禁通过 bash 输出重定向或 tee 写入文件: "${command}"`,
@@ -421,6 +443,11 @@ function validateBashExecution(
   permission: EffectiveRuntimePermission,
   command: string,
 ): ToolValidationResult {
+  // 0. 全量写权限 (writableScope: all) 无须拦截
+  if (permission.writableScope === "all") {
+    return { allowed: true };
+  }
+
   // 1. 只读角色检查
   if (permission.writableScope === "none") {
     const readonlyCheck = validateReadonlyBash(command);

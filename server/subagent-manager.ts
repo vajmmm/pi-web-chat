@@ -36,6 +36,7 @@ export interface SpawnSubagentOptions {
   role: AgentRole;
   taskTitle: string;
   taskPrompt: string;
+  requiresWorktree?: boolean;
   preferredBranch?: string;
   targetCwd?: string;
   parentCwd: string;
@@ -219,7 +220,14 @@ export class SubagentManager {
     let branchName: string | undefined;
     let baseCommit: string | undefined;
 
-    if (preCheckContext.permission.requiresWorktree) {
+    const effectiveRequiresWorktree =
+      options.executionOptions?.requiresWorktree !== undefined
+        ? options.executionOptions.requiresWorktree
+        : options.requiresWorktree !== undefined
+          ? options.requiresWorktree
+          : preCheckContext.permission.requiresWorktree;
+
+    if (effectiveRequiresWorktree) {
       if (!repoRoot) {
         throw new Error(
           `[SubagentManager] Role "${options.role}" requires worktree isolation (requiresWorktree=true), but parent directory "${options.parentCwd}" is not inside a Git repository. Fail-closed: refusing execution in unisolated workspace.`,
