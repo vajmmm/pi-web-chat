@@ -207,10 +207,12 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const updated: RoleConfigV2 = {
         ...feRole,
         description: "已通过 UI 更新的前端角色描述",
+        allowedTools: ["read", "bash", "grep"],
         definition: {
           ...feRole.definition,
           description: "已通过 UI 更新的前端角色描述",
           responsibilities: ["编写组件", "样式对齐", "页面调试"],
+          allowedTools: ["read", "bash", "grep"],
         },
       };
 
@@ -223,11 +225,15 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       assert.equal(fetchedConfig.description, "已通过 UI 更新的前端角色描述");
       assert.equal(fetchedDef.description, "已通过 UI 更新的前端角色描述");
       assert.deepEqual(fetchedDef.responsibilities, ["编写组件", "样式对齐", "页面调试"]);
+      assert.deepEqual(fetchedConfig.allowedTools, ["read", "bash", "grep"]);
+      assert.deepEqual(fetchedDef.allowedTools, ["read", "bash", "grep"]);
 
       // 重新从磁盘载入
       registry.reload();
       assert.equal(registry.getRole("junior_fe").description, "已通过 UI 更新的前端角色描述");
       assert.deepEqual(registry.getDefinition("junior_fe").responsibilities, ["编写组件", "样式对齐", "页面调试"]);
+      assert.deepEqual(registry.getRole("junior_fe").allowedTools, ["read", "bash", "grep"]);
+      assert.deepEqual(registry.getDefinition("junior_fe").allowedTools, ["read", "bash", "grep"]);
     });
   });
 

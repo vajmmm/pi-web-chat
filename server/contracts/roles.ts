@@ -515,7 +515,7 @@ function shorten(p: string): string {
 export function convertDefinitionToConfig(def: RoleDefinition): RoleConfigV2 {
   const profile = getPermissionProfile(def.permissionProfileId);
   const resolvedTools =
-    def.allowedTools && Array.isArray(def.allowedTools)
+    def.allowedTools !== undefined && Array.isArray(def.allowedTools)
       ? [...def.allowedTools]
       : [...profile.allowedTools];
   return {
@@ -695,8 +695,13 @@ export class RoleRegistry {
         responsibilities: cfg.definition?.responsibilities ?? baseDef.responsibilities,
         strictProhibitions: cfg.definition?.strictProhibitions ?? baseDef.strictProhibitions,
         instructions: cfg.definition?.instructions ?? baseDef.instructions,
-        allowedSkills: cfg.allowedSkills ?? baseDef.allowedSkills,
-        allowedTools: cfg.allowedTools ?? cfg.definition?.allowedTools ?? baseDef.allowedTools,
+        allowedSkills: cfg.allowedSkills ?? cfg.definition?.allowedSkills ?? baseDef.allowedSkills,
+        allowedTools:
+          cfg.allowedTools !== undefined
+            ? cfg.allowedTools
+            : cfg.definition?.allowedTools !== undefined
+              ? cfg.definition.allowedTools
+              : baseDef.allowedTools,
         permissionProfileId: cfg.definition?.permissionProfileId ?? baseDef.permissionProfileId,
         defaultModel: cfg.model ?? baseDef.defaultModel,
       };

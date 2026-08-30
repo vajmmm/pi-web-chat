@@ -1,6 +1,6 @@
 import { Dialog } from "@base-ui-components/react/dialog";
 import { useEffect, useMemo, useState } from "react";
-import type { AgentRole, RoleConfig, UIThinkingLevel } from "../../shared/protocol";
+import type { AgentRole, RoleConfig, RoleDefinition, UIThinkingLevel } from "../../shared/protocol";
 import { saveRolesConfig, useAllTools, useInvalidateRoles, useModels, useRolesConfig, useSkills } from "../lib/api";
 import { useT } from "../lib/i18n";
 
@@ -97,15 +97,19 @@ export function RolesDialog({
     setDraft((prev) =>
       (prev ?? []).map((r) => {
         if (r.id !== activeRoleConfig.id) return r;
-        const updated = { ...r, ...updates };
+        const nextAllowedTools =
+          updates.allowedTools !== undefined ? updates.allowedTools : r.allowedTools;
+        const nextAllowedSkills =
+          updates.allowedSkills !== undefined ? updates.allowedSkills : r.allowedSkills;
+        const updated: RoleConfig = { ...r, ...updates, allowedTools: nextAllowedTools, allowedSkills: nextAllowedSkills };
         if (updated.definition) {
           updated.definition = {
             ...updated.definition,
             id: updated.id,
             name: updated.name || updated.definition.name,
             description: updated.description || updated.definition.description,
-            allowedSkills: updated.allowedSkills ?? updated.definition.allowedSkills,
-            allowedTools: updated.allowedTools ?? updated.definition.allowedTools,
+            allowedSkills: nextAllowedSkills,
+            allowedTools: nextAllowedTools,
             defaultModel: updated.model ?? updated.definition.defaultModel,
           };
         }
@@ -114,18 +118,33 @@ export function RolesDialog({
     );
   };
 
-  const updateActiveRoleDefinition = (updates: Partial<RoleConfig["definition"]>) => {
+  const updateActiveRoleDefinition = (updates: Partial<RoleDefinition>) => {
     if (!activeRoleConfig || !draft || !activeRoleConfig.definition) return;
-    const nextDef = { ...activeRoleConfig.definition, ...updates };
-    const profile = PERMISSION_PROFILES_OPTIONS.find((p) => p.id === nextDef.permissionProfileId);
-    updateActiveRole({
-      definition: nextDef,
-      name: nextDef.name,
-      description: nextDef.description,
-      allowedSkills: nextDef.allowedSkills,
-      allowedTools: nextDef.allowedTools ?? (profile ? profile.allowedTools : activeRoleConfig.allowedTools),
-      requiresWorktree: profile ? profile.requiresWorktree : activeRoleConfig.requiresWorktree,
-    });
+    setDraft((prev) =>
+      (prev ?? []).map((r) => {
+        if (r.id !== activeRoleConfig.id || !r.definition) return r;
+        const nextDef = { ...r.definition, ...updates };
+        const profile = PERMISSION_PROFILES_OPTIONS.find((p) => p.id === nextDef.permissionProfileId);
+        const nextAllowedTools =
+          updates.allowedTools !== undefined
+            ? updates.allowedTools
+            : r.allowedTools !== undefined
+              ? r.allowedTools
+              : nextDef.allowedTools;
+        return {
+          ...r,
+          name: nextDef.name || r.name,
+          description: nextDef.description || r.description,
+          allowedSkills: nextDef.allowedSkills ?? r.allowedSkills,
+          allowedTools: nextAllowedTools,
+          requiresWorktree: profile ? profile.requiresWorktree : r.requiresWorktree,
+          definition: {
+            ...nextDef,
+            allowedTools: nextAllowedTools,
+          },
+        };
+      }),
+    );
   };
 
   const activeProfile = PERMISSION_PROFILES_OPTIONS.find(
@@ -147,9 +166,6 @@ export function RolesDialog({
       next = [...currentAllowedTools, toolName];
     }
     updateActiveRole({ allowedTools: next });
-    if (activeRoleConfig?.definition) {
-      updateActiveRoleDefinition({ allowedTools: next });
-    }
   };
 
   const toggleSkill = (skillName: string) => {
@@ -427,9 +443,6 @@ export function RolesDialog({
                           onClick={() => {
                             const allNames = effectiveToolsCatalog.map((t) => t.name);
                             updateActiveRole({ allowedTools: allNames });
-                            if (activeRoleConfig.definition) {
-                              updateActiveRoleDefinition({ allowedTools: allNames });
-                            }
                           }}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-ink transition-colors"
                         >
@@ -439,9 +452,6 @@ export function RolesDialog({
                           type="button"
                           onClick={() => {
                             updateActiveRole({ allowedTools: [] });
-                            if (activeRoleConfig.definition) {
-                              updateActiveRoleDefinition({ allowedTools: [] });
-                            }
                           }}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-ink transition-colors"
                         >
@@ -452,9 +462,6 @@ export function RolesDialog({
                           onClick={() => {
                             const defaultTools = [...activeProfile.allowedTools];
                             updateActiveRole({ allowedTools: defaultTools });
-                            if (activeRoleConfig.definition) {
-                              updateActiveRoleDefinition({ allowedTools: defaultTools });
-                            }
                           }}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-accent transition-colors"
                           title="恢复为当前权限 Profile 推荐的默认工具组合"
