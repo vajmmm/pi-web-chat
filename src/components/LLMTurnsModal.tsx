@@ -4,7 +4,15 @@ import type { UILLMTurnRecord } from "../../shared/protocol";
 import { useLLMTurns } from "../lib/api";
 
 type FormatMode = "unified" | "vendor";
-type TurnFilterScope = "latest" | "all" | number;
+type RoundFilterScope = "latest" | "all" | number;
+
+interface DialogueRound {
+  roundNumber: number;
+  promptSnippet: string;
+  turnIndices: number[];
+  turnsCount: number;
+  isLatest: boolean;
+}
 
 export function LLMTurnsModal({
   open,
@@ -27,7 +35,7 @@ export function LLMTurnsModal({
 
   const turns = data?.turns ?? [];
   const [formatMode, setFormatMode] = useState<FormatMode>("unified");
-  const [turnFilter, setTurnFilter] = useState<TurnFilterScope>("latest");
+  const [selectedRound, setSelectedRound] = useState<RoundFilterScope>("latest");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [wrapLines, setWrapLines] = useState<boolean>(false);
@@ -37,10 +45,10 @@ export function LLMTurnsModal({
     parsed: any;
   } | null>(null);
 
-  // 打开弹窗时默认重置为展示最新一轮
+  // 每次打开弹窗时默认重置为只看最新一轮对话
   useEffect(() => {
     if (open) {
-      setTurnFilter("latest");
+      setSelectedRound("latest");
     }
   }, [open]);
 
@@ -97,35 +105,89 @@ export function LLMTurnsModal({
     });
   }, [turns, formatMode]);
 
-  // 根据当前选择的范围（默认最新一轮、全部轮次或指定第几轮）筛选显示的行
+  // 将所有 API 调用按「用户对话轮次 (User Dialogue Round)」进行归类分组
+  // 1 轮 = 用户发给模型一句话 ➔ 到 AI 对这句话的最终回复结束（期间可能包含多次工具调用与中间交互）
+  const dialogueRounds = useMemo(() => {
+    const roundMap = new Map<number, DialogueRound>();
+
+    turns.forEach((turn, idx) => {
+      const userMsgs = (turn.messages || []).filter((m: any) => m?.role === "user");
+      const roundNumber = Math.max(1, userMsgs.length);
+      const lastUserMsg: any = userMsgs[userMsgs.length - 1];
+
+      let promptSnippet = "";
+      if (lastUserMsg) {
+        if (typeof lastUserMsg.content === "string") {
+          promptSnippet = lastUserMsg.content;
+        } else if (Array.isArray(lastUserMsg.content)) {
+          promptSnippet = lastUserMsg.content
+            .map((c: any) => (typeof c === "string" ? c : c?.text || ""))
+            .join(" ");
+        }
+      }
+      promptSnippet = promptSnippet.replace(/\s+/g, " ").trim();
+      if (promptSnippet.length > 26) {
+        promptSnippet = promptSnippet.slice(0, 26) + "...";
+      }
+
+      let existing = roundMap.get(roundNumber);
+      if (!existing) {
+        existing = {
+          roundNumber,
+          promptSnippet: promptSnippet || `第 ${roundNumber} 轮对话`,
+          turnIndices: [],
+          turnsCount: 0,
+          isLatest: false,
+        };
+        roundMap.set(roundNumber, existing);
+      }
+      existing.turnIndices.push(idx);
+      existing.turnsCount++;
+    });
+
+    const list = Array.from(roundMap.values()).sort((a, b) => a.roundNumber - b.roundNumber);
+    if (list.length > 0) {
+      list[list.length - 1].isLatest = true;
+    }
+    return list;
+  }, [turns]);
+
+  // 当前激活的对话轮次对象
+  const activeRound = useMemo(() => {
+    if (dialogueRounds.length === 0) return null;
+    if (selectedRound === "latest") return dialogueRounds[dialogueRounds.length - 1];
+    if (selectedRound === "all") return null;
+    return dialogueRounds.find((r) => r.roundNumber === selectedRound) || dialogueRounds[dialogueRounds.length - 1];
+  }, [dialogueRounds, selectedRound]);
+
+  // 筛选属于当前所选对话轮次的 API 调用记录
   const displayedTurnLines = useMemo(() => {
     if (allTurnLines.length === 0) return [];
 
     let scopedList = allTurnLines;
-    if (turnFilter === "latest") {
-      scopedList = [allTurnLines[allTurnLines.length - 1]];
-    } else if (typeof turnFilter === "number") {
-      const target = allTurnLines.find((t) => t.index === turnFilter);
-      scopedList = target ? [target] : [allTurnLines[allTurnLines.length - 1]];
+    if (selectedRound === "latest") {
+      const latest = dialogueRounds[dialogueRounds.length - 1];
+      if (latest) {
+        const allowed = new Set(latest.turnIndices);
+        scopedList = allTurnLines.filter((t) => allowed.has(t.index));
+      }
+    } else if (typeof selectedRound === "number") {
+      const target = dialogueRounds.find((r) => r.roundNumber === selectedRound);
+      if (target) {
+        const allowed = new Set(target.turnIndices);
+        scopedList = allTurnLines.filter((t) => allowed.has(t.index));
+      }
     }
 
     if (!searchQuery.trim()) return scopedList;
     const q = searchQuery.toLowerCase();
     return scopedList.filter((item) => item.raw.toLowerCase().includes(q));
-  }, [allTurnLines, turnFilter, searchQuery]);
+  }, [allTurnLines, dialogueRounds, selectedRound, searchQuery]);
 
   const fullJsonlText = useMemo(
     () => allTurnLines.map((t) => t.raw).join("\n"),
     [allTurnLines],
   );
-
-  // 计算当前聚焦的轮次序号（0-based）
-  const currentIdx =
-    turnFilter === "latest"
-      ? turns.length - 1
-      : typeof turnFilter === "number"
-        ? turnFilter
-        : turns.length - 1;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -142,10 +204,10 @@ export function LLMTurnsModal({
                 API 实际发送内容监视器 (1行1条完整 JSON)
               </Dialog.Title>
               <span className="hidden sm:inline-flex items-center gap-1.5 border border-line bg-canvas px-2 py-0.5 text-[10px] text-faint">
-                <span>共 {turns.length} 条调用记录</span>
-                {turnFilter === "latest" && (
+                <span>共 {turns.length} 次调用 / {dialogueRounds.length} 轮对话</span>
+                {selectedRound === "latest" && activeRound && (
                   <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                    (默认仅显示最新第 {turns.length} 轮)
+                    (默认仅展示最新第 {activeRound.roundNumber} 轮对话的 {activeRound.turnsCount} 次调用)
                   </span>
                 )}
               </span>
@@ -157,7 +219,7 @@ export function LLMTurnsModal({
                   type="button"
                   onClick={() => copyText("full-jsonl", fullJsonlText)}
                   className="border border-line bg-card px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-ink transition-colors"
-                  title="一键复制全部 JSONL 文本（每行一条完整 JSON）"
+                  title="一键复制全部轮次的完整 JSONL（每行一条）"
                 >
                   {copiedKey === "full-jsonl" ? "✓ 全部 JSONL 已复制" : "📋 复制全部 JSONL"}
                 </button>
@@ -196,7 +258,7 @@ export function LLMTurnsModal({
             </div>
           </div>
 
-          {/* 格式切换与控制栏 */}
+          {/* 格式切换与对话轮次选择栏 */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-canvas px-4 py-2 shrink-0 text-xs">
             <div className="flex items-center gap-1.5">
               <button
@@ -209,7 +271,7 @@ export function LLMTurnsModal({
                 }`}
                 title="Pi 内部统一中间格式"
               >
-                🌐 1. Pi 内部统一格式 ({turns.length})
+                🌐 1. Pi 内部统一格式 ({displayedTurnLines.length})
               </button>
               <button
                 type="button"
@@ -221,68 +283,83 @@ export function LLMTurnsModal({
                 }`}
                 title="实际通过网络发送给大模型厂商 API 的完整原生 HTTP 请求体"
               >
-                🏢 2. 实际发往厂商格式 ({turns.length})
+                🏢 2. 实际发往厂商格式 ({displayedTurnLines.length})
               </button>
             </div>
 
-            {/* 轮次选择与显示范围控制 */}
+            {/* 对话轮次选择器：默认显示最新一轮（用户发一句话到最终回复） */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  disabled={currentIdx <= 0}
-                  onClick={() => setTurnFilter(Math.max(0, currentIdx - 1))}
+                  disabled={!activeRound || activeRound.roundNumber <= 1}
+                  onClick={() => {
+                    if (activeRound) {
+                      setSelectedRound(activeRound.roundNumber - 1);
+                    }
+                  }}
                   className="border border-line bg-card px-1.5 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink disabled:opacity-30"
-                  title="查看上一轮"
+                  title="查看上一轮用户对话"
                 >
-                  ◀ 上一轮
+                  ◀ 上一轮对话
                 </button>
 
                 <select
                   value={
-                    turnFilter === "latest"
+                    selectedRound === "latest"
                       ? "latest"
-                      : turnFilter === "all"
+                      : selectedRound === "all"
                         ? "all"
-                        : String(turnFilter)
+                        : String(selectedRound)
                   }
                   onChange={(e) => {
                     const val = e.target.value;
                     if (val === "latest" || val === "all") {
-                      setTurnFilter(val);
+                      setSelectedRound(val);
                     } else {
-                      setTurnFilter(Number(val));
+                      setSelectedRound(Number(val));
                     }
                   }}
-                  className="border border-line bg-card px-2 py-0.5 text-[11px] text-ink outline-none focus:border-accent cursor-pointer"
-                  title="切换显示范围：默认仅显示最新一轮，可选择指定历史轮次或显示全部"
+                  className="border border-line bg-card px-2 py-0.5 text-[11px] text-ink outline-none focus:border-accent cursor-pointer max-w-[240px] sm:max-w-xs truncate"
+                  title="切换对话轮次（1 轮 = 用户发一句话到 AI 最终回复，包含期间的所有工具调用）"
                 >
-                  <option value="latest">🌟 仅显示最新轮次 (第 {turns.length} 轮)</option>
-                  <option value="all">📑 显示全部轮次 ({turns.length} 条)</option>
-                  <optgroup label="指定历史轮次">
-                    {turns.map((t, idx) => (
-                      <option key={t.turnIndex} value={idx}>
-                        第 {idx + 1} 轮 {idx === turns.length - 1 ? "(最新)" : ""} ({t.timeStr})
-                      </option>
-                    ))}
-                  </optgroup>
+                  {dialogueRounds.length > 0 && (
+                    <option value="latest">
+                      🌟 最新一轮对话 (第 {dialogueRounds[dialogueRounds.length - 1].roundNumber} 轮: &quot;{dialogueRounds[dialogueRounds.length - 1].promptSnippet}&quot; · {dialogueRounds[dialogueRounds.length - 1].turnsCount} 次调用)
+                    </option>
+                  )}
+                  {dialogueRounds.length > 1 && (
+                    <optgroup label="历史对话轮次">
+                      {dialogueRounds.map((r) => (
+                        <option key={r.roundNumber} value={r.roundNumber}>
+                          第 {r.roundNumber} 轮对话: &quot;{r.promptSnippet}&quot; ({r.turnsCount} 次调用)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <option value="all">
+                    📑 显示全部所有对话 ({dialogueRounds.length} 轮 · {turns.length} 次调用)
+                  </option>
                 </select>
 
                 <button
                   type="button"
-                  disabled={currentIdx >= turns.length - 1}
+                  disabled={!activeRound || activeRound.isLatest}
                   onClick={() => {
-                    const next = currentIdx + 1;
-                    if (next >= turns.length - 1) {
-                      setTurnFilter("latest");
-                    } else {
-                      setTurnFilter(next);
+                    if (activeRound) {
+                      const next = activeRound.roundNumber + 1;
+                      const maxRound = dialogueRounds[dialogueRounds.length - 1]?.roundNumber;
+                      if (next >= maxRound) {
+                        setSelectedRound("latest");
+                      } else {
+                        setSelectedRound(next);
+                      }
                     }
                   }}
                   className="border border-line bg-card px-1.5 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink disabled:opacity-30"
-                  title="查看下一轮"
+                  title="查看下一轮用户对话"
                 >
-                  下一轮 ▶
+                  下一轮对话 ▶
                 </button>
               </div>
 
@@ -291,7 +368,7 @@ export function LLMTurnsModal({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="搜索内容关键词..."
-                className="border border-line bg-card px-2 py-0.5 text-xs text-ink placeholder:text-faint outline-none focus:border-accent w-36 sm:w-44"
+                className="border border-line bg-card px-2 py-0.5 text-xs text-ink placeholder:text-faint outline-none focus:border-accent w-32 sm:w-40"
               />
 
               <label className="flex items-center gap-1 text-[11px] text-muted cursor-pointer">
@@ -319,7 +396,7 @@ export function LLMTurnsModal({
             ) : displayedTurnLines.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center text-muted">
                 <span className="text-xl mb-1">🔍</span>
-                <span className="text-xs font-bold">没有匹配的内容</span>
+                <span className="text-xs font-bold">当前对话轮次没有匹配的内容</span>
               </div>
             ) : (
               <div className="min-w-full w-max">
@@ -419,5 +496,6 @@ export function LLMTurnsModal({
     </Dialog.Root>
   );
 }
+
 
 
