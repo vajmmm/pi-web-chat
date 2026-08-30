@@ -190,27 +190,28 @@ export function validateTaskResult(
   let verification: VerificationEvidence[] | undefined;
   if (Array.isArray(obj.verification)) {
     verification = [];
-    const validKinds = ["test", "build", "typecheck", "lint", "command", "manual"];
-    const validVerifStatuses = ["passed", "failed", "blocked", "not_run"];
     for (let idx = 0; idx < obj.verification.length; idx++) {
       const v = obj.verification[idx];
       if (!v || typeof v !== "object") {
-        errors.push(`verification[${idx}] must be a non-null object`);
         continue;
       }
-      if (!v.kind || !validKinds.includes(v.kind)) {
-        errors.push(
-          `verification[${idx}].kind "${v.kind}" is invalid. Expected one of: ${validKinds.join(", ")}`,
-        );
-      }
-      if (!v.status || !validVerifStatuses.includes(v.status)) {
-        errors.push(
-          `verification[${idx}].status "${v.status}" is invalid. Expected one of: ${validVerifStatuses.join(", ")}`,
-        );
-      }
+      const rawStatusStr = String(v.status || "").toLowerCase();
+      const mappedStatus =
+        rawStatusStr === "completed" ||
+        rawStatusStr === "success" ||
+        rawStatusStr === "ok" ||
+        rawStatusStr === "done" ||
+        rawStatusStr === "passed"
+          ? "passed"
+          : rawStatusStr === "failed" || rawStatusStr === "error"
+            ? "failed"
+            : rawStatusStr === "blocked"
+              ? "blocked"
+              : "not_run";
+
       verification.push({
-        kind: validKinds.includes(v.kind) ? v.kind : "command",
-        status: validVerifStatuses.includes(v.status) ? v.status : "failed",
+        kind: typeof v.kind === "string" && v.kind.trim() ? v.kind.trim() : "command",
+        status: mappedStatus,
         command: typeof v.command === "string" ? v.command : undefined,
         exitCode: typeof v.exitCode === "number" ? v.exitCode : undefined,
         summary: typeof v.summary === "string" ? v.summary : undefined,
@@ -233,17 +234,16 @@ export function validateTaskResult(
   let reviewReport: ReviewVerdictReport | undefined;
   if (obj.reviewReport && typeof obj.reviewReport === "object") {
     const rr = obj.reviewReport as Record<string, unknown>;
-    if (rr.verdict === "APPROVE" || rr.verdict === "REQUEST_CHANGES") {
-      reviewReport = {
-        verdict: rr.verdict,
-        summary: typeof rr.summary === "string" ? rr.summary : undefined,
-        issues: Array.isArray(rr.issues) ? rr.issues : undefined,
-      };
-    } else {
-      errors.push(
-        `reviewReport.verdict "${rr.verdict}" is invalid. Expected "APPROVE" or "REQUEST_CHANGES".`,
-      );
-    }
+    const rawVerdict = String(rr.verdict || "").toUpperCase();
+    const verdict =
+      rawVerdict === "APPROVE" || rawVerdict === "APPROVED" || rawVerdict === "PASS"
+        ? "APPROVE"
+        : "REQUEST_CHANGES";
+    reviewReport = {
+      verdict,
+      summary: typeof rr.summary === "string" ? rr.summary : undefined,
+      issues: Array.isArray(rr.issues) ? (rr.issues as any[]) : undefined,
+    };
   }
 
   let deployEvidence: DeployEvidenceReport | undefined;
@@ -308,7 +308,9 @@ export function validateTaskResult(
     typeof obj.completedAt === "string" ? obj.completedAt : new Date().toISOString();
 
   const finalStatus: TaskExecutionStatus =
-    errors.length > 0 && status === "completed" ? "failed" : status;
+    status === "completed" && verification?.some((v) => v.status === "failed" || v.status === "blocked")
+      ? "failed"
+      : status;
 
   const rawUnresolved = Array.isArray(obj.unresolvedItems)
     ? (obj.unresolvedItems.filter((item) => typeof item === "string") as string[])

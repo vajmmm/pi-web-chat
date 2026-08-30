@@ -124,7 +124,7 @@ export class PromptAssembler {
             ]
           : [
               "Your last assistant message is the only text sent back to the parent. Provide structured conclusions and verification evidence.",
-              "When completing, include a <task_result> JSON block matching the TaskResult schema (status: completed/blocked/failed, summary, verification: [{kind, command, status, summary}], reviewReport, deployEvidence, unresolvedItems) so the system and Coordinator can machine-read your deliverables without ambiguity.",
+              "When completing, directly provide a concise, structured conclusion report of your findings, deliverables, or decisions so the Coordinator and user can easily read your results.",
               "Do not recap intermediate reasoning, tool narration, or raw tool logs. The full transcript stays in the task UI.",
             ]),
       ],
