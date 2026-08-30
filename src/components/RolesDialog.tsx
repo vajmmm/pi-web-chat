@@ -1,5 +1,5 @@
 import { Dialog } from "@base-ui-components/react/dialog";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AgentRole, RoleConfig, UIThinkingLevel } from "../../shared/protocol";
 import { saveRolesConfig, useAllTools, useInvalidateRoles, useModels, useRolesConfig, useSkills } from "../lib/api";
 import { useT } from "../lib/i18n";
@@ -32,6 +32,20 @@ const PERMISSION_PROFILES_OPTIONS = [
   { id: "standard-dev", name: "通用全功能开发 (无限制)", writableScope: "all", requiresWorktree: false, allowedTools: ["read", "bash", "edit", "write"] },
 ];
 
+const DEFAULT_TOOLS_CATALOG: Array<{ name: string; label: string; description: string; category: string }> = [
+  { name: "read", label: "读取文件 (read)", description: "读取指定文件的文本或代码内容", category: "core" },
+  { name: "bash", label: "终端命令 (bash)", description: "执行系统终端 bash 命令 (支持编译、测试、Git 及任意命令)", category: "core" },
+  { name: "edit", label: "精准编辑 (edit)", description: "按文本匹配对文件进行局部精准替换", category: "core" },
+  { name: "write", label: "新建/覆写 (write)", description: "创建新文件或完全重写已有文件", category: "core" },
+  { name: "grep", label: "内容正则检索 (grep)", description: "Pi 原生结构化代码正则搜索（免启动 Shell，安全防爆）", category: "core" },
+  { name: "find", label: "文件路径查找 (find)", description: "Pi 原生按 Glob 模式快速查找文件名与路径", category: "core" },
+  { name: "ls", label: "目录清单查看 (ls)", description: "Pi 原生快速列出目录结构与文件大小", category: "core" },
+  { name: "list_available_roles", label: "查询可用角色 (list_roles)", description: "查询当前支持的所有子智能体角色列表与能力", category: "subagents" },
+  { name: "spawn_subagent", label: "派发子任务 (spawn_subagent)", description: "派发一个独立的异步子智能体任务并在独立工作区运行", category: "subagents" },
+  { name: "abort_subagent", label: "中断子任务 (abort_subagent)", description: "取消或中断正在后台运行的子任务", category: "subagents" },
+  { name: "list_subagents", label: "列出子任务 (list_subagents)", description: "列出当前会话派发的所有子任务及其运行状态", category: "subagents" },
+];
+
 export function RolesDialog({
   open,
   onOpenChange,
@@ -42,6 +56,7 @@ export function RolesDialog({
   const t = useT();
   const { data, refetch } = useRolesConfig(open);
   const { data: models = [] } = useModels();
+  const { data: allTools = [] } = useAllTools();
   const { data: allSkills = [] } = useSkills(undefined, open);
   const invalidateRoles = useInvalidateRoles();
 
@@ -49,6 +64,23 @@ export function RolesDialog({
   const [selectedRole, setSelectedRole] = useState<AgentRole>("coordinator");
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
+
+  // 合并后端返回的所有工具与内置基础工具清单
+  const effectiveToolsCatalog = useMemo(() => {
+    const map = new Map<string, { name: string; label: string; description: string; category: string }>();
+    for (const t of DEFAULT_TOOLS_CATALOG) {
+      map.set(t.name, t);
+    }
+    for (const t of allTools) {
+      map.set(t.name, {
+        name: t.name,
+        label: t.label || t.name,
+        description: t.description || "",
+        category: t.category || "custom",
+      });
+    }
+    return Array.from(map.values());
+  }, [allTools]);
 
   useEffect(() => {
     if (open && data?.roles) {
@@ -73,6 +105,7 @@ export function RolesDialog({
             name: updated.name || updated.definition.name,
             description: updated.description || updated.definition.description,
             allowedSkills: updated.allowedSkills ?? updated.definition.allowedSkills,
+            allowedTools: updated.allowedTools ?? updated.definition.allowedTools,
             defaultModel: updated.model ?? updated.definition.defaultModel,
           };
         }
@@ -90,12 +123,34 @@ export function RolesDialog({
       name: nextDef.name,
       description: nextDef.description,
       allowedSkills: nextDef.allowedSkills,
+      allowedTools: nextDef.allowedTools ?? (profile ? profile.allowedTools : activeRoleConfig.allowedTools),
       requiresWorktree: profile ? profile.requiresWorktree : activeRoleConfig.requiresWorktree,
-      allowedTools: profile ? profile.allowedTools : activeRoleConfig.allowedTools,
     });
   };
 
+  const activeProfile = PERMISSION_PROFILES_OPTIONS.find(
+    (p) => p.id === (activeRoleConfig?.definition?.permissionProfileId || "standard-dev"),
+  ) ?? PERMISSION_PROFILES_OPTIONS[0];
+
   const currentAllowedSkills = activeRoleConfig?.allowedSkills ?? [];
+  const currentAllowedTools =
+    activeRoleConfig?.allowedTools ??
+    activeRoleConfig?.definition?.allowedTools ??
+    activeProfile.allowedTools ??
+    [];
+
+  const toggleTool = (toolName: string) => {
+    let next: string[];
+    if (currentAllowedTools.includes(toolName)) {
+      next = currentAllowedTools.filter((t) => t !== toolName);
+    } else {
+      next = [...currentAllowedTools, toolName];
+    }
+    updateActiveRole({ allowedTools: next });
+    if (activeRoleConfig?.definition) {
+      updateActiveRoleDefinition({ allowedTools: next });
+    }
+  };
 
   const toggleSkill = (skillName: string) => {
     let next: string[];
@@ -128,10 +183,6 @@ export function RolesDialog({
     setStatus("idle");
     setError(null);
   };
-
-  const activeProfile = PERMISSION_PROFILES_OPTIONS.find(
-    (p) => p.id === (activeRoleConfig?.definition?.permissionProfileId || "standard-dev"),
-  ) ?? PERMISSION_PROFILES_OPTIONS[0];
 
   const isLegacy = Boolean(activeRoleConfig?.definition?.isLegacy);
 
@@ -289,27 +340,96 @@ export function RolesDialog({
                     </label>
                   ) : null}
 
-                  {/* 权限 Profile 派生只读预览 */}
-                  <div className="p-3 border-2 border-line bg-canvas/40 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold text-ink">
-                      <span>🔒 运行时权限派生状态 (Derived from Profile)</span>
-                      <span className="text-[10px] text-accent font-mono">
-                        writableScope: {activeProfile.writableScope}
-                      </span>
+                  {/* 可用工具权限复选框列表 (Allowed Tools) */}
+                  <div className="border-2 border-line bg-canvas/30 p-3 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-bold text-ink flex items-center gap-1.5">
+                          <span>🛠️ 该角色可用工具权限 (Allowed Tools)</span>
+                          <span className="text-[10px] text-accent font-normal">
+                            (已选 {currentAllowedTools.length} / {effectiveToolsCatalog.length} 个)
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allNames = effectiveToolsCatalog.map((t) => t.name);
+                            updateActiveRole({ allowedTools: allNames });
+                            if (activeRoleConfig.definition) {
+                              updateActiveRoleDefinition({ allowedTools: allNames });
+                            }
+                          }}
+                          className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-ink transition-colors"
+                        >
+                          全选
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateActiveRole({ allowedTools: [] });
+                            if (activeRoleConfig.definition) {
+                              updateActiveRoleDefinition({ allowedTools: [] });
+                            }
+                          }}
+                          className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-ink transition-colors"
+                        >
+                          清空
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaultTools = [...activeProfile.allowedTools];
+                            updateActiveRole({ allowedTools: defaultTools });
+                            if (activeRoleConfig.definition) {
+                              updateActiveRoleDefinition({ allowedTools: defaultTools });
+                            }
+                          }}
+                          className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-accent transition-colors"
+                          title="恢复为当前权限 Profile 推荐的默认工具组合"
+                        >
+                          恢复预设
+                        </button>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-[11px] text-muted">
-                      <div>
-                        • Worktree 独立隔离:{" "}
-                        <span className="font-bold text-ink">
-                          {activeProfile.requiresWorktree ? "强制开启 (.worktrees/)" : "关闭 (共享工作区)"}
-                        </span>
-                      </div>
-                      <div>
-                        • 工具权限:{" "}
-                        <span className="font-bold text-ink font-mono">
-                          {activeProfile.allowedTools.join(", ")}
-                        </span>
-                      </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                      {effectiveToolsCatalog.map((tool) => {
+                        const isChecked = currentAllowedTools.includes(tool.name);
+                        return (
+                          <label
+                            key={tool.name}
+                            className={`flex items-start gap-2.5 border p-2.5 cursor-pointer transition-all ${
+                              isChecked
+                                ? "border-accent/80 bg-accent/10 shadow-[var(--pixel-shadow-sm)]"
+                                : "border-line bg-card/60 opacity-75 hover:opacity-100"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleTool(tool.name)}
+                              className="size-4 accent-accent mt-0.5 shrink-0"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between text-xs font-bold">
+                                <span className={isChecked ? "text-accent font-mono" : "text-ink font-mono"}>
+                                  {tool.label || tool.name}
+                                </span>
+                                <span className="text-[9px] px-1 py-0.5 border border-line bg-canvas text-faint uppercase font-mono">
+                                  {tool.category || "tool"}
+                                </span>
+                              </div>
+                              {tool.description && (
+                                <div className="text-[11px] text-muted leading-relaxed mt-0.5">
+                                  {tool.description}
+                                </div>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
 

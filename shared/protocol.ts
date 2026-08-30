@@ -54,6 +54,7 @@ export interface RoleDefinition {
   /** 角色专属工作方法、流程与判断原则 */
   instructions?: string;
   allowedSkills?: string[];
+  allowedTools?: string[];
   permissionProfileId: string;
   defaultModel?: {
     provider?: string;

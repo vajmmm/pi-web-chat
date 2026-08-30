@@ -162,9 +162,11 @@ export class ConstraintResolver {
     );
 
     const allowedTools =
-      role.isLegacy && role.legacyAllowedTools && role.legacyAllowedTools.length > 0
-        ? [...role.legacyAllowedTools]
-        : [...profile.allowedTools];
+      role.allowedTools && role.allowedTools.length > 0
+        ? [...role.allowedTools]
+        : role.isLegacy && role.legacyAllowedTools && role.legacyAllowedTools.length > 0
+          ? [...role.legacyAllowedTools]
+          : [...profile.allowedTools];
 
     const permission: EffectiveRuntimePermission = {
       profileId: profile.id,

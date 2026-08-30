@@ -514,6 +514,10 @@ function shorten(p: string): string {
  */
 export function convertDefinitionToConfig(def: RoleDefinition): RoleConfigV2 {
   const profile = getPermissionProfile(def.permissionProfileId);
+  const resolvedTools =
+    def.allowedTools && Array.isArray(def.allowedTools)
+      ? [...def.allowedTools]
+      : [...profile.allowedTools];
   return {
     schemaVersion: 2,
     id: def.id,
@@ -521,10 +525,13 @@ export function convertDefinitionToConfig(def: RoleDefinition): RoleConfigV2 {
     description: def.description,
     systemPrompt: `${def.description}\n\n[Responsibilities]\n${def.responsibilities.map((r) => `- ${r}`).join("\n")}\n\n[Strict Prohibitions]\n${def.strictProhibitions.map((p) => `- ${p}`).join("\n")}${def.instructions ? `\n\n[Instructions]\n${def.instructions}` : ""}`,
     model: def.defaultModel,
-    allowedTools: [...profile.allowedTools],
+    allowedTools: resolvedTools,
     allowedSkills: def.allowedSkills ? [...def.allowedSkills] : [],
     requiresWorktree: profile.requiresWorktree,
-    definition: def,
+    definition: {
+      ...def,
+      allowedTools: resolvedTools,
+    },
   };
 }
 
@@ -618,7 +625,11 @@ export class RoleRegistry {
             if (item && item.id) {
               if (item.schemaVersion === 2 && item.definition) {
                 // V2 格式：直接使用 definition
-                this.roles.set(item.id, convertDefinitionToConfig(item.definition));
+                const def = {
+                  ...item.definition,
+                  allowedTools: item.allowedTools ?? item.definition.allowedTools,
+                };
+                this.roles.set(item.id, convertDefinitionToConfig(def));
               } else {
                 // Legacy V1 格式：保留原样并通过 normalize 构造 definition
                 const def = normalizeRoleToV2(item);
@@ -685,6 +696,7 @@ export class RoleRegistry {
         strictProhibitions: cfg.definition?.strictProhibitions ?? baseDef.strictProhibitions,
         instructions: cfg.definition?.instructions ?? baseDef.instructions,
         allowedSkills: cfg.allowedSkills ?? baseDef.allowedSkills,
+        allowedTools: cfg.allowedTools ?? cfg.definition?.allowedTools ?? baseDef.allowedTools,
         permissionProfileId: cfg.definition?.permissionProfileId ?? baseDef.permissionProfileId,
         defaultModel: cfg.model ?? baseDef.defaultModel,
       };
