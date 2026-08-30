@@ -72,7 +72,7 @@ export function Blocks({ blocks, markdown }: { blocks: UIContentBlock[]; markdow
             return markdown ? (
               <Markdown key={i} text={b.text} />
             ) : (
-              <div key={i} className="whitespace-pre-wrap leading-relaxed">
+              <div key={i} className="whitespace-pre-wrap leading-relaxed break-words [overflow-wrap:anywhere]">
                 {b.text}
               </div>
             );
@@ -102,18 +102,18 @@ export function Blocks({ blocks, markdown }: { blocks: UIContentBlock[]; markdow
 export function Message({ message }: { message: UIMessage }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] border-2 border-[#c2a9df] bg-bubble px-4 py-2.5 font-mono text-[13.5px] leading-relaxed text-ink shadow-[3px_3px_0_rgba(119,68,180,0.12)] sm:max-w-[75%] dark:border-[#674b88]">
+      <div className="flex justify-end min-w-0">
+        <div className="max-w-[85%] border-2 border-[#c2a9df] bg-bubble px-4 py-2.5 font-mono text-[13.5px] leading-relaxed text-ink shadow-[3px_3px_0_rgba(119,68,180,0.12)] sm:max-w-[75%] dark:border-[#674b88] break-words [overflow-wrap:anywhere] min-w-0">
           <Blocks blocks={message.content} markdown={false} />
         </div>
       </div>
     );
   }
   return (
-    <div className="text-[14px] leading-relaxed">
+    <div className="text-[14px] leading-relaxed break-words [overflow-wrap:anywhere] min-w-0">
       <Blocks blocks={message.content} markdown />
       {message.errorMessage && (
-        <div className="mt-2 border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400">
+        <div className="mt-2 border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 break-words [overflow-wrap:anywhere]">
           {message.errorMessage}
         </div>
       )}

@@ -57,7 +57,10 @@ export function createCoordinatorExtension(
                 responsibilities: d.responsibilities,
                 strict_prohibitions: d.strictProhibitions,
                 allowed_skills: d.allowedSkills ?? [],
-                allowed_tools: profile.allowedTools,
+                allowed_tools:
+                  d.allowedTools && d.allowedTools.length > 0
+                    ? d.allowedTools
+                    : profile.allowedTools,
                 writable_scope: profile.writableScope,
                 requires_worktree: profile.requiresWorktree,
               };

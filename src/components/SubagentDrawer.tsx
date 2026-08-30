@@ -151,12 +151,12 @@ function SubagentConversationDialog({
           {/* 完整会话内容流 */}
           <div className="thin-scroll flex flex-1 flex-col gap-4 overflow-y-auto p-4 bg-canvas">
             {/* 1. 派发提示词卡片 */}
-            <div className="border-2 border-[#c2a9df] bg-bubble p-3 font-mono shadow-[var(--pixel-shadow-sm)] dark:border-[#674b88]">
+            <div className="border-2 border-[#c2a9df] bg-bubble p-3 font-mono shadow-[var(--pixel-shadow-sm)] dark:border-[#674b88] break-words [overflow-wrap:anywhere]">
               <div className="flex items-center justify-between border-b border-accent/30 pb-1.5 mb-2 text-xs font-bold text-accent">
                 <span>📥 统筹者派发任务提示词 (Task Prompt)</span>
                 <span className="text-[10px] text-muted">{task.createdAt}</span>
               </div>
-              <div className="text-[13px] whitespace-pre-wrap leading-relaxed text-ink">
+              <div className="text-[13px] whitespace-pre-wrap leading-relaxed text-ink break-words [overflow-wrap:anywhere]">
                 {task.taskPrompt}
               </div>
             </div>

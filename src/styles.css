@@ -206,6 +206,8 @@ html.ua-keyboard .composer-bar {
   --tw-prose-th-borders: var(--c-line);
   --tw-prose-td-borders: var(--c-line);
   font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .prose pre {
@@ -238,4 +240,6 @@ html.ua-keyboard .composer-bar {
   font-family: var(--font-mono);
   font-weight: 600;
   border-radius: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
