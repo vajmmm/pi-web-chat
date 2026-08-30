@@ -51,12 +51,11 @@ export class PromptAssembler {
     const payload: Record<string, unknown> = {
       system_runtime: "Pi Multi-Agent Harness",
       hierarchy_priority: [
-        "1. Runtime Enforcement (Hard Sandbox)",
-        "2. Shared Invariants (Non-overridable Core Rules)",
-        "3. Role Constraints (Role Responsibilities & Strict Prohibitions)",
-        "4. Project Rules (AGENTS.md / Repository Instructions)",
-        "5. Shared Defaults (Engineering Guidelines)",
-        "6. Task Contract (Dynamic Task Input & Expected Deliverables)",
+        "1. Shared Invariants (Non-overridable Core Rules)",
+        "2. Role Constraints (Role Responsibilities & Strict Prohibitions)",
+        "3. Project Rules (AGENTS.md / Repository Instructions)",
+        "4. Shared Defaults (Engineering Guidelines)",
+        "5. Task Contract (Dynamic Task Input & Expected Deliverables)",
       ],
       // Stable Layer 1: 全局不可覆盖硬约束
       shared_invariants: context.invariants,
@@ -69,20 +68,11 @@ export class PromptAssembler {
         strict_prohibitions: context.roleConstraints.strictProhibitions,
         ...(context.role.instructions ? { instructions: context.role.instructions } : {}),
       },
-      // Stable Layer 3: 运行时权限边界
-      runtime_permissions: {
-        profile_id: context.permission.profileId,
-        allowed_tools: context.permission.allowedTools,
-        disallowed_tools: context.permission.disallowedTools ?? [],
-        writable_scope: context.permission.writableScope,
-        requires_worktree: context.permission.requiresWorktree,
-        is_worktree: context.permission.isWorktree,
-      },
-      // Stable Layer 4: 项目规则
+      // Stable Layer 3: 项目规则
       ...(context.projectRules.length > 0
         ? { project_rules: context.projectRules }
         : {}),
-      // Stable Layer 5: 专属业务技能
+      // Stable Layer 4: 专属业务技能
       ...(context.assignedSkills.length > 0
         ? {
             assigned_skills: context.assignedSkills.map((s) => ({
@@ -91,9 +81,9 @@ export class PromptAssembler {
             })),
           }
         : {}),
-      // Stable Layer 6: 通用工程规范默认指引
+      // Stable Layer 5: 通用工程规范默认指引
       shared_defaults: context.defaults,
-      // Dynamic Layer 7: 环境与工作区上下文
+      // Dynamic Layer 6: 环境与工作区上下文
       workspace_context: {
         cwd: context.environment.cwd,
         project_root: context.environment.projectRoot ?? null,
@@ -105,7 +95,7 @@ export class PromptAssembler {
         git_branch: context.environment.gitBranch ?? null,
         target_cwd: context.environment.targetCwd ?? null,
       },
-      // Dynamic Layer 8: 机器可读的任务契约
+      // Dynamic Layer 7: 机器可读的任务契约
       ...(context.taskContract
         ? {
             task_contract: {
@@ -148,11 +138,6 @@ export class PromptAssembler {
         role: "developer",
         title: "Shared Invariants",
         content: context.invariants.map((inv, i) => `${i + 1}. ${inv}`).join("\n"),
-      },
-      {
-        role: "developer",
-        title: "Runtime Permission Context",
-        content: `Profile: ${context.permission.profileId}\nAllowed Tools: ${context.permission.allowedTools.join(", ")}\nWritable Scope: ${context.permission.writableScope}\nWorktree Isolated: ${context.permission.isWorktree}`,
       },
       {
         role: "developer",

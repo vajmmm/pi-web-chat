@@ -349,7 +349,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const resFullstack = await beforeStart({ systemPrompt: "base" });
       const parsedFullstack = JSON.parse(resFullstack.systemPrompt);
       assert.equal(parsedFullstack.role, "fullstack");
-      assert.equal(parsedFullstack.runtime_permissions.writable_scope, "all");
+      assert.equal(parsedFullstack.runtime_permissions, undefined, "runtime_permissions must NOT be present in prompt");
     });
   });
 });
