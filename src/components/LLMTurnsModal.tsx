@@ -1,9 +1,10 @@
 import { Dialog } from "@base-ui-components/react/dialog";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UILLMTurnRecord } from "../../shared/protocol";
 import { useLLMTurns } from "../lib/api";
 
 type FormatMode = "unified" | "vendor";
+type ViewTab = "detail" | "jsonl_list";
 
 export function LLMTurnsModal({
   open,
@@ -21,19 +22,44 @@ export function LLMTurnsModal({
     sessionId,
     taskId,
     open,
-    liveMode ? 1500 : false,
+    liveMode ? 2000 : false,
   );
 
   const turns = data?.turns ?? [];
+  const [selectedTurnIdx, setSelectedTurnIdx] = useState<number>(-1);
+  const [userLockedTurn, setUserLockedTurn] = useState<boolean>(false);
   const [formatMode, setFormatMode] = useState<FormatMode>("unified");
+  const [viewTab, setViewTab] = useState<ViewTab>("detail");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [wrapLines, setWrapLines] = useState<boolean>(false);
-  const [inspectingItem, setInspectingItem] = useState<{
-    index: number;
-    raw: string;
-    parsed: any;
-  } | null>(null);
+
+  // 当新轮次产生且用户未锁定特定历史轮次时，自动跟踪到最新一轮
+  useEffect(() => {
+    if (turns.length > 0) {
+      if (!userLockedTurn || selectedTurnIdx < 0 || selectedTurnIdx >= turns.length) {
+        setSelectedTurnIdx(turns.length - 1);
+      }
+    } else {
+      setSelectedTurnIdx(-1);
+    }
+  }, [turns.length, userLockedTurn]);
+
+  // 重置状态
+  useEffect(() => {
+    if (open) {
+      setUserLockedTurn(false);
+      if (turns.length > 0) {
+        setSelectedTurnIdx(turns.length - 1);
+      }
+    }
+  }, [open]);
+
+  const activeTurn: UILLMTurnRecord | undefined =
+    selectedTurnIdx >= 0 && selectedTurnIdx < turns.length
+      ? turns[selectedTurnIdx]
+      : turns[turns.length - 1];
+
+  const effectiveIdx = activeTurn ? turns.indexOf(activeTurn) : -1;
 
   const copyText = (key: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -41,64 +67,87 @@ export function LLMTurnsModal({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // 生成每次请求对应 1 行纯粹 JSON 的列表（不注入任何 turn / meta 额外标记）
-  const turnLines = useMemo(() => {
-    return turns.map((turn, index) => {
-      let obj: any;
-      if (formatMode === "unified") {
-        // Pi 内部统一请求对象（纯粹的 systemPrompt, messages, tools, model）
-        let sysPrompt = turn.systemPrompt;
-        if (typeof sysPrompt === "string") {
-          const trimmed = sysPrompt.trim();
-          if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (parsed && typeof parsed === "object") {
-                sysPrompt = parsed;
-              }
-            } catch {}
-          }
+  // 获取单轮格式化后的对象
+  const getTurnObject = (turn: UILLMTurnRecord) => {
+    if (formatMode === "unified") {
+      let sysPrompt = turn.systemPrompt;
+      if (typeof sysPrompt === "string") {
+        const trimmed = sysPrompt.trim();
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed === "object") {
+              sysPrompt = parsed;
+            }
+          } catch {}
         }
-        obj = {
-          systemPrompt: sysPrompt,
+      }
+      return {
+        systemPrompt: sysPrompt,
+        messages: turn.messages,
+        tools: turn.tools,
+        model: turn.model,
+        thinkingLevel: turn.thinkingLevel,
+      };
+    }
+
+    return turn.vendorPayload && typeof turn.vendorPayload === "object"
+      ? turn.vendorPayload
+      : {
+          model: turn.model.id,
+          system: turn.systemPrompt,
           messages: turn.messages,
           tools: turn.tools,
-          model: turn.model,
-          thinkingLevel: turn.thinkingLevel,
         };
-      } else {
-        // 实际发送给厂商 API 的完整原生 HTTP 请求体
-        obj =
-          turn.vendorPayload && typeof turn.vendorPayload === "object"
-            ? turn.vendorPayload
-            : {
-                model: turn.model.id,
-                system: turn.systemPrompt,
-                messages: turn.messages,
-                tools: turn.tools,
-              };
-      }
+  };
 
-      const raw = JSON.stringify(obj);
+  // 当前选中轮次的纯 JSON 文本
+  const currentFormattedJson = useMemo(() => {
+    if (!activeTurn) return "";
+    try {
+      return JSON.stringify(getTurnObject(activeTurn), null, 2);
+    } catch {
+      return "{}";
+    }
+  }, [activeTurn, formatMode]);
+
+  // 一键按需生成全量 JSONL 文本（仅在复制时按需序列化，避免每秒占用大量内存）
+  const handleCopyFullJsonl = () => {
+    if (turns.length === 0) return;
+    const lines = turns.map((t) => JSON.stringify(getTurnObject(t)));
+    copyText("full-jsonl", lines.join("\n"));
+  };
+
+  // 过滤后的紧凑列表项（每项不存放巨大字符串，只存放元数据和截断预览）
+  const compactList = useMemo(() => {
+    return turns.map((t, idx) => {
+      const toolNames = (t.tools || []).map((tl: any) => tl.name || tl.type).filter(Boolean);
+      const isLatest = idx === turns.length - 1;
+      const totalTokens = t.tokenEstimate?.totalTokens ?? 0;
       return {
-        index,
-        raw,
-        parsed: obj,
+        idx,
+        timeStr: t.timeStr,
+        modelId: t.model?.id || "unknown",
+        messageCount: t.messages?.length ?? 0,
+        toolCount: t.tools?.length ?? 0,
+        toolNamesPreview: toolNames.slice(0, 4).join(", ") + (toolNames.length > 4 ? "…" : ""),
+        totalTokens,
+        isLatest,
       };
     });
-  }, [turns, formatMode]);
+  }, [turns]);
 
-  // 经过搜索过滤的列表
-  const filteredTurnLines = useMemo(() => {
-    if (!searchQuery.trim()) return turnLines;
+  const filteredCompactList = useMemo(() => {
+    if (!searchQuery.trim()) return compactList;
     const q = searchQuery.toLowerCase();
-    return turnLines.filter((item) => item.raw.toLowerCase().includes(q));
-  }, [turnLines, searchQuery]);
-
-  const fullJsonlText = useMemo(
-    () => turnLines.map((t) => t.raw).join("\n"),
-    [turnLines],
-  );
+    return compactList.filter(
+      (item) =>
+        item.modelId.toLowerCase().includes(q) ||
+        item.toolNamesPreview.toLowerCase().includes(q) ||
+        item.timeStr.toLowerCase().includes(q) ||
+        String(item.idx + 1).includes(q),
+    );
+  }, [compactList, searchQuery]);
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -112,22 +161,22 @@ export function LLMTurnsModal({
                 🧠
               </span>
               <Dialog.Title className="text-sm font-bold text-ink truncate">
-                API 实际发送内容监视器 (1行1条完整 JSON)
+                API 实际发送内容监视器
               </Dialog.Title>
-              <span className="hidden sm:inline-flex items-center gap-1.5 border border-line bg-canvas px-2 py-0.5 text-[10px] text-faint">
-                <span>共 {turns.length} 条调用记录</span>
+              <span className="inline-flex items-center gap-1.5 border border-line bg-canvas px-2 py-0.5 text-[10px] text-faint">
+                <span>共 {turns.length} 轮调用</span>
               </span>
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {turnLines.length > 0 && (
+              {turns.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => copyText("full-jsonl", fullJsonlText)}
+                  onClick={handleCopyFullJsonl}
                   className="border border-line bg-card px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-ink transition-colors"
-                  title="一键复制全部 JSONL 文本（每行一条完整 JSON）"
+                  title="一键复制全部轮次的完整 JSONL（每行一条）"
                 >
-                  {copiedKey === "full-jsonl" ? "✓ JSONL 已复制" : "📋 复制全部 JSONL"}
+                  {copiedKey === "full-jsonl" ? "✓ 全部 JSONL 已复制" : "📋 复制全部 JSONL"}
                 </button>
               )}
 
@@ -139,7 +188,7 @@ export function LLMTurnsModal({
                     ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                     : "border-line bg-card text-muted hover:text-ink"
                 }`}
-                title="开启后实时同步捕获新产生的调用"
+                title="开启后实时捕获最新产生的调用并自动更新"
               >
                 {liveMode ? "🟢 实时监听中" : "⏸️ 静态查看"}
               </button>
@@ -164,161 +213,248 @@ export function LLMTurnsModal({
             </div>
           </div>
 
-          {/* 格式切换与控制栏 */}
+          {/* 模式与视图控制栏 */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-canvas px-4 py-2 shrink-0 text-xs">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setFormatMode("unified")}
+                onClick={() => setViewTab("detail")}
                 className={`border px-3 py-1 text-xs font-bold transition-all ${
-                  formatMode === "unified"
+                  viewTab === "detail"
                     ? "border-accent bg-bubble text-accent shadow-[var(--pixel-shadow-sm)]"
                     : "border-transparent text-muted hover:border-line"
                 }`}
-                title="Pi 内部统一中间格式"
+                title="单轮完整格式化详情（秒开无卡顿）"
               >
-                🌐 1. Pi 内部统一格式 ({turns.length})
+                🔍 单轮详情（默认最新）
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewTab("jsonl_list")}
+                className={`border px-3 py-1 text-xs font-bold transition-all ${
+                  viewTab === "jsonl_list"
+                    ? "border-accent bg-bubble text-accent shadow-[var(--pixel-shadow-sm)]"
+                    : "border-transparent text-muted hover:border-line"
+                }`}
+                title="查看全部调用轮次流水线列表"
+              >
+                📑 轮次总览列表 ({turns.length})
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-faint text-[11px]">格式:</span>
+              <button
+                type="button"
+                onClick={() => setFormatMode("unified")}
+                className={`border px-2 py-0.5 text-[11px] transition-all ${
+                  formatMode === "unified"
+                    ? "border-accent bg-card text-accent font-bold"
+                    : "border-line text-muted hover:text-ink"
+                }`}
+                title="Pi 内部统一格式（systemPrompt, messages, tools）"
+              >
+                🌐 Pi 统一格式
               </button>
               <button
                 type="button"
                 onClick={() => setFormatMode("vendor")}
-                className={`border px-3 py-1 text-xs font-bold transition-all ${
+                className={`border px-2 py-0.5 text-[11px] transition-all ${
                   formatMode === "vendor"
-                    ? "border-accent bg-bubble text-accent shadow-[var(--pixel-shadow-sm)]"
-                    : "border-transparent text-muted hover:border-line"
+                    ? "border-accent bg-card text-accent font-bold"
+                    : "border-line text-muted hover:text-ink"
                 }`}
-                title="实际通过网络发送给大模型厂商 API 的完整原生 HTTP 请求体"
+                title="发往厂商 API 的原生 HTTP 请求体"
               >
-                🏢 2. 实际发往厂商格式 ({turns.length})
+                🏢 厂商原生体
               </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索内容关键词..."
-                className="border border-line bg-card px-2 py-0.5 text-xs text-ink placeholder:text-faint outline-none focus:border-accent w-48 sm:w-60"
-              />
-
-              <label className="flex items-center gap-1 text-[11px] text-muted cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={wrapLines}
-                  onChange={(e) => setWrapLines(e.target.checked)}
-                  className="accent-accent"
-                />
-                <span>折行显示</span>
-              </label>
             </div>
           </div>
 
-          {/* 核心内容区：标准纯净的 1 行 1 条完整 JSON */}
-          <div className="thin-scroll flex-1 overflow-auto bg-canvas font-mono text-xs text-ink select-text">
-            {turns.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center text-muted">
-                <span className="text-4xl mb-2">📦</span>
-                <span className="text-sm font-bold text-ink">暂未产生调用记录</span>
-                <span className="mt-1.5 text-xs text-faint max-w-md">
-                  在对话框中发送任意一条消息后，系统将把每次发出的<strong>完整请求以每行一条 JSON 的形式</strong>自动记录在此。
+          {/* 核心内容区 */}
+          {turns.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center text-muted">
+              <span className="text-4xl mb-2">📦</span>
+              <span className="text-sm font-bold text-ink">暂未产生调用记录</span>
+              <span className="mt-1.5 text-xs text-faint max-w-md">
+                在对话中发送消息或触发 Agent 执行后，每次发出的请求体将以高保真形式记录在此。
+              </span>
+            </div>
+          ) : viewTab === "detail" ? (
+            /* 1. 默认：单轮详情（性能极佳，仅渲染单轮 JSON） */
+            <div className="flex flex-col flex-1 min-h-0 bg-canvas">
+              {/* 轮次导航步进器 */}
+              <div className="flex flex-wrap items-center justify-between border-b border-line bg-card/80 px-4 py-2 gap-2 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-accent">
+                    #第 {effectiveIdx + 1} 轮
+                  </span>
+                  {effectiveIdx === turns.length - 1 && (
+                    <span className="rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.2 text-[10px] font-bold">
+                      最新调用
+                    </span>
+                  )}
+                  {activeTurn && (
+                    <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-faint">
+                      <span>• {activeTurn.timeStr}</span>
+                      <span>• 模型: <code className="text-ink">{activeTurn.model.id}</code></span>
+                      <span>• {activeTurn.messages.length} 条消息</span>
+                      <span>• {activeTurn.tools.length} 个工具</span>
+                      {activeTurn.tokenEstimate && (
+                        <span>• ~{activeTurn.tokenEstimate.totalTokens.toLocaleString()} tokens</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 翻页步进控件 */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={effectiveIdx <= 0}
+                    onClick={() => {
+                      setUserLockedTurn(true);
+                      setSelectedTurnIdx(0);
+                    }}
+                    className="border border-line bg-card px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink disabled:opacity-30"
+                    title="跳转到第 1 轮"
+                  >
+                    ⏮ 首轮
+                  </button>
+                  <button
+                    type="button"
+                    disabled={effectiveIdx <= 0}
+                    onClick={() => {
+                      setUserLockedTurn(true);
+                      setSelectedTurnIdx(Math.max(0, effectiveIdx - 1));
+                    }}
+                    className="border border-line bg-card px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink disabled:opacity-30"
+                    title="查看上一轮"
+                  >
+                    ◀ 上一轮
+                  </button>
+
+                  <select
+                    value={effectiveIdx}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setUserLockedTurn(val !== turns.length - 1);
+                      setSelectedTurnIdx(val);
+                    }}
+                    className="border border-line bg-card px-2 py-0.5 text-[11px] text-ink outline-none focus:border-accent cursor-pointer"
+                  >
+                    {turns.map((t, idx) => (
+                      <option key={t.turnIndex} value={idx}>
+                        第 {idx + 1} 轮 {idx === turns.length - 1 ? "(最新)" : ""} ({t.timeStr})
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    disabled={effectiveIdx >= turns.length - 1}
+                    onClick={() => {
+                      const next = Math.min(turns.length - 1, effectiveIdx + 1);
+                      setUserLockedTurn(next !== turns.length - 1);
+                      setSelectedTurnIdx(next);
+                    }}
+                    className="border border-line bg-card px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink disabled:opacity-30"
+                    title="查看下一轮"
+                  >
+                    下一轮 ▶
+                  </button>
+                  <button
+                    type="button"
+                    disabled={effectiveIdx >= turns.length - 1}
+                    onClick={() => {
+                      setUserLockedTurn(false);
+                      setSelectedTurnIdx(turns.length - 1);
+                    }}
+                    className="border border-line bg-card px-2 py-0.5 text-[11px] font-bold text-accent hover:border-accent disabled:opacity-30"
+                    title="跳转到最新一轮"
+                  >
+                    ⏭ 最新
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => copyText("current-turn", currentFormattedJson)}
+                    className="border border-accent bg-bubble px-2.5 py-0.5 text-[11px] text-accent font-bold hover:bg-accent hover:text-white transition-colors ml-1"
+                    title="复制当前轮次格式化 JSON"
+                  >
+                    {copiedKey === "current-turn" ? "✓ 已复制" : "📋 复制此轮"}
+                  </button>
+                </div>
+              </div>
+
+              {/* JSON 文本区 (单轮全量，秒级加载) */}
+              <div className="thin-scroll flex-1 overflow-auto p-3 text-xs">
+                <pre className="border border-line bg-card p-3 text-[11px] text-ink overflow-x-auto whitespace-pre-wrap select-text leading-relaxed font-mono">
+                  {currentFormattedJson}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            /* 2. 轮次总览列表（轻量流水线，点击某一行快速进入该轮） */
+            <div className="flex flex-col flex-1 min-h-0 bg-canvas">
+              <div className="flex items-center justify-between border-b border-line bg-card/60 px-4 py-2 gap-2 shrink-0">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索模型 / 工具名 / 序号..."
+                  className="border border-line bg-card px-2 py-1 text-xs text-ink placeholder:text-faint outline-none focus:border-accent w-64"
+                />
+                <span className="text-[11px] text-faint">
+                  点击任意一行即可快速切换并查看该轮完整请求体
                 </span>
               </div>
-            ) : filteredTurnLines.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center text-muted">
-                <span className="text-xl mb-1">🔍</span>
-                <span className="text-xs font-bold">没有匹配的内容</span>
-              </div>
-            ) : (
-              <div className="min-w-full w-max">
-                <div
-                  className={`leading-relaxed ${
-                    wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre"
-                  }`}
-                >
-                  {filteredTurnLines.map((item) => (
+
+              <div className="thin-scroll flex-1 overflow-auto p-2">
+                <div className="flex flex-col gap-1">
+                  {filteredCompactList.map((item) => (
                     <div
-                      key={item.index}
-                      className="flex hover:bg-card/90 py-1.5 px-3 group transition-colors cursor-pointer border-b border-line/40 last:border-b-0 min-w-full w-max"
-                      onClick={() => setInspectingItem(item)}
-                      title="点击在底部展开格式化查看此行 JSON"
+                      key={item.idx}
+                      onClick={() => {
+                        setUserLockedTurn(item.idx !== turns.length - 1);
+                        setSelectedTurnIdx(item.idx);
+                        setViewTab("detail");
+                      }}
+                      className={`flex items-center justify-between p-2 rounded border transition-colors cursor-pointer text-xs ${
+                        item.idx === effectiveIdx
+                          ? "border-accent bg-bubble text-accent font-bold"
+                          : "border-line bg-card hover:border-accent/60 text-ink"
+                      }`}
                     >
-                      <span className="sticky left-0 select-none text-faint w-10 shrink-0 text-right pr-3 opacity-80 border-r border-line mr-3 bg-canvas group-hover:bg-card/90">
-                        {item.index + 1}
-                      </span>
-                      <span className="flex-1 select-text text-ink group-hover:text-accent">
-                        {item.raw}
-                      </span>
-                      <div className="hidden group-hover:flex items-center gap-1.5 shrink-0 ml-3">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyText(`line-${item.index}`, item.raw);
-                          }}
-                          className="border border-line bg-card px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink shadow-sm"
-                          title="复制此行 JSON"
-                        >
-                          {copiedKey === `line-${item.index}` ? "✓" : "📋 复制"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setInspectingItem(item);
-                          }}
-                          className="border border-accent bg-bubble px-1.5 py-0.5 text-[10px] text-accent font-bold hover:bg-accent hover:text-white shadow-sm"
-                          title="在底部格式化展开"
-                        >
-                          🔍 查看
-                        </button>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-8 text-right font-bold text-faint">
+                          #{item.idx + 1}
+                        </span>
+                        {item.isLatest && (
+                          <span className="rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-1 py-0.2 text-[9px] font-bold shrink-0">
+                            最新
+                          </span>
+                        )}
+                        <span className="font-mono text-[11px] text-ink truncate max-w-[140px] sm:max-w-[200px]">
+                          {item.modelId}
+                        </span>
+                        <span className="text-faint text-[11px] hidden md:inline">
+                          ({item.toolCount} 工具: {item.toolNamesPreview || "无"})
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0 text-faint text-[11px]">
+                        <span>{item.messageCount} 条消息</span>
+                        {item.totalTokens > 0 && (
+                          <span>~{item.totalTokens.toLocaleString()} tokens</span>
+                        )}
+                        <span>{item.timeStr}</span>
+                        <span className="text-accent text-[11px]">查看 ➔</span>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
-          </div>
-
-          {/* 单行格式化展开检查抽屉 (Inline Inspector) */}
-          {inspectingItem && (
-            <div className="border-t-2 border-accent bg-card p-3 font-mono text-xs shrink-0 max-h-72 overflow-y-auto">
-              <div className="flex items-center justify-between border-b border-line pb-1.5 mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-accent">
-                    #第 {inspectingItem.index + 1} 行完整 JSON 格式化详情
-                  </span>
-                  <span className="border border-line bg-canvas px-1.5 text-[10px] text-faint">
-                    {formatMode === "unified" ? "Pi 内部统一格式" : "厂商原生请求体"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      copyText(
-                        "inspect-formatted",
-                        JSON.stringify(inspectingItem.parsed, null, 2),
-                      )
-                    }
-                    className="border border-line px-2 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
-                  >
-                    {copiedKey === "inspect-formatted"
-                      ? "✓ 已复制格式化 JSON"
-                      : "📋 复制格式化 JSON"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInspectingItem(null)}
-                    className="border border-line px-1.5 py-0.5 text-[10px] text-muted hover:text-ink"
-                  >
-                    ✕ 关闭面板
-                  </button>
-                </div>
-              </div>
-              <pre className="border border-line bg-canvas p-2 text-[11px] text-ink overflow-x-auto whitespace-pre-wrap select-text">
-                {JSON.stringify(inspectingItem.parsed, null, 2)}
-              </pre>
             </div>
           )}
         </Dialog.Popup>
@@ -326,3 +462,4 @@ export function LLMTurnsModal({
     </Dialog.Root>
   );
 }
+
