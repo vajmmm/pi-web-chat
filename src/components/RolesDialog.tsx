@@ -278,6 +278,76 @@ export function RolesDialog({
                     />
                   </label>
 
+                  {/* 模型与思考深度 (常用配置，置于核心职责上方) */}
+                  <div className="p-3 border-2 border-line bg-canvas/30 space-y-2">
+                    <div className="text-[11px] font-bold text-ink">🧠 专属模型与思考深度 (Model Configuration)</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] text-faint">指定模型 (默认 inherit 继承主会话)</span>
+                        <select
+                          className={inputClass}
+                          value={
+                            activeRoleConfig.model?.modelId
+                              ? `${activeRoleConfig.model.provider || ""}:${activeRoleConfig.model.modelId}`
+                              : "inherit"
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "inherit") {
+                              updateActiveRole({ model: undefined });
+                            } else {
+                              const [p, id] = val.split(":");
+                              updateActiveRole({
+                                model: {
+                                  provider: p || undefined,
+                                  modelId: id,
+                                  thinkingLevel: activeRoleConfig.model?.thinkingLevel,
+                                },
+                              });
+                            }
+                          }}
+                        >
+                          <option value="inherit">默认: 继承主会话模型</option>
+                          {models.map((m) => (
+                            <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>
+                              [{m.provider}] {m.name || m.id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] text-faint">思考强度 (Thinking Level)</span>
+                        <select
+                          className={inputClass}
+                          value={
+                            activeRoleConfig.model?.thinkingLevel === ("none" as any)
+                              ? "off"
+                              : (activeRoleConfig.model?.thinkingLevel ?? "off")
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value as UIThinkingLevel;
+                            updateActiveRole({
+                              model: {
+                                provider: activeRoleConfig.model?.provider,
+                                modelId: activeRoleConfig.model?.modelId ?? "inherit",
+                                thinkingLevel: val,
+                              },
+                            });
+                          }}
+                        >
+                          <option value="off">关闭 / 默认 (off)</option>
+                          <option value="minimal">极简思考 (minimal)</option>
+                          <option value="low">低强度思考 (low)</option>
+                          <option value="medium">中强度思考 (medium)</option>
+                          <option value="high">深度推理思考 (high)</option>
+                          <option value="xhigh">极高推理 (xhigh)</option>
+                          <option value="max">满血/最大强度推理 (max)</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+
                   {/* V2 核心职责与严格禁令 */}
                   {activeRoleConfig.definition ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -430,76 +500,6 @@ export function RolesDialog({
                           </label>
                         );
                       })}
-                    </div>
-                  </div>
-
-                  {/* 模型与思考深度 */}
-                  <div className="p-3 border-2 border-line bg-canvas/30 space-y-2">
-                    <div className="text-[11px] font-bold text-ink">🧠 专属模型与思考深度 (Model Configuration)</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[10px] text-faint">指定模型 (默认 inherit 继承主会话)</span>
-                        <select
-                          className={inputClass}
-                          value={
-                            activeRoleConfig.model?.modelId
-                              ? `${activeRoleConfig.model.provider || ""}:${activeRoleConfig.model.modelId}`
-                              : "inherit"
-                          }
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val === "inherit") {
-                              updateActiveRole({ model: undefined });
-                            } else {
-                              const [p, id] = val.split(":");
-                              updateActiveRole({
-                                model: {
-                                  provider: p || undefined,
-                                  modelId: id,
-                                  thinkingLevel: activeRoleConfig.model?.thinkingLevel,
-                                },
-                              });
-                            }
-                          }}
-                        >
-                          <option value="inherit">默认: 继承主会话模型</option>
-                          {models.map((m) => (
-                            <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>
-                              [{m.provider}] {m.name || m.id}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[10px] text-faint">思考强度 (Thinking Level)</span>
-                        <select
-                          className={inputClass}
-                          value={
-                            activeRoleConfig.model?.thinkingLevel === ("none" as any)
-                              ? "off"
-                              : (activeRoleConfig.model?.thinkingLevel ?? "off")
-                          }
-                          onChange={(e) => {
-                            const val = e.target.value as UIThinkingLevel;
-                            updateActiveRole({
-                              model: {
-                                provider: activeRoleConfig.model?.provider,
-                                modelId: activeRoleConfig.model?.modelId ?? "inherit",
-                                thinkingLevel: val,
-                              },
-                            });
-                          }}
-                        >
-                          <option value="off">关闭 / 默认 (off)</option>
-                          <option value="minimal">极简思考 (minimal)</option>
-                          <option value="low">低强度思考 (low)</option>
-                          <option value="medium">中强度思考 (medium)</option>
-                          <option value="high">深度推理思考 (high)</option>
-                          <option value="xhigh">极高推理 (xhigh)</option>
-                          <option value="max">满血/最大强度推理 (max)</option>
-                        </select>
-                      </label>
                     </div>
                   </div>
 
