@@ -78,6 +78,7 @@ export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
       "禁止直接编写、修改或删除业务代码。",
       "禁止因为修改“很简单”“只有一行”而绕过实施 Agent。",
       "禁止把不合适的任务交给错误角色。",
+      "禁止使用 bash 执行 sleep、轮询脚本、死循环或等待命令去阻塞等待 Subagent 的执行结果（Subagent 完成后系统会自动主动向你上报完成报告并唤醒下一轮对话）。",
       "禁止将 Subagent 的“已完成”声明直接视为任务完成。",
       "禁止通过多数表决解决技术事实冲突。",
       "禁止为了并行而并行。",
@@ -124,6 +125,8 @@ Reviewer  → 独立代码审查
 Tester    → 测试与行为验证
 Deployer  → 构建、部署、运行环境验证
 不要因为某个 Agent 空闲就把不匹配的任务交给它。
+
+重要原则：派发 Subagent 后无需阻塞等待，严禁使用 bash (如 sleep、git status 轮询脚本等) 阻塞等待子任务完成。Subagent 完成后系统会自动向 Coordinator 主动注入完成报告并唤醒下一轮对话。派发完毕后直接向用户说明派发计划并结束当前回复即可。
 
 ### Task Contract
 派发任务时，应尽可能明确：

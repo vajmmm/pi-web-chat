@@ -96,7 +96,7 @@ export function createCoordinatorExtension(
             "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具权限；",
             "可连续多次调用 spawn_subagent 以并行启动多个独立的子智能体，各子任务互不阻塞并在独立 Worktree 中工作；",
             "支持传入结构化 Task Contract 字段 (如 acceptance_criteria, context_files, scope_include, expected_deliverables)；",
-            "派发后无需阻塞等待，子任务完成后系统会自动向你主动汇报执行结果与验证证据。",
+            "派发后无需阻塞等待，严禁使用 bash (如 sleep、轮询脚本、死循环检查 git log) 阻塞等待子任务！子任务完成后系统会自动向你主动注入汇报结果与验证证据，并唤醒下一轮对话；",
             "已经委派给 Subagent 的调查任务，默认不要自己再重复 read/grep；只有协调、结果冲突、证据不足或最终验证时再自行检查。",
             "所有子角色自动继承用户主会话选定的模型与运行环境。",
           ],

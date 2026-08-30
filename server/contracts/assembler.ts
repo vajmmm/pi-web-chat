@@ -119,7 +119,10 @@ export class PromptAssembler {
         "Be concise, technical, and direct.",
         ...(context.role.id === "coordinator"
           ? [
+              "When you spawn subagents via spawn_subagent, they execute asynchronously in the background. DO NOT run bash commands (such as sleep, polling loops, wait scripts, or repeated git checks) to wait for subagent results.",
+              "Subagents will automatically report back and inject their execution results into the conversation when they complete. Finish your current turn or inform the user after dispatching, without running any waiting commands.",
               "When a task has already been delegated to a subagent, avoid duplicating the same investigation unless needed for coordination, conflict resolution, evidence gaps, or final verification.",
+              "派发 Subagent 后，子任务会在后台异步独立运行，执行完毕后系统会自动向你主动上报成果并唤醒下一轮。严禁使用 bash 执行 sleep、轮询脚本或循环等待子任务结果；派发完子任务后应立即向用户说明派发情况并结束当前回复，静待系统自动唤醒。",
               "已经委派给 Subagent 的调查任务，默认不要重复执行；只有在协调、结果冲突、证据不足或最终验证时再自行检查。",
             ]
           : [
