@@ -1,5 +1,5 @@
 import { Dialog } from "@base-ui-components/react/dialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { UISubagentTask } from "../../shared/protocol";
 import { chatClient, useChat } from "../lib/chat";
 import { Markdown } from "./Markdown";
@@ -16,6 +16,62 @@ const roleNameMap: Record<string, string> = {
   default: "普通智能体",
 };
 
+export function formatDuration(ms: number | undefined): string {
+  if (ms === undefined || ms === null || isNaN(ms) || ms < 0) return "-";
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}秒`;
+  }
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSecs = totalSeconds % 60;
+  if (minutes < 60) {
+    return remainingSecs > 0 ? `${minutes}分${remainingSecs}秒` : `${minutes}分钟`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  return remainingMins > 0 ? `${hours}小时${remainingMins}分` : `${hours}小时`;
+}
+
+function useTaskDuration(task: UISubagentTask | null): { durationText: string; isRunning: boolean } {
+  const isFinished = !task || !!task.completedAt || task.durationMs !== undefined || ["completed", "failed", "aborted", "interrupted", "incomplete", "conflict"].includes(task?.status ?? "");
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (isFinished) return;
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isFinished]);
+
+  if (!task) {
+    return { durationText: "-", isRunning: false };
+  }
+
+  if (task.durationMs !== undefined) {
+    return { durationText: formatDuration(task.durationMs), isRunning: false };
+  }
+
+  if (task.completedAt) {
+    const start = new Date(task.startedAt || task.createdAt).getTime();
+    const end = new Date(task.completedAt).getTime();
+    const duration = isNaN(start) || isNaN(end) ? undefined : Math.max(0, end - start);
+    return { durationText: formatDuration(duration), isRunning: false };
+  }
+
+  if (task.status === "blocked") {
+    return { durationText: "等待中", isRunning: false };
+  }
+
+  const start = new Date(task.startedAt || task.createdAt).getTime();
+  if (isNaN(start)) {
+    return { durationText: "-", isRunning: false };
+  }
+  const elapsed = Math.max(0, now - start);
+  return { durationText: formatDuration(elapsed), isRunning: true };
+}
+
 /**
  * 完整子任务会话详情弹窗
  */
@@ -30,13 +86,17 @@ function SubagentConversationDialog({
 }) {
   if (!task) return null;
 
+  const { durationText, isRunning: isDurationRunning } = useTaskDuration(task);
+
+  const isBlocked = task.status === "blocked";
+  const isReady = task.status === "ready";
   const isRunning = task.status === "running";
   const isCompleted = task.status === "completed";
+  const isConflict = task.status === "conflict";
   const isFailed = task.status === "failed";
-  const isAborted = task.status === "aborted" || task.status === "cancelled";
+  const isAborted = task.status === "aborted";
   const isInterrupted = task.status === "interrupted";
-  const isBlocked = task.status === "blocked";
-  const isRejected = task.status === "rejected";
+  const isIncomplete = task.status === "incomplete";
 
   const messages = task.messages ?? [];
 
@@ -55,6 +115,16 @@ function SubagentConversationDialog({
                 {task.taskTitle}
               </Dialog.Title>
 
+              {isBlocked && (
+                <span className="border border-amber-600 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                  ⏳ BLOCKED
+                </span>
+              )}
+              {isReady && (
+                <span className="border border-sky-600 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                  READY
+                </span>
+              )}
               {isRunning && (
                 <span className="flex items-center gap-1.5 border border-emerald-600 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                   <span className="size-2 animate-ping bg-emerald-500" />
@@ -62,8 +132,19 @@ function SubagentConversationDialog({
                 </span>
               )}
               {isCompleted && (
-                <span className="border border-mint bg-mint/10 px-2 py-0.5 text-[10px] font-bold text-mint">
+                <span className="flex items-center gap-1 border border-mint bg-mint/10 px-2 py-0.5 text-[10px] font-bold text-mint">
                   ✓ COMPLETED
+                  {task.verification?.overall === "pass" && (
+                    <span className="text-[9px] px-1 py-0.2 bg-emerald-600/20 text-emerald-600 rounded">PASS</span>
+                  )}
+                  {task.verification?.overall === "fail" && (
+                    <span className="text-[9px] px-1 py-0.2 bg-red-600/20 text-red-500 rounded">FAIL</span>
+                  )}
+                </span>
+              )}
+              {isConflict && (
+                <span className="border border-orange-600 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-700 dark:bg-orange-950/40 dark:text-orange-300">
+                  ⚠️ CONFLICT
                 </span>
               )}
               {isFailed && (
@@ -71,24 +152,19 @@ function SubagentConversationDialog({
                   ✗ FAILED
                 </span>
               )}
-              {isBlocked && (
-                <span className="border border-amber-500 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                  ⛔ BLOCKED
-                </span>
-              )}
-              {isRejected && (
-                <span className="border border-rose-600 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                  ✕ REJECTED
-                </span>
-              )}
               {isAborted && (
                 <span className="border border-line px-2 py-0.5 text-[10px] font-bold text-muted">
-                  CANCELLED
+                  ⊘ ABORTED
                 </span>
               )}
               {isInterrupted && (
                 <span className="border border-amber-500 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                   ⚠️ INTERRUPTED
+                </span>
+              )}
+              {isIncomplete && (
+                <span className="border border-orange-500 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-600 dark:bg-orange-950/40 dark:text-orange-400">
+                  ⚡ INCOMPLETE
                 </span>
               )}
             </div>
@@ -136,6 +212,13 @@ function SubagentConversationDialog({
                 模型: <span className="border border-line bg-card px-1 text-accent">🤖 {task.model.provider}/{task.model.id}</span>
               </div>
             )}
+            <div>
+              耗时:{" "}
+              <span className="border border-line bg-card px-1 text-accent inline-flex items-center gap-1">
+                ⏱️ {durationText}
+                {isDurationRunning && <span className="size-1.5 animate-ping bg-emerald-500 rounded-full" />}
+              </span>
+            </div>
             {task.targetCwd && (
               <div>
                 目录: <span className="border border-line bg-card px-1 text-ink">📁 {task.targetCwd}</span>
@@ -208,9 +291,10 @@ function SubagentConversationDialog({
               <div className="border-2 border-mint/60 bg-card p-3 font-mono shadow-[var(--pixel-shadow-sm)] mt-2">
                 <div className="flex items-center justify-between border-b border-mint/30 pb-1.5 mb-2 text-xs font-bold text-mint">
                   <span>🏁 子智能体上报总结报告 (Final Report)</span>
-                  {task.completedAt && (
-                    <span className="text-[10px] text-muted">{task.completedAt}</span>
-                  )}
+                  <div className="flex items-center gap-2 text-[10px] text-muted">
+                    {task.completedAt && <span>{task.completedAt}</span>}
+                    <span className="text-accent">(耗时: {durationText})</span>
+                  </div>
                 </div>
                 <div className="text-[13px] text-ink leading-relaxed">
                   <Markdown text={task.summary} />
@@ -240,14 +324,17 @@ function SubagentCard({
   onOpenConversation: (task: UISubagentTask) => void;
 }) {
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const { durationText, isRunning: isDurationRunning } = useTaskDuration(task);
 
+  const isBlocked = task.status === "blocked";
+  const isReady = task.status === "ready";
   const isRunning = task.status === "running";
   const isCompleted = task.status === "completed";
+  const isConflict = task.status === "conflict";
   const isFailed = task.status === "failed";
-  const isAborted = task.status === "aborted" || task.status === "cancelled";
+  const isAborted = task.status === "aborted";
   const isInterrupted = task.status === "interrupted";
-  const isBlocked = task.status === "blocked";
-  const isRejected = task.status === "rejected";
+  const isIncomplete = task.status === "incomplete";
 
   const messageCount = task.messages?.length ?? 0;
 
@@ -263,6 +350,16 @@ function SubagentCard({
         </div>
 
         <div className="flex items-center gap-2">
+          {isBlocked && (
+            <span className="border border-amber-600 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+              ⏳ BLOCKED
+            </span>
+          )}
+          {isReady && (
+            <span className="border border-sky-600 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+              READY
+            </span>
+          )}
           {isRunning && (
             <span className="flex items-center gap-1.5 border border-emerald-600 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
               <span className="size-2 animate-ping bg-emerald-500" />
@@ -270,8 +367,19 @@ function SubagentCard({
             </span>
           )}
           {isCompleted && (
-            <span className="border border-mint bg-mint/10 px-2 py-0.5 text-[10px] font-bold text-mint">
+            <span className="flex items-center gap-1 border border-mint bg-mint/10 px-2 py-0.5 text-[10px] font-bold text-mint">
               ✓ COMPLETED
+              {task.verification?.overall === "pass" && (
+                <span className="text-[9px] px-1 py-0.2 bg-emerald-600/20 text-emerald-600 rounded">PASS</span>
+              )}
+              {task.verification?.overall === "fail" && (
+                <span className="text-[9px] px-1 py-0.2 bg-red-600/20 text-red-500 rounded">FAIL</span>
+              )}
+            </span>
+          )}
+          {isConflict && (
+            <span className="border border-orange-600 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-700 dark:bg-orange-950/40 dark:text-orange-300">
+              ⚠️ CONFLICT
             </span>
           )}
           {isFailed && (
@@ -279,24 +387,19 @@ function SubagentCard({
               ✗ FAILED
             </span>
           )}
-          {isBlocked && (
-            <span className="border border-amber-500 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-              ⛔ BLOCKED
-            </span>
-          )}
-          {isRejected && (
-            <span className="border border-rose-600 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-              ✕ REJECTED
-            </span>
-          )}
           {isAborted && (
             <span className="border border-line px-2 py-0.5 text-[10px] font-bold text-muted">
-              CANCELLED
+              ⊘ ABORTED
             </span>
           )}
           {isInterrupted && (
             <span className="border border-amber-500 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
               ⚠️ INTERRUPTED
+            </span>
+          )}
+          {isIncomplete && (
+            <span className="border border-orange-500 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-600 dark:bg-orange-950/40 dark:text-orange-400">
+              ⚡ INCOMPLETE
             </span>
           )}
 
@@ -347,6 +450,12 @@ function SubagentCard({
               <span className="border border-line bg-canvas px-1 text-accent">🤖 {task.model.provider}/{task.model.id}</span>
             </>
           )}
+          <span className="text-line">•</span>
+          <span>耗时:</span>
+          <span className="border border-line bg-canvas px-1 text-accent inline-flex items-center gap-1">
+            ⏱️ {durationText}
+            {isDurationRunning && <span className="size-1.5 animate-ping bg-emerald-500 rounded-full" />}
+          </span>
           {task.targetCwd && (
             <>
               <span className="text-line">•</span>

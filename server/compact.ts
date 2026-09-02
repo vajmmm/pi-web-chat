@@ -11,10 +11,13 @@ Please generate a structured, concise Markdown summary covering:
 
 Keep the summary clear, accurate, and concise. Preserve exact file paths, function/class names, and error details.`;
 
+import { injectMemoryIntoCompactionSummary } from "./task-memory.ts";
+
 export async function performSessionCompaction(
   session: AgentSession,
   modelRuntime: ModelRuntime,
   customInstructions?: string,
+  taskId?: string,
 ): Promise<{ summary: string; firstKeptEntryId: string; messagesCountAfter: number }> {
   const model = session.model;
   if (!model) {
@@ -166,6 +169,11 @@ export async function performSessionCompaction(
     readFiles: Array.from(readFiles),
     modifiedFiles: Array.from(modifiedFiles),
   };
+
+  const effectiveTaskId = taskId || (session as any).__taskId;
+  if (effectiveTaskId) {
+    summary = injectMemoryIntoCompactionSummary(effectiveTaskId, summary);
+  }
 
   // 写入 sessionManager compaction 实体
   sessionManager.appendCompaction(summary, firstKeptEntry.id, 0, details, false);

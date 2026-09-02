@@ -1,0 +1,31 @@
+{
+  "model": "minimax-custom/MiniMax-M2.7",
+  "taskA_cold_discovery": {
+    "taskId": "task-a-1788261473462",
+    "status": "accepted",
+    "toolCalls": 8,
+    "explorationToolCalls": 7,
+    "durationMs": 20073
+  },
+  "taskB_reuse_continue": {
+    "taskId": "task-b-reuse-1788261493544",
+    "agentId": "agent-a62c9390-2841-4cd4-ac3d-69811fa5f102",
+    "status": "accepted",
+    "toolCalls": 3,
+    "explorationToolCalls": 3,
+    "durationMs": 8043,
+    "promptHasKnowledge": true
+  },
+  "taskB_cold_spawn": {
+    "taskId": "task-b-cold-1788261501590",
+    "status": "verifying",
+    "toolCalls": 4,
+    "explorationToolCalls": 3,
+    "durationMs": 9046
+  },
+  "delta_reuse_vs_cold": {
+    "toolCallsSaved": 1,
+    "explorationSaved": 0,
+    "durationMsSaved": 1003
+  }
+}

@@ -21,17 +21,6 @@ const ROLE_ICONS: Record<string, string> = {
   default: "🤖",
 };
 
-const PERMISSION_PROFILES_OPTIONS = [
-  { id: "coordinator-readonly", name: "统筹者 (只读 + 任务派发)", writableScope: "none", requiresWorktree: false, allowedTools: ["read", "bash", "list_available_roles", "spawn_subagent", "abort_subagent", "list_subagents"] },
-  { id: "reviewer-readonly", name: "审查者 (只读审查，只审不改)", writableScope: "none", requiresWorktree: false, allowedTools: ["read", "bash"] },
-  { id: "frontend-standard", name: "前端标准开发 (Worktree 隔离)", writableScope: "worktree-only", requiresWorktree: true, allowedTools: ["read", "bash", "edit", "write"] },
-  { id: "backend-standard", name: "后端标准开发 (标准写权限)", writableScope: "all", requiresWorktree: false, allowedTools: ["read", "bash", "edit", "write"] },
-  { id: "fullstack-standard", name: "全栈标准开发 (Worktree 隔离)", writableScope: "worktree-only", requiresWorktree: true, allowedTools: ["read", "bash", "edit", "write"] },
-  { id: "tester-test-write", name: "测试者 (仅限测试文件写权限)", writableScope: "test-only", requiresWorktree: false, allowedTools: ["read", "bash", "edit", "write"] },
-  { id: "deployer-infra", name: "部署者 (构建与发布权限)", writableScope: "deploy-only", requiresWorktree: false, allowedTools: ["read", "bash"] },
-  { id: "standard-dev", name: "通用全功能开发 (无限制)", writableScope: "all", requiresWorktree: false, allowedTools: ["read", "bash", "edit", "write"] },
-];
-
 const DEFAULT_TOOLS_CATALOG: Array<{ name: string; label: string; description: string; category: string }> = [
   { name: "read", label: "读取文件 (read)", description: "读取指定文件的文本或代码内容", category: "core" },
   { name: "bash", label: "终端命令 (bash)", description: "执行系统终端 bash 命令 (支持编译、测试、Git 及任意命令)", category: "core" },
@@ -42,8 +31,10 @@ const DEFAULT_TOOLS_CATALOG: Array<{ name: string; label: string; description: s
   { name: "ls", label: "目录清单查看 (ls)", description: "Pi 原生快速列出目录结构与文件大小", category: "core" },
   { name: "list_available_roles", label: "查询可用角色 (list_roles)", description: "查询当前支持的所有子智能体角色列表与能力", category: "subagents" },
   { name: "spawn_subagent", label: "派发子任务 (spawn_subagent)", description: "派发一个独立的异步子智能体任务并在独立工作区运行", category: "subagents" },
+  { name: "continue_subagent", label: "复用 Agent (continue_subagent)", description: "复用 idle_reusable Agent 的短知识执行新 TaskContract（新 Worktree/Session）", category: "subagents" },
   { name: "abort_subagent", label: "中断子任务 (abort_subagent)", description: "取消或中断正在后台运行的子任务", category: "subagents" },
-  { name: "list_subagents", label: "列出子任务 (list_subagents)", description: "列出当前会话派发的所有子任务及其运行状态", category: "subagents" },
+  { name: "list_subagents", label: "列出子任务 (list_subagents)", description: "列出子任务状态与可复用 Agent 信息", category: "subagents" },
+  { name: "report_blocker", label: "报告阻塞情况 (report_blocker)", description: "向 Coordinator 报告关键阻塞、需求冲突或重大风险", category: "subagents" },
 ];
 
 export function RolesDialog({
@@ -65,7 +56,7 @@ export function RolesDialog({
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
 
-  // 合并后端返回的所有工具与内置基础工具清单
+  // 合并后端返回的所有工具、内置基础工具清单以及已有角色中已配置的扩展工具（防丢失）
   const effectiveToolsCatalog = useMemo(() => {
     const map = new Map<string, { name: string; label: string; description: string; category: string }>();
     for (const t of DEFAULT_TOOLS_CATALOG) {
@@ -79,8 +70,24 @@ export function RolesDialog({
         category: t.category || "custom",
       });
     }
+    // 保护：如果当前已有角色的已授权工具列表中存在自定义/扩展工具（例如冷启动时未被扫描到），也自动纳入 Catalog
+    if (draft) {
+      for (const r of draft) {
+        const tools = r.allowedTools ?? r.definition?.allowedTools ?? [];
+        for (const toolName of tools) {
+          if (toolName && !map.has(toolName)) {
+            map.set(toolName, {
+              name: toolName,
+              label: `${toolName} (自定义/扩展工具)`,
+              description: "来自角色既有配置的自定义或插件扩展工具",
+              category: "custom",
+            });
+          }
+        }
+      }
+    }
     return Array.from(map.values());
-  }, [allTools]);
+  }, [allTools, draft]);
 
   useEffect(() => {
     if (open && data?.roles) {
@@ -110,6 +117,10 @@ export function RolesDialog({
             description: updated.description || updated.definition.description,
             allowedSkills: nextAllowedSkills,
             allowedTools: nextAllowedTools,
+            requiresWorktree:
+              updated.requiresWorktree !== undefined
+                ? updated.requiresWorktree
+                : updated.definition.requiresWorktree,
             defaultModel: updated.model ?? updated.definition.defaultModel,
           };
         }
@@ -124,7 +135,6 @@ export function RolesDialog({
       (prev ?? []).map((r) => {
         if (r.id !== activeRoleConfig.id || !r.definition) return r;
         const nextDef = { ...r.definition, ...updates };
-        const profile = PERMISSION_PROFILES_OPTIONS.find((p) => p.id === nextDef.permissionProfileId);
         const nextAllowedTools =
           updates.allowedTools !== undefined
             ? updates.allowedTools
@@ -137,7 +147,10 @@ export function RolesDialog({
           description: nextDef.description || r.description,
           allowedSkills: nextDef.allowedSkills ?? r.allowedSkills,
           allowedTools: nextAllowedTools,
-          requiresWorktree: profile ? profile.requiresWorktree : r.requiresWorktree,
+          requiresWorktree:
+            nextDef.requiresWorktree !== undefined
+              ? nextDef.requiresWorktree
+              : r.requiresWorktree,
           definition: {
             ...nextDef,
             allowedTools: nextAllowedTools,
@@ -147,16 +160,11 @@ export function RolesDialog({
     );
   };
 
-  const activeProfile = PERMISSION_PROFILES_OPTIONS.find(
-    (p) => p.id === (activeRoleConfig?.definition?.permissionProfileId || "standard-dev"),
-  ) ?? PERMISSION_PROFILES_OPTIONS[0];
-
   const currentAllowedSkills = activeRoleConfig?.allowedSkills ?? [];
   const currentAllowedTools =
     activeRoleConfig?.allowedTools ??
     activeRoleConfig?.definition?.allowedTools ??
-    activeProfile.allowedTools ??
-    [];
+    ["read", "bash", "edit", "write", "report_blocker"];
 
   const toggleTool = (toolName: string) => {
     let next: string[];
@@ -268,19 +276,23 @@ export function RolesDialog({
                       />
                     </label>
 
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[11px] font-bold text-muted">绑定权限 Profile (PermissionProfile)</span>
-                      <select
-                        className={inputClass}
-                        value={activeRoleConfig.definition?.permissionProfileId || "standard-dev"}
-                        onChange={(e) => updateActiveRoleDefinition({ permissionProfileId: e.target.value })}
-                      >
-                        {PERMISSION_PROFILES_OPTIONS.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
+                    <label className="flex flex-col gap-1 justify-end pb-1">
+                      <span className="text-[11px] font-bold text-muted">Worktree 隔离执行</span>
+                      <div className="flex items-center gap-2 pt-1">
+                        <input
+                          type="checkbox"
+                          id="req-wt"
+                          className="w-4 h-4 accent-accent cursor-pointer"
+                          checked={activeRoleConfig.requiresWorktree ?? activeRoleConfig.definition?.requiresWorktree ?? false}
+                          onChange={(e) => {
+                            updateActiveRole({ requiresWorktree: e.target.checked });
+                            updateActiveRoleDefinition({ requiresWorktree: e.target.checked });
+                          }}
+                        />
+                        <label htmlFor="req-wt" className="text-xs text-ink cursor-pointer select-none">
+                          派发此角色时在独立 Git 分支隔离运行
+                        </label>
+                      </div>
                     </label>
                   </div>
 
@@ -460,11 +472,17 @@ export function RolesDialog({
                         <button
                           type="button"
                           onClick={() => {
-                            const defaultTools = [...activeProfile.allowedTools];
-                            updateActiveRole({ allowedTools: defaultTools });
+                            const defaultTools = activeRoleConfig.definition?.allowedTools ?? [
+                              "read",
+                              "bash",
+                              "edit",
+                              "write",
+                              "report_blocker",
+                            ];
+                            updateActiveRole({ allowedTools: [...defaultTools] });
                           }}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-accent transition-colors"
-                          title="恢复为当前权限 Profile 推荐的默认工具组合"
+                          title="恢复为当前角色的默认工具组合"
                         >
                           恢复预设
                         </button>

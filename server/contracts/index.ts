@@ -1,5 +1,4 @@
 export * from "./rules.ts";
-export * from "./profiles.ts";
 export * from "./roles.ts";
 export * from "./task.ts";
 export * from "./resolver.ts";

@@ -155,3 +155,132 @@ export function writeCustomModels(providers: UICustomProvider[]): void {
   writeFileSync(tmp, `${JSON.stringify(out, null, 2)}\n`, "utf8");
   renameSync(tmp, file);
 }
+
+export async function probeCustomModels(
+  baseUrl: string,
+  apiKey?: string,
+  _api?: string,
+): Promise<{ models: UICustomModel[] }> {
+  const urlTrimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (!urlTrimmed) {
+    throw new Error("Base URL is required");
+  }
+
+  let resolvedApiKey = "";
+  if (apiKey?.trim()) {
+    const raw = apiKey.trim();
+    if (raw.startsWith("$")) {
+      const envName = raw.slice(1).trim();
+      resolvedApiKey = process.env[envName] || "";
+    } else {
+      resolvedApiKey = raw;
+    }
+  }
+
+  const candidateUrls: string[] = [];
+
+  // 1. Direct /models
+  candidateUrls.push(`${urlTrimmed}/models`);
+
+  // 2. Direct /v1/models
+  if (!urlTrimmed.endsWith("/v1")) {
+    candidateUrls.push(`${urlTrimmed}/v1/models`);
+  }
+
+  // 3. If baseUrl has /v1 at the end, also try stripping /v1 -> /models
+  if (urlTrimmed.endsWith("/v1")) {
+    candidateUrls.push(`${urlTrimmed.slice(0, -3)}/models`);
+  }
+
+  // 4. If baseUrl has /claude-code, try parent /models and /v1/models
+  if (urlTrimmed.endsWith("/claude-code")) {
+    const parent = urlTrimmed.slice(0, -12);
+    candidateUrls.push(`${parent}/models`);
+    candidateUrls.push(`${parent}/v1/models`);
+  }
+
+  // 5. Ollama /api/tags
+  candidateUrls.push(`${urlTrimmed}/api/tags`);
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+  if (resolvedApiKey) {
+    headers["Authorization"] = `Bearer ${resolvedApiKey}`;
+    headers["x-api-key"] = resolvedApiKey;
+  }
+
+  const errors: string[] = [];
+
+  for (const targetUrl of candidateUrls) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      const res = await fetch(targetUrl, {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        errors.push(`${targetUrl} (HTTP ${res.status} ${res.statusText})`);
+        continue;
+      }
+
+      const json = (await res.json()) as unknown;
+      const rawModels: Array<{ id?: string; name?: string; model?: string }> = [];
+
+      if (Array.isArray(json)) {
+        for (const item of json) {
+          if (typeof item === "string") rawModels.push({ id: item });
+          else if (item && typeof item === "object") rawModels.push(item as { id?: string; name?: string });
+        }
+      } else if (json && typeof json === "object") {
+        const anyJson = json as Record<string, unknown>;
+        const list = (anyJson.data || anyJson.models || anyJson.result || anyJson.items) as unknown[];
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (typeof item === "string") rawModels.push({ id: item });
+            else if (item && typeof item === "object") {
+              rawModels.push(item as { id?: string; name?: string; model?: string });
+            }
+          }
+        }
+      }
+
+      if (rawModels.length > 0) {
+        const seenIds = new Set<string>();
+        const models: UICustomModel[] = [];
+
+        for (const m of rawModels) {
+          const id = String(m.id || m.model || m.name || "").trim();
+          if (!id || seenIds.has(id)) continue;
+          seenIds.add(id);
+
+          const isReasoning =
+            /thinking|reasoning|r1|claude-3-7|o1|o3|gemini-2\.0-flash-thinking|deepseek-r1/i.test(
+              id,
+            );
+          models.push({
+            id,
+            name: m.name?.trim() || id,
+            contextWindow: 128000,
+            maxTokens: 131072,
+            reasoning: isReasoning,
+            input: ["text", "image"],
+          });
+        }
+
+        if (models.length > 0) {
+          return { models };
+        }
+      }
+      errors.push(`${targetUrl} (未包含可识别的模型字段)`);
+    } catch (err) {
+      errors.push(`${targetUrl} (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
+  throw new Error(`无法从远程服务拉取模型列表。尝试记录:\n${errors.join("\n")}`);
+}

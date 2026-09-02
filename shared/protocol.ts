@@ -55,7 +55,7 @@ export interface RoleDefinition {
   instructions?: string;
   allowedSkills?: string[];
   allowedTools?: string[];
-  permissionProfileId: string;
+  requiresWorktree?: boolean;
   defaultModel?: {
     provider?: string;
     modelId: string;
@@ -84,13 +84,6 @@ export interface RoleConfig {
   definition?: RoleDefinition;
 }
 
-export type DeliverableType =
-  | "summary"
-  | "changed_files"
-  | "test_report"
-  | "review_verdict"
-  | "deploy_evidence";
-
 export interface TaskScope {
   include?: string[];
   exclude?: string[];
@@ -104,48 +97,116 @@ export interface TaskContract {
   scope?: TaskScope;
   contextFiles?: string[];
   constraints?: string[];
-  acceptanceCriteria: string[];
-  expectedDeliverables: DeliverableType[];
-  dependencies?: string[];
-  meta?: Record<string, unknown>;
+  acceptanceCriteria?: string[];
+  dependsOn?: string[];
+  expectedEffects?: ExpectedEffect[];
+  /** 可选返工关系：指向被本次任务修复的先前任务 ID */
+  reworkOfTaskId?: string;
 }
+
+export type ExpectedEffect =
+  | "code_change"
+  | "test_execution"
+  | "analysis"
+  | "deployment"
+  | "artifact";
 
 export type TaskExecutionStatus =
-  | "completed"
   | "blocked"
+  | "ready"
+  | "running"
+  | "completed"
   | "failed"
-  | "rejected"
-  | "cancelled";
+  | "aborted"
+  | "interrupted"
+  | "incomplete"
+  | "conflict";
 
-export type VerificationStatus = "passed" | "failed" | "blocked" | "not_run";
+export type AssistantFinishReason =
+  | "stop"
+  | "tool_call"
+  | "max_tokens"
+  | "cancelled"
+  | "error"
+  | "unknown";
 
-export interface VerificationEvidence {
-  kind: "test" | "build" | "typecheck" | "lint" | "command" | "manual";
-  command?: string;
+export type VerificationStatus =
+  | "pass"
+  | "fail"
+  | "not_run"
+  | "blocked_by_environment"
+  | "partially_verified";
+
+export interface VerificationCheck {
+  name: string;
   status: VerificationStatus;
-  exitCode?: number;
-  summary?: string;
+  detail?: string;
 }
 
-export interface ReviewIssue {
-  severity: "blocker" | "high" | "medium" | "low";
+export type CommandPurpose =
+  | "exploration"
+  | "verification"
+  | "build"
+  | "test"
+  | "deployment";
+
+export interface CommandRecord {
+  command: string;
+  exitCode: number | null;
+  exitCodeSource: "runtime" | "unknown";
+  passed: boolean;
+  purpose: CommandPurpose;
+  stdoutSummary?: string;
+  stderrSummary?: string;
+}
+
+export interface TaskAudit {
+  forceAccepted?: boolean;
+  reason?: string;
+  forcedAt?: string;
+}
+
+export interface VerificationResult {
+  diff: VerificationCheck;
+  scope: VerificationCheck;
+  testExecution?: VerificationCheck;
+  commands: CommandRecord[];
+  overall: VerificationStatus;
+  scopeViolations?: string[];
+  changedFiles?: string[];
+}
+
+export type FinalizeMode = "working_tree" | "squash_commit" | "keep_commits";
+
+export interface FinalizeResult {
+  success: boolean;
+  status: "FINALIZED" | "FINALIZE_CONFLICT" | "NO_CHANGES" | "ERROR";
+  mode: FinalizeMode;
+  changedFiles: string[];
+  conflictFiles?: string[];
+  commitSha?: string;
+  error?: string;
+}
+
+export type ReviewSeverity = "blocker" | "major" | "minor" | "nit";
+
+export interface ReviewFinding {
+  id: string;
+  severity: ReviewSeverity;
+  criterionId?: string;
+  invariantId?: string;
   file?: string;
   line?: number;
-  description: string;
-  suggestion?: string;
+  problem: string;
+  evidence: string;
+  expected?: string;
+  actual?: string;
 }
 
-export interface ReviewVerdictReport {
+export interface ReviewResult {
   verdict: "APPROVE" | "REQUEST_CHANGES";
-  summary?: string;
-  issues?: ReviewIssue[];
-}
-
-export interface DeployEvidenceReport {
-  targetHost?: string;
-  releaseVersion?: string;
-  healthCheckPassed: boolean;
-  verifyLogSnippet?: string;
+  findings: ReviewFinding[];
+  onlyMinorFindings: boolean;
 }
 
 export interface TaskResult {
@@ -155,12 +216,13 @@ export interface TaskResult {
   summary: string;
   changedFiles?: string[];
   commit?: string;
-  verification?: VerificationEvidence[];
-  reviewReport?: ReviewVerdictReport;
-  deployEvidence?: DeployEvidenceReport;
-  unresolvedItems?: string[];
+  startedAt?: string;
   completedAt: string;
+  durationMs?: number;
   meta?: Record<string, unknown>;
+  verification?: VerificationResult;
+  review?: ReviewResult;
+  audit?: TaskAudit;
 }
 
 export interface UISkillItem {
@@ -190,25 +252,20 @@ export interface UISubagentTask {
   taskId: string;
   parentSessionId: string;
   role: AgentRole;
+  /** Logical reusable agent identity (survives across continued tasks). */
+  agentId?: string;
   taskTitle: string;
   taskPrompt: string;
   branchName?: string;
   worktreePath?: string;
   targetCwd?: string;
-  status:
-    | "running"
-    | "completed"
-    | "failed"
-    | "aborted"
-    | "interrupted"
-    | "blocked"
-    | "rejected"
-    | "cancelled";
+  status: TaskExecutionStatus;
   createdAt: string;
+  startedAt?: string;
   completedAt?: string;
+  durationMs?: number;
   summary?: string;
   changedFiles?: string[];
-  testStatus?: "pass" | "fail" | "none";
   logs?: string[];
   error?: string;
   /** Subagent 的完整对话会话与工具调用流 */
@@ -217,8 +274,16 @@ export interface UISubagentTask {
   model?: { provider: string; id: string; name?: string };
   /** 结构化任务契约 */
   taskContract?: TaskContract;
-  /** 结构化交付结果 */
+  /** 可选返工关系：指向被本次任务修复的先前任务 ID */
+  reworkOfTaskId?: string;
+  /** 交付结果记录 */
   taskResult?: TaskResult;
+  /** Runtime 验证结果 */
+  verification?: VerificationResult;
+  /** 结构化 Review 结果 */
+  review?: ReviewResult;
+  /** 强制接受审计记录 */
+  audit?: TaskAudit;
 }
 
 export interface UITokenUsageByRole {
@@ -491,22 +556,35 @@ export interface UILLMTurnsResponse {
   turns: UILLMTurnRecord[];
 }
 
+export interface UISubscriptionModel {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+}
+
 export interface UISubscriptionProvider {
   id: string;
   name: string;
   envKey: string;
   configured: boolean;
   authSource?: string;
-  models: Array<{
-    id: string;
-    name?: string;
-    reasoning?: boolean;
-  }>;
+  authType?: "api_key" | "oauth" | string;
+  /** Models still shown in the picker / settings. */
+  models: UISubscriptionModel[];
+  /** User-hidden models (can be restored). */
+  hiddenModels?: UISubscriptionModel[];
 }
 
 export interface UISubscriptionModelsResponse {
   providers: UISubscriptionProvider[];
+  path?: string;
+  preferencesPath?: string;
 }
+
+export type UISubscriptionModelAction =
+  | { action: "hide_model"; provider: string; modelId: string }
+  | { action: "unhide_model"; provider: string; modelId: string }
+  | { action: "unhide_all"; provider: string };
 
 export type ServerEvent =
   | { type: "snapshot"; snapshot: UISnapshot }

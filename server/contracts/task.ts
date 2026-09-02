@@ -1,13 +1,5 @@
 import type { UIThinkingLevel } from "../../shared/protocol.ts";
 
-/** 期望交付物类型 */
-export type DeliverableType =
-  | "summary"
-  | "changed_files"
-  | "test_report"
-  | "review_verdict"
-  | "deploy_evidence";
-
 /** 允许修改的代码与路径范围 */
 export interface TaskScope {
   /** 明确允许修改的文件或路径模式（例如 ["frontend/src/**", "package.json"]） */
@@ -19,35 +11,40 @@ export interface TaskScope {
 /**
  * 机器可读的任务契约 (TaskContract)
  *
- * 由 Coordinator 派发，或在 Subagent 间交接时使用。
- * 遵循约束优先级：TaskContract 处于最低优先级，绝不可覆盖 Role strict_prohibitions 或 Shared Invariants。
+ * 由 Coordinator 派发，用于向 Subagent 描述任务目标与上下文。
  */
 export interface TaskContract {
   taskId: string;
   parentSessionId: string;
   role: string;
-  /** 任务明确目标与背景 */
+  /** 任务明确目标与期望结果 (Goal) */
   goal: string;
   /** 任务允许修改的路径范围 (不同于只读上下文) */
   scope?: TaskScope;
   /** 推荐重点阅读的参考文件路径 (只读参考，非修改范围) */
   contextFiles?: string[];
-  /** 任务专属约束条件（不可违背更高层级规则） */
+  /** 任务专属约束条件 */
   constraints?: string[];
   /** 验收标准清单（可逐项核对的条件） */
-  acceptanceCriteria: string[];
-  /** 明确要求产出的交付物类型 */
-  expectedDeliverables: DeliverableType[];
-  /** 依赖的前置 Task ID 列表 */
-  dependencies?: string[];
-  /** 附加元数据 */
-  meta?: Record<string, unknown>;
+  acceptanceCriteria?: string[];
+  /** 显式任务依赖：此任务依赖的前置任务 ID 列表 */
+  dependsOn?: string[];
+  /** 预期效果类型（用于精准 Runtime Verification，避免将 analysis/test 误判为 NO_EFFECT） */
+  expectedEffects?: ExpectedEffect[];
+  /** 可选返工关系：指向被本次任务修复的先前任务 ID */
+  reworkOfTaskId?: string;
 }
+
+/** 任务预期产出/效果类型 */
+export type ExpectedEffect =
+  | "code_change"
+  | "test_execution"
+  | "analysis"
+  | "deployment"
+  | "artifact";
 
 /**
  * 任务运行时执行配置 (SubagentExecutionOptions)
- *
- * 与 TaskContract 解耦，专职控制运行时的超时、模型、思考深度、Worktree 路径等。
  */
 export interface SubagentExecutionOptions {
   timeoutMs?: number;
@@ -57,66 +54,163 @@ export interface SubagentExecutionOptions {
     modelId: string;
     thinkingLevel?: UIThinkingLevel;
   };
-  permissionProfileId?: string;
-  writableScope?: "none" | "worktree-only" | "test-only" | "all";
   requiresWorktree?: boolean;
   worktree?: string;
 }
 
-/** 任务执行状态 */
+/**
+ * 任务运行时执行生命周期状态
+ *
+ * 状态流转：
+ *   blocked → ready → running → completed
+ *                       ↓           ↓
+ *                    conflict     failed
+ *
+ *   任何运行中状态均可 → aborted / interrupted / incomplete
+ */
 export type TaskExecutionStatus =
-  | "completed"  // 正常完成并满足验收条件
-  | "blocked"    // 外部依赖或前置条件阻塞
-  | "failed"     // 执行过程异常或测试未通过
-  | "rejected"   // 任务违反角色职责或权限边界被拒绝
-  | "cancelled"; // 被用户或父 Agent 主动终止
-
-/** 验证状态 */
-export type VerificationStatus =
-  | "passed"
-  | "failed"
   | "blocked"
-  | "not_run";
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "aborted"
+  | "interrupted"
+  | "incomplete"
+  | "conflict";
 
-/** 结构化验证证据 */
-export interface VerificationEvidence {
-  kind: "test" | "build" | "typecheck" | "lint" | "command" | "manual";
-  command?: string;
+/** Assistant 消息完成/终止原因（统一归一化） */
+export type AssistantFinishReason =
+  | "stop"
+  | "tool_call"
+  | "max_tokens"
+  | "cancelled"
+  | "error"
+  | "unknown";
+
+// ---------------------------------------------------------------------------
+// Runtime Verification
+// ---------------------------------------------------------------------------
+
+export type VerificationStatus =
+  | "pass"
+  | "fail"
+  | "not_run"
+  | "blocked_by_environment"
+  | "partially_verified";
+
+/** 单项验证结果 */
+export interface VerificationCheck {
+  name: string;
   status: VerificationStatus;
-  exitCode?: number;
-  summary?: string;
+  detail?: string;
 }
 
-/** 审查严重等级 */
-export type ReviewSeverity = "blocker" | "high" | "medium" | "low";
+/** 命令执行目的（区分探索与验证门禁） */
+export type CommandPurpose =
+  | "exploration"
+  | "verification"
+  | "build"
+  | "test"
+  | "deployment";
 
-export interface ReviewIssue {
+/** 命令执行记录（客观事实，非 LLM 自述） */
+export interface CommandRecord {
+  command: string;
+  exitCode: number | null;
+  exitCodeSource: "runtime" | "unknown";
+  passed: boolean;
+  purpose: CommandPurpose;
+  stdoutSummary?: string;
+  stderrSummary?: string;
+}
+
+/** 任务人为覆核/审计信息 */
+export interface TaskAudit {
+  forceAccepted?: boolean;
+  reason?: string;
+  forcedAt?: string;
+}
+
+/** 完整的 Runtime 验证结果 */
+export interface VerificationResult {
+  /** 文件变更验证 */
+  diff: VerificationCheck;
+  /** Scope 合规验证 */
+  scope: VerificationCheck;
+  /** 测试执行验证（针对 expectedEffects 包含 test_execution 的任务） */
+  testExecution?: VerificationCheck;
+  /** 命令执行记录（test / lint / typecheck / build 等） */
+  commands: CommandRecord[];
+  /** 汇总判定 */
+  overall: VerificationStatus;
+  /** scope 违规文件列表 */
+  scopeViolations?: string[];
+  /** 实际变更文件列表 */
+  changedFiles?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Run Finalization
+// ---------------------------------------------------------------------------
+
+export type FinalizeMode = "working_tree" | "squash_commit" | "keep_commits";
+
+export interface CleanupResult {
+  success: boolean;
+  removed: string[];
+  skipped: string[];
+  leftovers: string[];
+  errors?: string[];
+}
+
+export interface FinalizeResult {
+  success: boolean;
+  status: "FINALIZED" | "FINALIZE_CONFLICT" | "NO_CHANGES" | "ERROR";
+  mode: FinalizeMode;
+  changedFiles: string[];
+  conflictFiles?: string[];
+  commitSha?: string;
+  error?: string;
+  cleanupResult?: CleanupResult;
+}
+
+// ---------------------------------------------------------------------------
+// Structured Review
+// ---------------------------------------------------------------------------
+
+export type ReviewSeverity = "blocker" | "major" | "minor" | "nit";
+
+export interface ReviewFinding {
+  id: string;
   severity: ReviewSeverity;
+  /** 关联的验收标准 ID（如果有） */
+  criterionId?: string;
+  /** 关联的 Shared Invariant ID（如果有） */
+  invariantId?: string;
   file?: string;
   line?: number;
-  description: string;
-  suggestion?: string;
+  problem: string;
+  evidence: string;
+  expected?: string;
+  actual?: string;
 }
 
-/** 结构化 Review 报告 */
-export interface ReviewVerdictReport {
+export interface ReviewResult {
   verdict: "APPROVE" | "REQUEST_CHANGES";
-  summary?: string;
-  issues?: ReviewIssue[];
+  findings: ReviewFinding[];
+  /** 是否仅包含 minor/nit 级别发现（用于防止低质量问题触发无限返工） */
+  onlyMinorFindings: boolean;
 }
 
-/** 结构化部署与验证证据 */
-export interface DeployEvidenceReport {
-  targetHost?: string;
-  releaseVersion?: string;
-  healthCheckPassed: boolean;
-  verifyLogSnippet?: string;
-}
+// ---------------------------------------------------------------------------
+// Task Result
+// ---------------------------------------------------------------------------
 
 /**
- * 机器可读的任务交付结果 (TaskResult)
+ * 任务交付结果 (TaskResult)
  *
- * Subagent 运行结束后的最终结构化输出。
+ * Subagent 运行结束后的交付产出记录。
  */
 export interface TaskResult {
   taskId: string;
@@ -128,211 +222,16 @@ export interface TaskResult {
   changedFiles?: string[];
   /** 产出的 Git Commit SHA (若已提交) */
   commit?: string;
-  /** 结构化验证证据链 */
-  verification?: VerificationEvidence[];
-  /** 审查报告（针对 Reviewer 角色） */
-  reviewReport?: ReviewVerdictReport;
-  /** 部署证据（针对 Deployer 角色） */
-  deployEvidence?: DeployEvidenceReport;
-  /** 未解决或遗留风险项 */
-  unresolvedItems?: string[];
+  /** 开始时间 ISO 字符串 */
+  startedAt?: string;
   /** 完成时间 ISO 字符串 */
   completedAt: string;
+  /** 运行耗时（毫秒） */
+  durationMs?: number;
   /** 附加元数据 */
   meta?: Record<string, unknown>;
-}
-
-export interface TaskResultValidationResult {
-  valid: boolean;
-  result?: TaskResult;
-  errors: string[];
-}
-
-/**
- * 严格的运行时 TaskResult Schema 校验器
- * 绝不盲目信任 JSON.parse 结果，并逐项核对 expectedDeliverables 交付契约。
- */
-export function validateTaskResult(
-  raw: unknown,
-  contract?: TaskContract,
-): TaskResultValidationResult {
-  const errors: string[] = [];
-  if (!raw || typeof raw !== "object") {
-    return { valid: false, errors: ["TaskResult payload must be a non-null object"] };
-  }
-
-  const obj = raw as Record<string, unknown>;
-
-  const validStatuses: TaskExecutionStatus[] = [
-    "completed",
-    "blocked",
-    "failed",
-    "rejected",
-    "cancelled",
-  ];
-  const rawStatus = typeof obj.status === "string" ? (obj.status as TaskExecutionStatus) : undefined;
-  const status: TaskExecutionStatus = rawStatus && validStatuses.includes(rawStatus)
-    ? rawStatus
-    : "failed";
-
-  if (!rawStatus || !validStatuses.includes(rawStatus)) {
-    errors.push(`Invalid status: "${obj.status}". Expected one of: ${validStatuses.join(", ")}`);
-  }
-
-  const summary = typeof obj.summary === "string" ? obj.summary.trim() : "";
-  if (!summary) {
-    errors.push("Missing or empty summary in TaskResult");
-  }
-
-  const taskId = typeof obj.taskId === "string" ? obj.taskId : contract?.taskId || "unknown-task";
-  const role = typeof obj.role === "string" ? obj.role : contract?.role || "unknown-role";
-
-  let verification: VerificationEvidence[] | undefined;
-  if (Array.isArray(obj.verification)) {
-    verification = [];
-    for (let idx = 0; idx < obj.verification.length; idx++) {
-      const v = obj.verification[idx];
-      if (!v || typeof v !== "object") {
-        continue;
-      }
-      const rawStatusStr = String(v.status || "").toLowerCase();
-      const mappedStatus =
-        rawStatusStr === "completed" ||
-        rawStatusStr === "success" ||
-        rawStatusStr === "ok" ||
-        rawStatusStr === "done" ||
-        rawStatusStr === "passed"
-          ? "passed"
-          : rawStatusStr === "failed" || rawStatusStr === "error"
-            ? "failed"
-            : rawStatusStr === "blocked"
-              ? "blocked"
-              : "not_run";
-
-      verification.push({
-        kind: typeof v.kind === "string" && v.kind.trim() ? v.kind.trim() : "command",
-        status: mappedStatus,
-        command: typeof v.command === "string" ? v.command : undefined,
-        exitCode: typeof v.exitCode === "number" ? v.exitCode : undefined,
-        summary: typeof v.summary === "string" ? v.summary : undefined,
-      });
-    }
-  }
-
-  // completed 状态绝不允许存在 failed 或 blocked 验证项
-  if (status === "completed" && verification && verification.length > 0) {
-    const hasFailedOrBlocked = verification.some(
-      (v) => v.status === "failed" || v.status === "blocked",
-    );
-    if (hasFailedOrBlocked) {
-      errors.push(
-        `Task status cannot be "completed" when verification evidence contains failed or blocked checks.`,
-      );
-    }
-  }
-
-  let reviewReport: ReviewVerdictReport | undefined;
-  if (obj.reviewReport && typeof obj.reviewReport === "object") {
-    const rr = obj.reviewReport as Record<string, unknown>;
-    const rawVerdict = String(rr.verdict || "").toUpperCase();
-    const verdict =
-      rawVerdict === "APPROVE" || rawVerdict === "APPROVED" || rawVerdict === "PASS"
-        ? "APPROVE"
-        : "REQUEST_CHANGES";
-    reviewReport = {
-      verdict,
-      summary: typeof rr.summary === "string" ? rr.summary : undefined,
-      issues: Array.isArray(rr.issues) ? (rr.issues as any[]) : undefined,
-    };
-  }
-
-  let deployEvidence: DeployEvidenceReport | undefined;
-  if (obj.deployEvidence && typeof obj.deployEvidence === "object") {
-    const de = obj.deployEvidence as Record<string, unknown>;
-    if (typeof de.healthCheckPassed !== "boolean") {
-      errors.push(
-        `deployEvidence.healthCheckPassed must be a strict boolean (received ${typeof de.healthCheckPassed}).`,
-      );
-    }
-    deployEvidence = {
-      targetHost: typeof de.targetHost === "string" ? de.targetHost : undefined,
-      releaseVersion: typeof de.releaseVersion === "string" ? de.releaseVersion : undefined,
-      healthCheckPassed: typeof de.healthCheckPassed === "boolean" ? de.healthCheckPassed : false,
-      verifyLogSnippet: typeof de.verifyLogSnippet === "string" ? de.verifyLogSnippet : undefined,
-    };
-  }
-
-  const changedFiles = Array.isArray(obj.changedFiles)
-    ? (obj.changedFiles.filter((f) => typeof f === "string") as string[])
-    : undefined;
-
-  // 逐项核对 expectedDeliverables 交付契约
-  if (contract?.expectedDeliverables) {
-    for (const deliv of contract.expectedDeliverables) {
-      if (deliv === "summary" && !summary) {
-        errors.push(`Deliverable "summary" required by contract is missing.`);
-      }
-      if (deliv === "changed_files" && (!changedFiles || changedFiles.length === 0)) {
-        errors.push(`Deliverable "changed_files" required by contract has no changed files.`);
-      }
-      if (deliv === "test_report") {
-        const passedTest =
-          verification &&
-          verification.some(
-            (v) => ["test", "typecheck", "build"].includes(v.kind) && v.status === "passed",
-          );
-        if (!passedTest) {
-          errors.push(
-            `Deliverable "test_report" required by contract was not provided with passed verification evidence.`,
-          );
-        }
-      }
-      if (deliv === "review_verdict") {
-        if (!reviewReport || !reviewReport.verdict) {
-          errors.push(
-            `Deliverable "review_verdict" required by contract was not provided in reviewReport.`,
-          );
-        }
-      }
-      if (deliv === "deploy_evidence") {
-        if (!deployEvidence || typeof deployEvidence.healthCheckPassed !== "boolean") {
-          errors.push(
-            `Deliverable "deploy_evidence" required by contract was not provided in deployEvidence.`,
-          );
-        }
-      }
-    }
-  }
-
-  const completedAt =
-    typeof obj.completedAt === "string" ? obj.completedAt : new Date().toISOString();
-
-  const finalStatus: TaskExecutionStatus =
-    status === "completed" && verification?.some((v) => v.status === "failed" || v.status === "blocked")
-      ? "failed"
-      : status;
-
-  const rawUnresolved = Array.isArray(obj.unresolvedItems)
-    ? (obj.unresolvedItems.filter((item) => typeof item === "string") as string[])
-    : [];
-
-  const combinedUnresolved = Array.from(new Set([...rawUnresolved, ...errors]));
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    result: {
-      taskId,
-      role,
-      status: finalStatus,
-      summary,
-      changedFiles,
-      commit: typeof obj.commit === "string" ? obj.commit : undefined,
-      verification,
-      reviewReport,
-      deployEvidence,
-      unresolvedItems: combinedUnresolved.length > 0 ? combinedUnresolved : undefined,
-      completedAt,
-    },
-  };
+  /** Runtime 验证结果 */
+  verification?: VerificationResult;
+  /** 结构化 Review 结果（仅 reviewer 角色产出） */
+  review?: ReviewResult;
 }

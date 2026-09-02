@@ -1,20 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 import type { AgentRole } from "../../shared/protocol.ts";
 import { loadSkillsContent } from "../skills.ts";
-import { getPermissionProfile, type PermissionProfile, type WritableScopeKind } from "./profiles.ts";
 import { getRoleDefinition, type RoleDefinition } from "./roles.ts";
 import { SHARED_DEFAULTS, SHARED_INVARIANTS } from "./rules.ts";
 import type { SubagentExecutionOptions, TaskContract } from "./task.ts";
 
-/** 运行时动态计算出的实际生效权限 */
-export interface EffectiveRuntimePermission {
-  profileId: string;
-  allowedTools: string[];
-  disallowedTools?: string[];
-  writableScope: WritableScopeKind;
-  /** 允许写入的具体目录/路径列表 */
-  writablePaths: string[];
+/** 运行时动态计算出的实际生效执行配置 */
+export interface EffectiveRuntimeConfig {
+  activeTools: string[];
   requiresWorktree: boolean;
   isWorktree: boolean;
   worktreePath?: string;
@@ -31,10 +25,10 @@ export interface EffectiveRuntimePermission {
   };
 }
 
-/** 经过层级解析后的最终有效上下文 */
+/** 经过解析后的最终有效上下文 */
 export interface EffectiveContext {
   role: RoleDefinition;
-  permission: EffectiveRuntimePermission;
+  runtime: EffectiveRuntimeConfig;
   invariants: readonly string[];
   roleConstraints: {
     responsibilities: string[];
@@ -99,49 +93,14 @@ export function loadProjectRules(cwd: string, projectRoot?: string): string[] {
 }
 
 /**
- * 计算动态的 Writable Paths
- */
-function computeWritablePaths(
-  profile: PermissionProfile,
-  cwd: string,
-  worktreePath?: string,
-  taskContract?: TaskContract,
-): string[] {
-  if (profile.writableScope === "none") {
-    return [];
-  }
-
-  const baseWritableDir = worktreePath || cwd;
-  const paths: string[] = [baseWritableDir];
-
-  // 如果 TaskContract 指定了包含范围，在不超越 baseWritableDir 的前提下增加记录
-  if (taskContract?.scope?.include && taskContract.scope.include.length > 0) {
-    for (const inc of taskContract.scope.include) {
-      const resolved = isAbsolute(inc) ? inc : resolve(baseWritableDir, inc);
-      paths.push(resolved);
-    }
-  }
-
-  return paths;
-}
-
-/**
- * ConstraintResolver: 约束解析器
- *
- * 严格按照优先级合并并生成 EffectiveContext：
- * Runtime Enforcement > Shared Invariants > Role Constraints > Project Rules > Shared Defaults > Task Contract
+ * ConstraintResolver: 约束与运行时配置解析器
  */
 export class ConstraintResolver {
   public static resolve(options: ResolveOptions): EffectiveContext {
     // 1. 获取角色定义
     const role = getRoleDefinition(options.role);
 
-    // 2. 获取权限 Profile
-    const profileId =
-      options.executionOptions?.permissionProfileId || role.permissionProfileId || "standard-dev";
-    const profile = getPermissionProfile(profileId);
-
-    // 3. 计算实际运行时权限
+    // 2. 计算实际运行时配置
     const isWorktree = !!options.worktreePath;
     const effectiveModel =
       options.executionOptions?.model ??
@@ -154,30 +113,19 @@ export class ConstraintResolver {
           }
         : undefined);
 
-    const writablePaths = computeWritablePaths(
-      profile,
-      options.cwd,
-      options.worktreePath,
-      options.taskContract,
-    );
-
-    const allowedTools =
-      role.allowedTools && role.allowedTools.length > 0
+    const activeTools =
+      Array.isArray(role.allowedTools)
         ? [...role.allowedTools]
-        : role.isLegacy && role.legacyAllowedTools && role.legacyAllowedTools.length > 0
+        : role.isLegacy && Array.isArray(role.legacyAllowedTools)
           ? [...role.legacyAllowedTools]
-          : [...profile.allowedTools];
+          : ["read", "bash", "edit", "write", "report_blocker"];
 
-    const permission: EffectiveRuntimePermission = {
-      profileId: profile.id,
-      allowedTools,
-      disallowedTools: profile.disallowedTools ? [...profile.disallowedTools] : undefined,
-      writableScope: options.executionOptions?.writableScope ?? profile.writableScope,
-      writablePaths,
+    const runtime: EffectiveRuntimeConfig = {
+      activeTools,
       requiresWorktree:
         options.executionOptions?.requiresWorktree !== undefined
           ? options.executionOptions.requiresWorktree
-          : profile.requiresWorktree,
+          : Boolean(role.requiresWorktree),
       isWorktree,
       worktreePath: options.worktreePath,
       targetCwd: options.targetCwd,
@@ -186,32 +134,17 @@ export class ConstraintResolver {
       model: effectiveModel,
     };
 
-    // 4. 解析技能
+    // 3. 解析技能
     const allowedSkills = role.allowedSkills ?? [];
     const assignedSkills =
       allowedSkills.length > 0 ? loadSkillsContent(allowedSkills, options.cwd) : [];
 
-    // 5. 解析项目规则
+    // 4. 解析项目规则
     const projectRules = loadProjectRules(options.cwd, options.projectRoot);
-
-    // 6. 任务契约冲突校验 (Task Contract 不能推翻 Role Strict Prohibitions)
-    let sanitizedTaskContract = options.taskContract;
-    if (sanitizedTaskContract?.constraints && role.strictProhibitions.length > 0) {
-      // 保证角色禁令最高约束
-      sanitizedTaskContract = {
-        ...sanitizedTaskContract,
-        constraints: sanitizedTaskContract.constraints.filter((tc) => {
-          const isConflicting = role.strictProhibitions.some((p) =>
-            tc.toLowerCase().includes("允许修改") && (p.includes("禁止") || p.includes("严禁")),
-          );
-          return !isConflicting;
-        }),
-      };
-    }
 
     return {
       role,
-      permission,
+      runtime,
       invariants: SHARED_INVARIANTS,
       roleConstraints: {
         responsibilities: role.isLegacy && role.legacySystemPrompt
@@ -222,7 +155,7 @@ export class ConstraintResolver {
       projectRules,
       defaults: SHARED_DEFAULTS,
       assignedSkills,
-      taskContract: sanitizedTaskContract,
+      taskContract: options.taskContract,
       environment: {
         cwd: options.cwd,
         projectRoot: options.projectRoot,

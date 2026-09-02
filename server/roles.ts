@@ -5,10 +5,12 @@ import type { AgentRole, RoleConfig } from "../shared/protocol.ts";
 import {
   ConstraintResolver,
   DEFAULT_ROLES_V2,
+  formatWorkspaceContext,
   PromptAssembler,
   RoleRegistry,
   type RoleDefinition,
   type TaskContract,
+  type WorkspaceContextDetails,
 } from "./contracts/index.ts";
 
 const HOME = homedir();
@@ -59,6 +61,7 @@ export function buildRoleAugmentedSystemPrompt(role: AgentRole, basePrompt?: str
 
 export interface WorkspaceContextInfo {
   cwd: string;
+  projectRoot?: string;
   isWorktree?: boolean;
   branchName?: string;
   isCoordinator?: boolean;
@@ -66,16 +69,18 @@ export interface WorkspaceContextInfo {
 }
 
 export function buildWorkspaceContextPrompt(info: WorkspaceContextInfo): string {
-  const payload: Record<string, unknown> = {
-    workspace_context: {
-      type: info.isCoordinator ? "main_project" : "subagent_worktree",
-      cwd: info.cwd,
-      ...(info.branchName ? { git_branch: info.branchName } : {}),
-      ...(info.isWorktree ? { is_worktree: true } : {}),
-      ...(info.targetCwd ? { target_cwd: info.targetCwd } : {}),
-    },
-  };
-  return JSON.stringify(payload, null, 2);
+  return formatWorkspaceContext({
+    cwd: info.cwd,
+    projectRoot: info.projectRoot ?? info.cwd,
+    workspaceType: info.isWorktree
+      ? "isolated_worktree"
+      : info.isCoordinator
+        ? "coordinator_workspace"
+        : "main_project",
+    gitBranch: info.branchName,
+    targetCwd: info.targetCwd,
+    isWorktree: info.isWorktree,
+  });
 }
 
 /**
@@ -102,6 +107,6 @@ export function buildUnifiedSystemPrompt(options: {
     taskContract: options.taskContract,
   });
 
-  const assembled = PromptAssembler.assemble(context, options.currentTaskText);
+  const assembled = PromptAssembler.assemble(context);
   return assembled.systemPrompt;
 }

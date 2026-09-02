@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   RoleConfig,
+  UICustomModel,
   UICustomModelsResponse,
   UICustomProvider,
   UICwdValidateResponse,
@@ -298,5 +299,88 @@ export function useSubscriptionModels(enabled = true) {
 export function useInvalidateSubscriptionModels() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: SUBSCRIPTION_MODELS_QUERY_KEY });
+}
+
+export async function addSubscriptionProvider(
+  provider: string,
+  apiKey: string,
+): Promise<UISubscriptionModelsResponse> {
+  const res = await fetch("/api/subscription-models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider, apiKey }),
+  });
+  const json = (await res.json()) as UISubscriptionModelsResponse & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `add provider failed: ${res.status}`);
+  return json;
+}
+
+export async function deleteSubscriptionProvider(
+  provider: string,
+): Promise<UISubscriptionModelsResponse> {
+  const res = await fetch("/api/subscription-models", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider }),
+  });
+  const json = (await res.json()) as UISubscriptionModelsResponse & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `delete provider failed: ${res.status}`);
+  return json;
+}
+
+export async function hideSubscriptionModel(
+  provider: string,
+  modelId: string,
+): Promise<UISubscriptionModelsResponse> {
+  const res = await fetch("/api/subscription-models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "hide_model", provider, modelId }),
+  });
+  const json = (await res.json()) as UISubscriptionModelsResponse & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `hide model failed: ${res.status}`);
+  return json;
+}
+
+export async function unhideSubscriptionModel(
+  provider: string,
+  modelId: string,
+): Promise<UISubscriptionModelsResponse> {
+  const res = await fetch("/api/subscription-models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "unhide_model", provider, modelId }),
+  });
+  const json = (await res.json()) as UISubscriptionModelsResponse & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `unhide model failed: ${res.status}`);
+  return json;
+}
+
+export async function unhideAllSubscriptionModels(
+  provider: string,
+): Promise<UISubscriptionModelsResponse> {
+  const res = await fetch("/api/subscription-models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "unhide_all", provider }),
+  });
+  const json = (await res.json()) as UISubscriptionModelsResponse & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `unhide all failed: ${res.status}`);
+  return json;
+}
+
+export async function fetchRemoteCustomModels(params: {
+  baseUrl: string;
+  apiKey?: string;
+  api?: string;
+}): Promise<{ models: UICustomModel[] }> {
+  const res = await fetch("/api/fetch-custom-models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const json = (await res.json()) as { models: UICustomModel[]; error?: string };
+  if (!res.ok) throw new Error(json.error ?? `fetch models failed: ${res.status}`);
+  return json;
 }
 
