@@ -73,7 +73,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task A fails
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -90,7 +90,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task C dependsOn Task A -> starts as blocked
       const taskC = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task C",
         taskPrompt: "Test after A",
         parentCwd: gitRepoDir,
@@ -98,7 +98,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: `task-c-${Date.now()}`,
           parentSessionId: sessionId,
-          role: "tester",
+          role: "verifier",
           goal: "Test after A",
           dependsOn: [taskA.taskId],
         },
@@ -108,7 +108,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task B rework of Task A
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B (Rework A)",
         taskPrompt: "Fix A",
         parentCwd: gitRepoDir,
@@ -116,7 +116,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: `task-b-${Date.now()}`,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Fix A",
           reworkOfTaskId: taskA.taskId,
         },
@@ -149,7 +149,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -165,7 +165,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskC = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task C",
         taskPrompt: "Test after A",
         parentCwd: gitRepoDir,
@@ -173,7 +173,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: `task-c-${Date.now()}`,
           parentSessionId: sessionId,
-          role: "tester",
+          role: "verifier",
           goal: "Test after A",
           dependsOn: [taskA.taskId],
         },
@@ -183,7 +183,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task B rework of A, also fails
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B (Rework A)",
         taskPrompt: "Fix A attempt 1",
         parentCwd: gitRepoDir,
@@ -191,7 +191,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: `task-b-${Date.now()}`,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Fix A attempt 1",
           reworkOfTaskId: taskA.taskId,
         },
@@ -220,7 +220,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -236,7 +236,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Rework A",
         parentCwd: gitRepoDir,
@@ -253,7 +253,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskC = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task C",
         taskPrompt: "Rework B",
         parentCwd: gitRepoDir,
@@ -278,7 +278,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       const task: UISubagentTask = {
         taskId: "t4",
         parentSessionId: "s4",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "T4",
         taskPrompt: "P4",
         status: "completed",
@@ -298,7 +298,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       const task: UISubagentTask = {
         taskId: "t5",
         parentSessionId: "s5",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "T5",
         taskPrompt: "P5",
         status: "completed",
@@ -318,7 +318,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       const task: UISubagentTask = {
         taskId: "t6",
         parentSessionId: "s6",
-        role: "tester",
+        role: "verifier",
         taskTitle: "T6",
         taskPrompt: "P6",
         status: "completed",
@@ -338,7 +338,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       const task: UISubagentTask = {
         taskId: "t7",
         parentSessionId: "s7",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "T7",
         taskPrompt: "P7",
         status: "completed",
@@ -372,7 +372,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -388,7 +388,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Rework A",
         parentCwd: gitRepoDir,
@@ -408,7 +408,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -434,7 +434,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -461,7 +461,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task A fails
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -478,7 +478,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task B rework of A (passes)
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B (Rework A)",
         taskPrompt: "Fix A",
         parentCwd: gitRepoDir,
@@ -496,7 +496,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task C passes
       const taskC = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Task C",
         taskPrompt: "Do C",
         parentCwd: gitRepoDir,
@@ -513,7 +513,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
       // Task D passes
       const taskD = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task D",
         taskPrompt: "Do D",
         parentCwd: gitRepoDir,
@@ -543,7 +543,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -559,7 +559,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
 
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B (Rework A)",
         taskPrompt: "Fix A",
         parentCwd: gitRepoDir,

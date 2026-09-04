@@ -210,16 +210,32 @@ export function Composer({ isStreaming }: { isStreaming: boolean }) {
             </button>
             <div className="flex-1" />
             {isStreaming ? (
-              <button
-                onClick={() => chatClient.send({ type: "abort" })}
-                className="flex items-center gap-1.5 border-2 border-red-400 bg-red-500 px-3 py-1 font-mono text-xs font-bold text-white shadow-[2px_2px_0_rgba(195,78,109,0.3)] transition-all hover:translate-x-[1px] hover:translate-y-[1px]"
-                aria-label={t("abort")}
-              >
-                <span className="size-2 bg-white" />
-                <span>{t("abort")}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => chatClient.send({ type: "abort" })}
+                  className="flex items-center gap-1.5 border-2 border-red-400 bg-red-500 px-3 py-1 font-mono text-xs font-bold text-white shadow-[2px_2px_0_rgba(195,78,109,0.3)] transition-all hover:translate-x-[1px] hover:translate-y-[1px]"
+                  aria-label={t("abort")}
+                  title="立即停止当前 Agent 运行"
+                >
+                  <span className="size-2 bg-white" />
+                  <span>{t("abort")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={send}
+                  disabled={!text.trim() && images.length === 0}
+                  className="flex items-center gap-1.5 border-2 border-blue-500 bg-blue-600 px-3 py-1 font-mono text-xs font-bold text-white shadow-[2px_2px_0_rgba(59,130,246,0.3)] transition-all hover:translate-x-[1px] hover:translate-y-[1px] disabled:opacity-35 disabled:hover:translate-x-0 disabled:hover:translate-y-0"
+                  aria-label={t("queueSend")}
+                  title="将消息加入队列，在当前轮次自然结束后执行"
+                >
+                  <span>{t("queueSend")}</span>
+                  <span className="text-[10px]">⏳</span>
+                </button>
+              </div>
             ) : (
               <button
+                type="button"
                 onClick={send}
                 disabled={!text.trim() && images.length === 0}
                 className="flex items-center gap-1.5 border-2 border-accent bg-accent px-3 py-1 font-mono text-xs font-bold text-accent-ink shadow-[2px_2px_0_rgba(119,68,180,0.3)] transition-all hover:translate-x-[1px] hover:translate-y-[1px] disabled:opacity-35 disabled:hover:translate-x-0 disabled:hover:translate-y-0"

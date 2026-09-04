@@ -77,7 +77,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-del-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Delete file",
         taskPrompt: "Delete to_delete.txt",
         parentCwd: gitRepoDir,
@@ -85,7 +85,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Delete to_delete.txt",
           expectedEffects: ["code_change"],
         },
@@ -123,7 +123,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-rename-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Rename file",
         taskPrompt: "Rename old_name.ts to new_name.ts",
         parentCwd: gitRepoDir,
@@ -131,7 +131,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Rename old_name.ts to new_name.ts",
           expectedEffects: ["code_change"],
         },
@@ -176,7 +176,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       // Spawn Task A (running)
       await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Running Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -184,7 +184,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId: taskAId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Do A",
           expectedEffects: ["analysis"],
         },
@@ -193,7 +193,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       // Spawn Task B (blocked on A)
       await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Blocked Task B",
         taskPrompt: "Do B",
         parentCwd: gitRepoDir,
@@ -201,7 +201,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId: taskBId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Do B",
           expectedEffects: ["analysis"],
           dependsOn: [taskAId],
@@ -241,7 +241,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-fc-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Fail closed test",
         taskPrompt: "Modify fc.ts",
         parentCwd: gitRepoDir,
@@ -249,7 +249,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Modify fc.ts",
         },
       });
@@ -296,7 +296,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-rename-conf-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Agent edit",
         taskPrompt: "Edit target_to_rename.ts",
         parentCwd: gitRepoDir,
@@ -304,7 +304,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Edit target_to_rename.ts",
         },
       });
@@ -345,7 +345,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-ancestry-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Agent Task",
         taskPrompt: "Edit dummy",
         parentCwd: gitRepoDir,
@@ -353,7 +353,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Edit dummy",
         },
       });
@@ -393,7 +393,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-rb-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Agent Rollback Test",
         taskPrompt: "Create agent_rb_fail.ts",
         parentCwd: gitRepoDir,
@@ -401,7 +401,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Create agent_rb_fail.ts",
         },
       });
@@ -456,7 +456,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
       const taskId = `task-wt-cons-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Consistency test",
         taskPrompt: "Create wt_cons.ts",
         parentCwd: gitRepoDir,
@@ -464,7 +464,7 @@ export function registerFinalizeGatesMutationTests(getGitRepoDir: () => string) 
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Create wt_cons.ts",
         },
       });

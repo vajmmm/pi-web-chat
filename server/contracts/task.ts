@@ -1,4 +1,4 @@
-import type { UIThinkingLevel } from "../../shared/protocol.ts";
+import type { AgentRole, UIThinkingLevel } from "../../shared/protocol.ts";
 
 /** 允许修改的代码与路径范围 */
 export interface TaskScope {
@@ -16,7 +16,7 @@ export interface TaskScope {
 export interface TaskContract {
   taskId: string;
   parentSessionId: string;
-  role: string;
+  role: AgentRole;
   /** 任务明确目标与期望结果 (Goal) */
   goal: string;
   /** 任务允许修改的路径范围 (不同于只读上下文) */
@@ -164,6 +164,21 @@ export interface CleanupResult {
   errors?: string[];
 }
 
+export interface QuiescenceResult {
+  success: boolean;
+  failedTaskIds?: string[];
+}
+
+export class QuiescenceError extends Error {
+  failedTaskIds: string[];
+
+  constructor(message: string, failedTaskIds: string[] = []) {
+    super(message);
+    this.name = "QuiescenceError";
+    this.failedTaskIds = failedTaskIds;
+  }
+}
+
 export interface FinalizeResult {
   success: boolean;
   status: "FINALIZED" | "FINALIZE_CONFLICT" | "NO_CHANGES" | "ERROR";
@@ -194,6 +209,8 @@ export interface ReviewFinding {
   evidence: string;
   expected?: string;
   actual?: string;
+  /** 建议修复方式与验证手段 (可选) */
+  suggestedFix?: string;
 }
 
 export interface ReviewResult {
@@ -214,7 +231,7 @@ export interface ReviewResult {
  */
 export interface TaskResult {
   taskId: string;
-  role: string;
+  role: AgentRole;
   status: TaskExecutionStatus;
   /** 核心执行总结 */
   summary: string;

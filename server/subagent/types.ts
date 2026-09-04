@@ -6,6 +6,8 @@ import type {
   WorkspaceContextDetails,
 } from "../contracts/index.ts";
 
+export type SubagentReportKind = "terminal" | "blocker";
+
 export interface SpawnSubagentOptions {
   parentSessionId: string;
   role: AgentRole;
@@ -24,7 +26,11 @@ export interface SpawnSubagentOptions {
   /** 可选返工关联：指向被本次任务修复的先前任务 ID */
   reworkOfTaskId?: string;
   onUpdate?: (task: UISubagentTask) => void;
-  onReport?: (task: UISubagentTask, reportText: string) => void;
+  onReport?: (
+    task: UISubagentTask,
+    reportText: string,
+    metadata?: { kind: SubagentReportKind },
+  ) => void | Promise<void>;
 }
 
 export interface ContinueSubagentOptions {
@@ -42,7 +48,11 @@ export interface ContinueSubagentOptions {
   /** 可选返工关联：指向被本次任务修复的先前任务 ID */
   reworkOfTaskId?: string;
   onUpdate?: (task: UISubagentTask) => void;
-  onReport?: (task: UISubagentTask, reportText: string) => void;
+  onReport?: (
+    task: UISubagentTask,
+    reportText: string,
+    metadata?: { kind: SubagentReportKind },
+  ) => void | Promise<void>;
 }
 
 export interface SubagentInstance {
@@ -52,16 +62,22 @@ export interface SubagentInstance {
   baseCommit?: string;
   taskContract?: TaskContract;
   spawnOptions?: SpawnSubagentOptions;
+  workspaceBaseline?: any;
   timeoutTimer?: NodeJS.Timeout;
   autoContinuationCount?: number;
   reported?: boolean;
   aborting?: boolean;
+  initializationCleanupError?: string;
   pendingTerminal?: {
     type: "completed" | "failed";
     error?: string;
   };
   onUpdate?: (task: UISubagentTask) => void;
-  onReport?: (task: UISubagentTask, reportText: string) => void;
+  onReport?: (
+    task: UISubagentTask,
+    reportText: string,
+    metadata?: { kind: SubagentReportKind },
+  ) => void | Promise<void>;
 }
 
 export type { WorkspaceContextDetails };

@@ -11,6 +11,7 @@ import {
   formatRelativeTime,
 } from "../projects.ts";
 import { resolveSessionPath, sessionIdOf } from "../session/session-registry.ts";
+import { cleanupDeletedSessionResources } from "../session/index.ts";
 import { getSessionTurns } from "../turn-recorder.ts";
 import type { ServerContext } from "./context.ts";
 
@@ -27,16 +28,34 @@ export async function handleSessionsRoutes(
   if (url.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
     const sessionId = url.pathname.slice("/api/sessions/".length);
     const targetCwd = url.searchParams.get("cwd") || undefined;
-    const resDel = await deleteSessionFile(sessionId, targetCwd);
 
-    // 级联清理该会话归属的所有子任务及其 Task Memory (best-effort)
-    await subagentManager.clearTasksForParent(sessionId).catch((err) => {
-      console.warn(`[server] Failed to clear subagent tasks for deleted session ${sessionId}:`, err);
-    });
+    const cleanupResult = await cleanupDeletedSessionResources(sessionId, ctx, targetCwd, { deleteFile: true });
+    if (!cleanupResult.quiescence?.success) {
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: `Quiescence failure: session ${sessionId} could not be safely stopped. Deletion aborted to prevent orphaned runtimes.`,
+          details: cleanupResult.errors,
+        }),
+      );
+      return true;
+    }
 
-    sessionRegistry.remove(sessionId);
+    if (!cleanupResult.success) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: `Deletion failure: session ${sessionId} encountered errors during resource cleanup.`,
+          details: cleanupResult.errors,
+        }),
+      );
+      return true;
+    }
+
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(resDel));
+    res.end(JSON.stringify({ ok: true }));
     return true;
   }
 

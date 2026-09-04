@@ -5,7 +5,10 @@ import type { SubagentManager } from "../subagent-manager.ts";
 import type { SessionEntry } from "./session-registry.ts";
 import { calculateTokenUsage, supportedThinkingLevels } from "./usage.ts";
 
-export function buildSnapshot(entry: SessionEntry, subagentManager: SubagentManager): UISnapshot {
+export function buildSnapshot(
+  entry: SessionEntry,
+  subagentManager: SubagentManager,
+): UISnapshot {
   const session = entry.runtime.session;
   const model = session.model;
   return {
@@ -36,5 +39,6 @@ export function buildSnapshot(entry: SessionEntry, subagentManager: SubagentMana
       subagentManager.getTasksForParent(entry.id),
       entry.activeRole,
     ),
+    queuedMessages: entry.queuedMessages ?? [],
   };
 }

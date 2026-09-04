@@ -26,6 +26,12 @@ export function publishEntry(entry: SessionEntry, ws?: WebSocket): void {
   else broadcastTo(entry, event);
 }
 
-export function broadcastSnapshot(entry: SessionEntry, subagentManager: SubagentManager): void {
-  broadcastTo(entry, { type: "snapshot", snapshot: buildSnapshot(entry, subagentManager) });
+export function broadcastSnapshot(
+  entry: SessionEntry,
+  subagentManager: SubagentManager,
+): void {
+  broadcastTo(entry, {
+    type: "snapshot",
+    snapshot: buildSnapshot(entry, subagentManager),
+  });
 }

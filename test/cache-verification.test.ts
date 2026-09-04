@@ -166,7 +166,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
       const session = createMockSession(t.taskId);
 
       const effectiveContext = ConstraintResolver.resolve({
-        role: "tester",
+        role: "verifier",
         cwd: t.worktreePath,
         projectRoot: repoRoot,
         branchName: t.branchName,
@@ -174,7 +174,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
         taskContract: {
           taskId: t.taskId,
           parentSessionId: "session-main",
-          role: "tester",
+          role: "verifier",
           goal: t.goal,
         },
       });
@@ -234,7 +234,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
       C.fp.toolsHash,
       "Task B and Task C Tools fingerprint must match exactly",
     );
-    const testerContext = ConstraintResolver.resolve({ role: "tester", cwd: repoRoot });
+    const testerContext = ConstraintResolver.resolve({ role: "verifier", cwd: repoRoot });
     assert.deepEqual(
       A.fp.toolNames,
       [
@@ -279,7 +279,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
     const pjPath = `/custom/memories/${taskId}/process-journal.md`;
 
     const effectiveContext = ConstraintResolver.resolve({
-      role: "tester",
+      role: "verifier",
       cwd: worktreePath,
       projectRoot: repoRoot,
       branchName,
@@ -287,7 +287,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
       taskContract: {
         taskId,
         parentSessionId: "session-main",
-        role: "tester",
+        role: "verifier",
         goal: "Leak check verification",
       },
     });
@@ -326,7 +326,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
   it("3. AGENTS.md / Project Rules semantic modification correctly updates system fingerprint (semantic cache invalidation)", () => {
     // 原始规则下的 Prompt
     const contextOriginal = ConstraintResolver.resolve({
-      role: "tester",
+      role: "verifier",
       cwd: repoRoot,
       projectRoot: repoRoot,
     });
@@ -344,7 +344,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
 
     // 规则更新后的 Prompt
     const contextUpdated = ConstraintResolver.resolve({
-      role: "tester",
+      role: "verifier",
       cwd: repoRoot,
       projectRoot: repoRoot,
     });
@@ -362,40 +362,40 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
     writeFileSync(agentsMdPath, originalContent, "utf8");
   });
 
-  it("4. Cross-role isolation maintains separate stable cache families (Tester vs Reviewer)", () => {
-    const contextTester1 = ConstraintResolver.resolve({
-      role: "tester",
+  it("4. Cross-role isolation maintains separate stable cache families (Verifier vs Developer)", () => {
+    const contextVerifier1 = ConstraintResolver.resolve({
+      role: "verifier",
       cwd: join(repoRoot, "wt-1"),
       projectRoot: repoRoot,
     });
-    const contextTester2 = ConstraintResolver.resolve({
-      role: "tester",
+    const contextVerifier2 = ConstraintResolver.resolve({
+      role: "verifier",
       cwd: join(repoRoot, "wt-2"),
       projectRoot: repoRoot,
     });
 
-    const contextReviewer1 = ConstraintResolver.resolve({
-      role: "reviewer",
+    const contextDeveloper1 = ConstraintResolver.resolve({
+      role: "developer",
       cwd: join(repoRoot, "wt-3"),
       projectRoot: repoRoot,
     });
-    const contextReviewer2 = ConstraintResolver.resolve({
-      role: "reviewer",
+    const contextDeveloper2 = ConstraintResolver.resolve({
+      role: "developer",
       cwd: join(repoRoot, "wt-4"),
       projectRoot: repoRoot,
     });
 
-    const hashT1 = sha256(PromptAssembler.assemble(contextTester1).systemPrompt);
-    const hashT2 = sha256(PromptAssembler.assemble(contextTester2).systemPrompt);
-    const hashR1 = sha256(PromptAssembler.assemble(contextReviewer1).systemPrompt);
-    const hashR2 = sha256(PromptAssembler.assemble(contextReviewer2).systemPrompt);
+    const hashV1 = sha256(PromptAssembler.assemble(contextVerifier1).systemPrompt);
+    const hashV2 = sha256(PromptAssembler.assemble(contextVerifier2).systemPrompt);
+    const hashD1 = sha256(PromptAssembler.assemble(contextDeveloper1).systemPrompt);
+    const hashD2 = sha256(PromptAssembler.assemble(contextDeveloper2).systemPrompt);
 
     // 同角色内部稳定
-    assert.equal(hashT1, hashT2, "Tester tasks must share identical system fingerprint");
-    assert.equal(hashR1, hashR2, "Reviewer tasks must share identical system fingerprint");
+    assert.equal(hashV1, hashV2, "Verifier tasks must share identical system fingerprint");
+    assert.equal(hashD1, hashD2, "Developer tasks must share identical system fingerprint");
 
     // 跨角色隔离互不混淆
-    assert.notEqual(hashT1, hashR1, "Tester and Reviewer must have distinct system fingerprints");
+    assert.notEqual(hashV1, hashD1, "Verifier and Developer must have distinct system fingerprints");
   });
 
   it("5. Coordinator System Prompt contains zero dynamic cwd/worktree/branch while first-turn Provider Payload receives dynamic Workspace Context", async () => {
@@ -504,24 +504,29 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
       sessionManager: sessionA.sessionManager,
     });
 
-    assert.ok(startResultA.message, "Coordinator first turn must inject workspace context message");
-    assert.equal(startResultA.message.customType, "workspace-context");
-    assert.ok(startResultA.message.content.includes("## Workspace Context"));
-    assert.ok(startResultA.message.content.includes(`- cwd: ${cwdA}`));
-    assert.ok(startResultA.message.content.includes(`- workspace_type: coordinator_workspace`));
+    assert.equal(startResultA.message, undefined, "Coordinator before_agent_start must NOT emit a separate message");
+    assert.ok(startResultA.systemPrompt, "Coordinator before_agent_start must return system prompt");
 
-    // 模拟 session 接收到 message
-    sessionA._systemPromptOverride = startResultA.systemPrompt;
-    // 注入 custom message (转换为 user message 发给 LLM)
-    entriesA.push({
-      type: "message",
-      message: {
-        role: "custom",
-        customType: "workspace-context",
-        content: startResultA.message.content,
-      },
+    const contextA = handlersA.get("context")!;
+    const contextResultA = await contextA({
+      type: "context",
+      messages: [{ role: "user", content: [{ type: "text", text: "Fix coordinator bug" }] }],
+    }, {
+      cwd: cwdA,
+      sessionManager: sessionA.sessionManager,
     });
 
+    assert.ok(contextResultA?.messages, "Context hook must return updated messages");
+    assert.equal(contextResultA.messages.length, 1, "Context hook must NOT create separate message entry");
+    const userMsg = contextResultA.messages[0];
+    const textContent = Array.isArray(userMsg.content) ? (userMsg.content[0] as any).text : userMsg.content;
+    assert.ok(textContent.includes("## Workspace Context"), "Workspace Context must be prepended to user message");
+    assert.ok(textContent.includes(`- cwd: ${cwdA}`));
+    assert.ok(textContent.includes("- workspace_type: coordinator_workspace"));
+    assert.ok(textContent.includes("Fix coordinator bug"));
+
+    // 模拟 session 运行
+    sessionA._systemPromptOverride = startResultA.systemPrompt;
     await sessionA.prompt("Fix coordinator bug");
     const turnsA = getSessionTurns("coord-session-a");
     assert.equal(turnsA.length, 1);
@@ -540,11 +545,6 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
 
     const subagentManager = new SubagentManager({} as any);
     let activeCwd = cwdA;
-    const sessionEntries: any[] = [];
-
-    const mockSessionManager = {
-      getEntries: () => sessionEntries,
-    };
 
     const ext = createCoordinatorExtension(subagentManager, () => ({
       parentSessionId: "multi-turn-coord-session",
@@ -558,62 +558,57 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
       on: (event: string, handler: Function) => handlers.set(event, handler),
     } as any);
 
-    const beforeStart = handlers.get("before_agent_start")!;
+    const contextHandler = handlers.get("context")!;
 
-    // Turn 1: 初始首轮 -> 必须注入 Workspace Context
-    const turn1Result = await beforeStart({ systemPrompt: "base" }, {
-      cwd: activeCwd,
-      sessionManager: mockSessionManager,
-    });
-    assert.ok(turn1Result.message, "Turn 1 must inject workspace context message");
-    assert.ok(turn1Result.message.content.includes(`- cwd: ${cwdA}`));
+    // Turn 1: 初始首轮 -> 必须在首个 user 消息开头前置拼入 Workspace Context
+    const turn1Msgs = [
+      { role: "user", content: [{ type: "text", text: "Turn 1 user request" }] },
+    ];
+    const turn1Result = await contextHandler({
+      type: "context",
+      messages: turn1Msgs,
+    }, { cwd: activeCwd });
 
-    // 记录 Turn 1 到 session entries (模拟运行时持久化)
-    sessionEntries.push({
-      type: "message",
-      message: {
-        role: "user",
-        content: "Turn 1 user request",
-      },
-    });
-    sessionEntries.push({
-      type: "message",
-      message: {
-        role: "custom",
-        customType: "workspace-context",
-        content: turn1Result.message.content,
-      },
-    });
-    sessionEntries.push({
-      type: "message",
-      message: {
-        role: "assistant",
-        content: "Turn 1 response",
-      },
-    });
+    assert.ok(turn1Result?.messages, "Turn 1 must return messages");
+    assert.equal(turn1Result.messages.length, 1, "Must not create separate message entry");
+    const t1Text = (turn1Result.messages[0].content[0] as any).text;
+    assert.ok(t1Text.includes("## Workspace Context"));
+    assert.ok(t1Text.includes(`- cwd: ${cwdA}`));
+    assert.ok(t1Text.includes("Turn 1 user request"));
 
-    // Turn 2: 会话多轮 Continuation (cwd 相同) -> 不得重复注入 Workspace Context
-    const turn2Result = await beforeStart({ systemPrompt: turn1Result.systemPrompt }, {
-      cwd: activeCwd,
-      sessionManager: mockSessionManager,
-    });
-    assert.equal(turn2Result.message, undefined, "Turn 2 with same cwd must NOT duplicate workspace context");
+    // Turn 2: 会话多轮 Continuation (cwd 相同，历史已包含 Workspace Context) -> 不得重复注入
+    const turn2Msgs = [
+      turn1Result.messages[0], // 历史中已包含 cwdA 的 Workspace Context
+      { role: "assistant", content: [{ type: "text", text: "Turn 1 response" }] },
+      { role: "user", content: [{ type: "text", text: "Turn 2 user request" }] },
+    ];
+    const turn2Result = await contextHandler({
+      type: "context",
+      messages: turn2Msgs,
+    }, { cwd: activeCwd });
+
+    assert.equal(turn2Result, undefined, "Turn 2 with same cwd must NOT duplicate workspace context");
 
     // Turn 3: 模拟恢复会话 (Restored Session, cwd 相同) -> 不得重复注入
-    const turn3Result = await beforeStart({ systemPrompt: turn1Result.systemPrompt }, {
-      cwd: activeCwd,
-      sessionManager: mockSessionManager,
-    });
-    assert.equal(turn3Result.message, undefined, "Restored session with same cwd must NOT duplicate workspace context");
+    const turn3Result = await contextHandler({
+      type: "context",
+      messages: turn2Msgs,
+    }, { cwd: activeCwd });
+    assert.equal(turn3Result, undefined, "Restored session with same cwd must NOT duplicate workspace context");
 
-    // Turn 4: 工作区切换至 cwdB (set_session_cwd / 工作区实际变化) -> 必须注入新的 Workspace Context
+    // Turn 4: 后续轮次（即使工作区发生变化）严格遵循“只在第一条消息发送这个头”，后续用户消息不得再注入
     activeCwd = cwdB;
-    const turn4Result = await beforeStart({ systemPrompt: turn1Result.systemPrompt }, {
-      cwd: activeCwd,
-      sessionManager: mockSessionManager,
-    });
-    assert.ok(turn4Result.message, "Turn 4 with changed cwd MUST inject updated workspace context");
-    assert.ok(turn4Result.message.content.includes(`- cwd: ${cwdB}`));
+    const turn4Msgs = [
+      turn1Result.messages[0],
+      { role: "assistant", content: [{ type: "text", text: "Turn 1 response" }] },
+      { role: "user", content: [{ type: "text", text: "Turn 4 user request in new cwd" }] },
+    ];
+    const turn4Result = await contextHandler({
+      type: "context",
+      messages: turn4Msgs,
+    }, { cwd: activeCwd });
+
+    assert.equal(turn4Result, undefined, "Subsequent user messages must NOT inject workspace context header");
   });
 });
 

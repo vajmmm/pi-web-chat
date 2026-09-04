@@ -2,12 +2,15 @@ import { existsSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import {
-  deleteFolderSessions,
-  deleteProjectSessions,
+  cleanupEmptyProjectDirs,
+  findFolderSessionIds,
+  findProjectSessionIds,
   listAllProjects,
   registerKnownProjectPath,
+  removeKnownProjectPath,
 } from "../projects.ts";
 import { resolveProjectRoot } from "../worktree.ts";
+import { cleanupDeletedSessionResources } from "../session/index.ts";
 import { readBody, type ServerContext } from "./context.ts";
 
 export async function handleProjectsRoutes(
@@ -26,15 +29,48 @@ export async function handleProjectsRoutes(
       const targetCwd = url.searchParams.get("cwd");
 
       if (targetFolder) {
-        const resDel = await deleteFolderSessions(targetFolder);
+        const resolvedFolder = resolve(targetFolder);
+        const sids = new Set<string>(findFolderSessionIds(targetFolder));
         for (const [id, entry] of entries.entries()) {
-          if (entry.cwd === resolve(targetFolder)) {
-            sessionRegistry.remove(id);
+          if (entry.cwd === resolvedFolder) {
+            sids.add(id);
           }
         }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(resDel));
-        return true;
+
+        const deletedSessionIds: string[] = [];
+        const failedSessionIds: string[] = [];
+        const allErrors: string[] = [];
+
+        for (const sid of sids) {
+          const resClean = await cleanupDeletedSessionResources(sid, ctx, targetFolder, { deleteFile: true });
+          if (resClean.success) {
+            deletedSessionIds.push(sid);
+          } else {
+            failedSessionIds.push(sid);
+            if (resClean.errors) allErrors.push(...resClean.errors);
+          }
+        }
+
+        if (failedSessionIds.length === 0) {
+          cleanupEmptyProjectDirs();
+          removeKnownProjectPath(resolvedFolder);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, deletedCount: deletedSessionIds.length }));
+          return true;
+        } else {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ok: false,
+              deletedCount: deletedSessionIds.length,
+              deletedSessionIds,
+              failedSessionIds,
+              error: `Deletion failure: ${failedSessionIds.length} session(s) could not be safely stopped or deleted.`,
+              details: allErrors,
+            }),
+          );
+          return true;
+        }
       }
 
       if (!targetCwd) {
@@ -42,17 +78,54 @@ export async function handleProjectsRoutes(
         res.end(JSON.stringify({ error: "missing cwd or folder parameter" }));
         return true;
       }
-      const resDel = await deleteProjectSessions(targetCwd);
+
       const resolvedTarget = resolve(targetCwd);
+      const { projectRoot } = await resolveProjectRoot(targetCwd);
+      const diskSids = await findProjectSessionIds(targetCwd);
+      const sids = new Set<string>(diskSids);
+
       for (const [id, entry] of entries.entries()) {
         const entryRoot = (await resolveProjectRoot(entry.cwd)).projectRoot;
-        if (entry.cwd === resolvedTarget || entryRoot === resolvedTarget) {
-          sessionRegistry.remove(id);
+        if (entry.cwd === resolvedTarget || entryRoot === resolvedTarget || entryRoot === projectRoot) {
+          sids.add(id);
         }
       }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(resDel));
-      return true;
+
+      const deletedSessionIds: string[] = [];
+      const failedSessionIds: string[] = [];
+      const allErrors: string[] = [];
+
+      for (const sid of sids) {
+        const resClean = await cleanupDeletedSessionResources(sid, ctx, targetCwd, { deleteFile: true });
+        if (resClean.success) {
+          deletedSessionIds.push(sid);
+        } else {
+          failedSessionIds.push(sid);
+          if (resClean.errors) allErrors.push(...resClean.errors);
+        }
+      }
+
+      if (failedSessionIds.length === 0) {
+        cleanupEmptyProjectDirs();
+        removeKnownProjectPath(projectRoot);
+        removeKnownProjectPath(resolvedTarget);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, deletedCount: deletedSessionIds.length }));
+        return true;
+      } else {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            deletedCount: deletedSessionIds.length,
+            deletedSessionIds,
+            failedSessionIds,
+            error: `Deletion failure: ${failedSessionIds.length} session(s) could not be safely stopped or deleted.`,
+            details: allErrors,
+          }),
+        );
+        return true;
+      }
     }
 
     if (req.method === "POST") {

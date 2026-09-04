@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { runGit } from "./git.ts";
-import { registerRuntimeResource } from "./runtime-resources.ts";
+import { probeGitBranch, runGit } from "./git.ts";
+import {
+  registerRuntimeResource,
+  unregisterRuntimeResource,
+  recordPendingGitRecovery,
+  shouldInjectRollbackWorktreeRemoveFailure,
+  normalizeWorktreePath,
+} from "./runtime-resources.ts";
 
 export interface WorktreeResult {
   worktreePath: string;
@@ -38,15 +44,13 @@ export async function createWorktree(
   let targetBranch = baseBranchName;
   let branchAttempts = 0;
   while (true) {
-    let exists = false;
-    try {
-      await runGit(repoRoot, ["show-ref", "--verify", `refs/heads/${targetBranch}`]);
-      exists = true;
-    } catch {
-      exists = false;
+    const branchProbe = await probeGitBranch(repoRoot, targetBranch);
+    if (branchProbe.status === "error") {
+      throw new Error(
+        `Failed to probe git branch ${targetBranch} while allocating worktree: ${branchProbe.error}`,
+      );
     }
-
-    if (!exists) break;
+    if (branchProbe.status === "missing") break;
 
     // 分支已存在：分配唯一分支名后缀
     branchAttempts++;
@@ -98,13 +102,13 @@ export async function createWorktree(
   }
 
   // 6. 验证资源真实存在
-  let branchVerified = false;
-  try {
-    await runGit(repoRoot, ["show-ref", "--verify", `refs/heads/${targetBranch}`]);
-    branchVerified = true;
-  } catch {
-    branchVerified = false;
+  const verifyProbe = await probeGitBranch(repoRoot, targetBranch);
+  if (verifyProbe.status === "error") {
+    throw new Error(
+      `Failed to verify created runtime branch ${targetBranch}: ${verifyProbe.error}`,
+    );
   }
+  const branchVerified = verifyProbe.status === "exists";
 
   const worktreeVerified = existsSync(targetWorktreePath);
 
@@ -123,10 +127,106 @@ export async function createWorktree(
     throw new Error(`Runtime verification failed after creating worktree: branch=${branchVerified}, worktree=${worktreeVerified}`);
   }
 
-  // 7. 成功创建并通过验证后，登记 Ownership 并持久化
+  // 7. 成功创建并通过验证后，登记 Ownership 并持久化（创建事务）
   if (actualRunId) {
-    registerRuntimeResource(actualRunId, "task_branch", targetBranch, repoRoot);
-    registerRuntimeResource(actualRunId, "task_worktree", targetWorktreePath, repoRoot);
+    let branchRegistered = false;
+    let worktreeRegistered = false;
+    try {
+      registerRuntimeResource(actualRunId, "task_branch", targetBranch, repoRoot);
+      branchRegistered = true;
+      registerRuntimeResource(actualRunId, "task_worktree", targetWorktreePath, repoRoot);
+      worktreeRegistered = true;
+    } catch (regErr) {
+      const rollbackErrors: unknown[] = [];
+
+      // 1. Rollback physical worktree
+      let worktreeRemoved = false;
+      try {
+        if (existsSync(targetWorktreePath)) {
+          if (shouldInjectRollbackWorktreeRemoveFailure(targetWorktreePath)) {
+            throw new Error(`Injected rollback removeWorktree failure for ${targetWorktreePath}`);
+          }
+          await runGit(repoRoot, ["worktree", "remove", "--force", targetWorktreePath]);
+        }
+        try {
+          await runGit(repoRoot, ["worktree", "prune"]);
+        } catch {}
+        if (!existsSync(targetWorktreePath)) {
+          worktreeRemoved = true;
+        } else {
+          rollbackErrors.push(new Error(`Failed to remove worktree at ${targetWorktreePath} during registration rollback`));
+        }
+      } catch (wtErr) {
+        rollbackErrors.push(wtErr);
+      }
+
+      // 2. Rollback physical branch
+      let branchRemoved = false;
+      try {
+        await runGit(repoRoot, ["branch", "-D", targetBranch]);
+        const branchProbe = await probeGitBranch(repoRoot, targetBranch);
+        if (branchProbe.status === "missing") {
+          branchRemoved = true;
+        } else {
+          rollbackErrors.push(new Error(`Failed to delete branch ${targetBranch} during registration rollback`));
+        }
+      } catch (brErr) {
+        rollbackErrors.push(brErr);
+      }
+
+      // 3. Rollback ownership registration (only unregister if physical resource was confirmed deleted)
+      try {
+        if (worktreeRegistered && worktreeRemoved) {
+          unregisterRuntimeResource(actualRunId, "task_worktree", targetWorktreePath, repoRoot);
+        }
+      } catch (unregWtErr) {
+        rollbackErrors.push(unregWtErr);
+      }
+
+      try {
+        if (branchRegistered && branchRemoved) {
+          unregisterRuntimeResource(actualRunId, "task_branch", targetBranch, repoRoot);
+        }
+      } catch (unregBrErr) {
+        rollbackErrors.push(unregBrErr);
+      }
+
+      // 4. If physical resources could not be removed, record persistent recovery anchors
+      if (!worktreeRemoved && existsSync(targetWorktreePath)) {
+        recordPendingGitRecovery({
+          id: `${actualRunId}:task_worktree:${normalizeWorktreePath(targetWorktreePath)}`,
+          repoRoot,
+          runId: actualRunId,
+          type: "task_worktree",
+          nameOrPath: normalizeWorktreePath(targetWorktreePath),
+          source: "task_worktree",
+          rollbackError: rollbackErrors.map((e) => String(e instanceof Error ? e.message : e)).join("; "),
+          createdAt: Date.now(),
+        });
+      }
+
+      if (!branchRemoved) {
+        recordPendingGitRecovery({
+          id: `${actualRunId}:task_branch:${targetBranch.trim()}`,
+          repoRoot,
+          runId: actualRunId,
+          type: "task_branch",
+          nameOrPath: targetBranch.trim(),
+          source: "task_worktree",
+          rollbackError: rollbackErrors.map((e) => String(e instanceof Error ? e.message : e)).join("; "),
+          createdAt: Date.now(),
+        });
+      }
+
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [regErr, ...rollbackErrors],
+          `Failed to register runtime resource for task ${taskId}, and rollback encountered failures (retaining metadata for recovery)`,
+        );
+      }
+
+      throw regErr;
+    }
   }
 
   return { worktreePath: targetWorktreePath, branch: targetBranch, baseCommit };
@@ -264,7 +364,21 @@ export async function commitWorktreeChanges(
  */
 export async function removeWorktree(repoRoot: string, worktreePath: string): Promise<void> {
   if (existsSync(worktreePath)) {
-    await runGit(repoRoot, ["worktree", "remove", "--force", worktreePath]);
+    try {
+      await runGit(repoRoot, ["worktree", "remove", "--force", worktreePath]);
+    } catch (err: unknown) {
+      const errMsg = String(err instanceof Error ? err.message : err);
+      if (errMsg.includes("is not a working tree")) {
+        try {
+          await runGit(repoRoot, ["worktree", "prune"]);
+        } catch {}
+        if (existsSync(worktreePath)) {
+          rmSync(worktreePath, { recursive: true, force: true });
+        }
+      } else {
+        throw err;
+      }
+    }
     if (existsSync(worktreePath)) {
       try {
         await runGit(repoRoot, ["worktree", "prune"]);

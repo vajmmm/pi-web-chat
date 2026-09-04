@@ -78,7 +78,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-wt-a-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Edit file_a and file_b",
         taskPrompt: "Modify file_a and file_b",
         parentCwd: gitRepoDir,
@@ -86,7 +86,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Modify file_a and file_b",
         },
       });
@@ -132,7 +132,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-wt-b-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Delete target and modify second",
         taskPrompt: "Delete target_to_del.ts and modify second_file.ts",
         parentCwd: gitRepoDir,
@@ -140,7 +140,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Delete target_to_del.ts and modify second_file.ts",
         },
       });
@@ -185,7 +185,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-wt-c-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Rename old_rename_item.ts",
         taskPrompt: "Rename old_rename_item.ts to new_rename_item.ts",
         parentCwd: gitRepoDir,
@@ -193,7 +193,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Rename old_rename_item.ts to new_rename_item.ts",
         },
       });
@@ -241,7 +241,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-wt-d-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Agent work",
         taskPrompt: "Create agent_d.ts",
         parentCwd: gitRepoDir,
@@ -249,7 +249,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Create agent_d.ts",
         },
       });
@@ -292,7 +292,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-wt-e-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Agent work",
         taskPrompt: "Create agent_e.ts",
         parentCwd: gitRepoDir,
@@ -300,7 +300,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Create agent_e.ts",
         },
       });
@@ -343,7 +343,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-snap-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Edit snap_original",
         taskPrompt: "Edit snap_original",
         parentCwd: gitRepoDir,
@@ -351,7 +351,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Edit snap_original",
         },
       });
@@ -395,7 +395,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-sq-fail-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Agent squash fail",
         taskPrompt: "Create sq_fail.ts",
         parentCwd: gitRepoDir,
@@ -403,7 +403,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Create sq_fail.ts",
         },
       });
@@ -447,7 +447,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-exec-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Modify script",
         taskPrompt: "Modify script",
         parentCwd: gitRepoDir,
@@ -455,7 +455,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Modify script",
         },
       });
@@ -504,7 +504,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
       const taskId = `task-sym-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Edit link",
         taskPrompt: "Edit active_link.txt",
         parentCwd: gitRepoDir,
@@ -512,7 +512,7 @@ export function registerFinalizeRollbackTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Edit active_link.txt",
         },
       });

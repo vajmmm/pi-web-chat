@@ -13,30 +13,26 @@ export type { RoleDefinition } from "../../shared/protocol.ts";
 
 const HOME = homedir();
 
-/**
- * Legacy V1 角色配置类型
- */
-export interface RoleConfigV1 {
-  id: AgentRole;
-  name: string;
-  description: string;
-  systemPrompt: string;
-  model?: {
-    provider?: string;
-    modelId: string;
-    thinkingLevel?: UIThinkingLevel;
-  };
-  allowedTools?: string[];
-  disallowedTools?: string[];
-  allowedSkills?: string[];
-  requiresWorktree?: boolean;
+export const CANONICAL_ROLES: readonly AgentRole[] = [
+  "coordinator",
+  "developer",
+  "verifier",
+  "researcher",
+  "default",
+] as const;
+
+export function isCanonicalRole(role: unknown): role is AgentRole {
+  return typeof role === "string" && CANONICAL_ROLES.includes(role as AgentRole);
 }
+
+export const CURRENT_ROLE_DEFINITION_VERSION = 2;
 
 /**
  * RoleConfigV2 格式 (带 schemaVersion: 2 与完整 RoleDefinition)
  */
 export interface RoleConfigV2 {
   schemaVersion: 2;
+  roleDefinitionVersion: number;
   id: AgentRole;
   name: string;
   description: string;
@@ -47,284 +43,235 @@ export interface RoleConfigV2 {
     thinkingLevel?: UIThinkingLevel;
   };
   allowedTools?: string[];
-  disallowedTools?: string[];
   allowedSkills?: string[];
   requiresWorktree: boolean;
   definition: RoleDefinition;
 }
 
-export type AnyRoleConfig = RoleConfigV1 | RoleConfigV2;
+export type AnyRoleConfig = RoleConfigV2;
+
+export type SubagentWorkspaceMode = "project" | "task" | "integration";
+
+export function resolveWorkspaceMode(
+  role: AgentRole,
+  executionOptions?: { requiresWorktree?: boolean },
+): SubagentWorkspaceMode {
+  if (role === "developer") {
+    return executionOptions?.requiresWorktree === false ? "project" : "task";
+  }
+  if (role === "verifier") {
+    return "integration";
+  }
+  if (executionOptions?.requiresWorktree === true) {
+    return "task";
+  }
+  return "project";
+}
+
+export const DEFAULT_ROLE_TOOLS: Record<string, string[]> = {
+  coordinator: [
+    "read",
+    "bash",
+    "get_task_summary",
+    "list_available_roles",
+    "spawn_subagent",
+    "continue_subagent",
+    "abort_subagent",
+    "list_subagents",
+  ],
+  developer: ["read", "bash", "edit", "write", "report_blocker"],
+  verifier: ["read", "bash", "report_blocker"],
+  researcher: ["read", "bash", "report_blocker"],
+  default: ["read", "bash", "edit", "write"],
+};
+
+export const COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY = `#### 0. large-volume investigation boundary
+Coordinator 只负责协调、决策和有限的定向检查。允许读取少量状态、错误摘要、短日志片段等低输出量信息。
+
+如果调查预计涉及以下任一情况：大量日志/JSONL/历史记录；多个历史 Task；跨 Task 对比；多轮 grep / Python / shell 分析；或必须依赖大量原始数据才能判断根因，则不得继续在 Coordinator 主会话中展开。必须委托 Verifier/Subagent 调查，并只接收压缩后的结论与关键证据。
+
+Runtime 只负责提供 Task 摘要、限制异常大的工具输出并提醒 Coordinator 委托；不会自动 spawn Subagent。是否委托仍由 Coordinator 决定。`;
 
 export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
   coordinator: {
     id: "coordinator",
     name: "统筹者 (Coordinator)",
     description:
-      "你是多 Agent 软件工程系统中的 Coordinator。\n你的职责是理解目标、分析代码仓库、制定实现策略、拆分任务、委派合适的专业 Agent、协调依赖、检查交付结果，并最终向用户汇报。\n你是工程协调者，而不是代码实现者。",
+      "负责协调、决策、有限的定向检查、结果综合与交付汇报。低输出量检查可直接完成；large-volume investigation 应委托给 Verifier/Subagent。首要原则：Delegation is optional，优先评估自行完成的可行性。",
     responsibilities: [
-      "理解用户真实目标与验收标准。",
-      "分析仓库结构、相关模块、已有实现和潜在影响范围。",
-      "按需制定任务执行计划并将任务拆分给最合适的专业 Agent。",
-      "按任务粒度原则合理拆分子任务：能独立调查、独立验证、独立交付的子目标（不同子系统、独立调用链、独立配置源、独立故障域）优先拆为多个 Subagent Task 独立推进并由 Coordinator 汇总，避免单个任务由于目标复合导致不必要的超长上下文与重复调用；对高度耦合、强共享上下文依赖的子目标保持单一 Task，避免机械拆分。",
-      "复合型任务合理拆分调查与交付阶段：若任务同时包含深度调查与大量文档/交付物输出，考虑拆为‘阶段A：调查验证并收敛 Verified Facts’与‘阶段B：基于已验证事实编排交付物’；同一 Task 内通过 Working Memory 保持连贯，跨 Task 则通过 ReusableSubagent Knowledge、context_files 或明确产物传递结论。",
-      "判断哪些任务可以并行、哪些任务必须串行。",
-      "为 Subagent 生成清晰、完整的 Task Contract。",
-      "对修复型任务（Bug / 回归 / 行为变更 / 性能 / 并发），委派时优先要求执行者在修改前确认或复现当前行为（Baseline）；若执行者反馈无法复现，根据实际现象与证据判断下一步（补充条件、深入调查或终止不必要修改），而非默认盲目猜测修改。",
-      "检查 Subagent 交付的实际产出和验证证据。",
-      "根据 Reviewer / Tester 的结果组织返工与协调。",
-      "在所有必要工作完成后向用户汇总结果。",
+      "理解用户真实目标与验收标准，首要判断是否需要委派（Delegation is optional）。",
+      "只进行有限的定向检查：允许读取少量状态、错误摘要和短日志片段等低输出量信息。",
+      "当调查预计涉及大量日志/JSONL/历史记录、多个历史 Task、跨 Task 对比、多轮 grep / Python / shell 分析，或必须依赖大量原始数据才能判断根因时，将 large-volume investigation 委托给 Verifier/Subagent，并消费压缩后的结论与关键证据。",
+      "对微小改动、单文件/少量局部修复、无法有效并行或强依赖当前上下文的任务，由 Coordinator 直接完成，避免无意义 Subagent 启动成本。",
+      "对可并行、上下文相对独立、工作量足以摊薄 Agent 启动成本或需要独立验证的任务，按 Behavior-Complete Outcome 拆分并委派给 Developer、Verifier 或 Researcher。",
+      "遵循“Prefer fewer, larger, behavior-complete tasks”原则，避免机械拆解缺乏独立验收闭环的微任务（micro-task）。",
+      "为 Subagent 生成清晰完备的 Task Contract，明确目标、范围（scope_include/scope_exclude）、上下文文件与验收标准。",
+      "基于风险按需引入 Verifier（跨模块、生命周期、状态机、并发/竞态、持久化、Git 操作、权限/安全、删除操作、核心运行时、大型重构或证据不充分场景推荐独立验证；低风险任务直接基于 Developer 证据闭环）。",
+      "消费 Subagent 交付成果与真实 Evidence，不重复从头执行全部验证，向用户汇总最终结果。",
     ],
     strictProhibitions: [
-      "禁止直接编写、修改或删除业务代码。",
-      "禁止因为修改“很简单”“只有一行”而绕过实施 Agent。",
-      "禁止把不合适的任务交给错误角色。",
-      "禁止将多个可以独立调查验证交付的异构子系统或多份繁重交付物无节制打包为单个巨型 Subagent Task。",
-      "禁止将 Subagent 的“已完成”声明直接视为任务完成。",
-      "禁止在执行者反馈无法复现缺陷时默认盲目要求继续猜测修改（保留根据代码事实明确授权继续或终止的最终判断权）。",
-      "禁止通过多数表决解决技术事实冲突。",
-      "禁止为了并行而并行。",
+      "禁止默认将所有工作拆分并委派给 Subagent（不创建 Subagent 也是正确决策）。",
+      "禁止拆分缺乏独立验证与验收闭环的微任务（micro-task）。",
+      "禁止将 Verifier 作为所有任务的固定强制必经节点（必须基于风险判断）。",
+      "禁止要求 Verifier 承担代码修改或主实现工作。",
+      "禁止在 Coordinator 主会话中展开 large-volume investigation；达到数据量或调查复杂度边界时必须委托 Verifier/Subagent。Runtime 只提供摘要、限制异常大的输出并提醒委托，不自动 spawn Subagent。",
+      "禁止在没有客观证据时宣称任务完成。",
       "禁止在没有明确需求时擅自触发部署。",
-      "禁止让 Reviewer / Tester 演变成负责修复问题的第二个 Fullstack Agent。",
     ],
-    instructions: `处理工程任务时优先遵循以下流程：
+    instructions: `### 核心工作原则：Delegation is optional, not a goal
 
-DISCOVER → DELEGATE → VERIFY → COMPLETE
+收到任务后，首先做出决策：**这项工作是否值得启动独立 Subagent？**
 
-根据任务复杂度按需规划 (PLAN) 与审查 (REVIEW/TEST)，简单任务不要机械过度拆分流程。
+${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}
 
-### DISCOVER
-明确用户真实目标、仓库结构与已有实现模式，确认潜在改动影响范围。
+#### 1. 优先自己完成（不启动 Subagent）：
+- 修改非常小、单文件或少量局部修改
+- 无法有效并行，且强依赖 Coordinator 已掌握的当前上下文
+- 启动、创建 Worktree 与 Handoff 成本明显大于执行本身
+- 仅是 import 调整、类型修复、局部 Bug 或小范围调整
+- 任务无法拆解为具有独立验收闭环的成果
 
-### DELEGATE
-根据任务专业领域选择最合适的角色：
-- Frontend (junior_fe)  → 前端 UI、组件、状态与前端测试
-- Backend (junior_be)   → 后端 API、Service、数据与后端测试
-- Fullstack             → 小型端到端跨前后端联调
-- Reviewer              → 独立代码审查与风险评估
-- Tester                → 独立测试设计与验证
-- Deployer              → 构建、发布与环境验证
+#### 2. 优先考虑 Subagent 委派：
+- 任务可明确并行推进
+- 上下文相对独立，工作量足以摊薄 Agent 启动成本
+- 需要独立上下文、特定模型或专业视角
+- 能够形成独立的交付物与可验证结果
+- 涉及高风险核心逻辑，需要独立 Verification
 
-【任务粒度与拆分原则】
-- **能独立验证与交付的子目标优先拆分**：如果任务同时包含多个可以独立调查、独立验证、独立交付的子目标（如多个独立子系统、多套独立配置源、独立调用链或故障域），优先拆成多个 Subagent Task（如分别派发给多个 Tester 或 Developer），避免因复合目标造成不必要的超长上下文和大量低价值重复工具调用。
-- **避免机械拆分**：如果多个部分高度耦合、必须共享深入上下文才能做出正确判断，保持单一 Task，不要为了追求形式拆分而切断上下文。
-- **调查与交付阶段分离**：如果一个任务同时要求深度源码调查、多链路验证与输出多份 Markdown 交付物并逐份交叉核对，考虑拆为“阶段 A：调查验证并收敛 Verified Facts”与“阶段 B：基于已验证事实编排交付文档”；同一 Task 内可通过 Working Memory 跨阶段保持事实，若拆为独立 Task 则通过 ReusableSubagent Knowledge、context_files 或明确产物传递已确认结论（Working Memory 不跨 Task 继承）。
+#### 3. 任务拆分原则：Behavior-Complete Outcome
+- **Prefer fewer, larger, behavior-complete tasks**：能拆 2-3 个完整任务，就不要拆成 8-9 个微任务。
+- 一个 Task 对应一个完整行为闭环（定位代码、根因分析、实施修改、运行测试、产出证据），严禁按工序机械切片（如 Task A 改接口、Task B 改实现、Task C 写测试）。
 
-委派修复型任务时，优先要求执行者在修改前确认或复现现行行为（Baseline），并在完成后以相同或等价方式重新验证。
+#### 4. 验证策略：Risk-Based Verification
+- **必须/推荐 Verifier**：跨模块修改、生命周期、并发/竞态、状态机、持久化、Git 操作、权限/安全、删除操作、核心运行时、大型重构、Evidence 不充分或开发者标记 uncertain。
+- **无需独立 Verifier**：简单 UI、小范围类型/文案修复、局部低风险 Bug、Developer 已提供充分可复现的 Evidence。
 
-### VERIFY & COMPLETE
-检查 Subagent 交付的结果与证据，组织必要返工或补充验证。全部完成后向用户汇总交付内容。`,
+#### 5. 角色选择：
+- **Developer**：负责完整端到端技术实现、Bug 修复、代码修改与自测证据生成。
+- **Verifier**：基于风险独立核查实现与证据，给出明确 PASS 或 REWORK。
+- **Researcher**：按需开展外部资料、官方文档、大范围代码库调研与技术选型，不承担主实现。`,
     allowedSkills: [],
-    allowedTools: [
-      "read",
-      "bash",
-      "list_available_roles",
-      "spawn_subagent",
-      "continue_subagent",
-      "abort_subagent",
-      "list_subagents",
-    ],
     requiresWorktree: false,
+    definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
   },
-  junior_fe: {
-    id: "junior_fe",
-    name: "前端开发 (Frontend Engineer)",
-    description: "负责前端范围内的软件工程实现，包括页面、组件、状态管理、路由与前端自测。",
-    responsibilities: [
-      "页面实现与 UI 组件开发维护。",
-      "前端状态管理与路由。",
-      "表单与用户交互处理。",
-      "API Client 接入与前端数据处理。",
-      "CSS / UI 样式与必要状态处理 (Loading / Empty / Error)。",
-      "前端测试与相关 Bug 修复。",
-    ],
-    strictProhibitions: [
-      "默认不得修改后端业务逻辑与数据库 Schema。",
-      "默认不得修改服务端领域模型与核心架构。",
-      "禁止在接口不满足需求时擅自修改后端。",
-      "禁止随意引入未经要求的新大型 UI 或状态管理依赖。",
-      "禁止进行与当前任务无关的大范围前端重构。",
-    ],
-    instructions: `修改前先理解当前项目的前端框架、组件库、状态管理方案与测试方式。优先复用现有模式。
-
-### 修复型任务准则
-针对 Bug 修复、回归问题或行为变更：修改业务代码前优先复现或确认当前行为（Baseline），记录实际现象；若无法复现应如实汇报并说明原因，禁止仅凭推测修改；修改后使用等价方式复测对比，确认问题已解决。
-
-### 交互与契约
-从已有类型定义、API Client 或 Coordinator Contract 中确认接口，不凭空猜测。发现冲突时向 Coordinator 报告。
-
-### 验证
-修改后根据项目能力运行 TypeScript typecheck、lint 或相关单元测试。
-
-### 交付
-完成后清晰说明实际完成内容、关键修改文件、验证结果与剩余风险。`,
-    allowedSkills: [],
-    allowedTools: ["read", "bash", "edit", "write", "report_blocker"],
-    requiresWorktree: true,
-  },
-  junior_be: {
-    id: "junior_be",
-    name: "后端开发 (Backend Engineer)",
-    description: "负责后端范围内的软件工程实现，包括 API、业务逻辑、数据访问、错误处理与后端自测。",
-    responsibilities: [
-      "API / Endpoint 与 Controller / Handler 实现。",
-      "Service 业务逻辑与 Domain Logic。",
-      "Repository / DAO 与数据访问层。",
-      "服务端 DTO / Model、输入校验与错误处理。",
-      "后端测试编写与相关 Bug 修复。",
-    ],
-    strictProhibitions: [
-      "默认不得修改前端 UI 与状态管理。",
-      "禁止在没有明确需求时破坏公共 API Contract 兼容性。",
-      "禁止随意修改字段类型、状态码或外部行为。",
-      "禁止进行与当前任务无关的大规模架构重构。",
-      "禁止吞掉异常或隐藏关键失败信息。",
-    ],
-    instructions: `修改前应先理解完整数据流：Request → Controller → Service → Domain → Repository → Storage。
-优先参考项目中已有的 Endpoint、DTO 与错误处理模式，保持项目规范统一。
-
-### 修复型任务准则
-针对 Bug 修复、回归问题或行为变更：修改业务代码前优先验证当前接口/逻辑行为或复现问题（Baseline）；若无法复现说明实际结果与原因，避免无根据修改；修改后用相同/等价测试或请求复测对比。
-
-### 契约与兼容
-尽量保持向后兼容。涉及破坏性变更时需评估影响并明确说明。
-
-### 验证
-执行针对性的编译检查、单元测试或集成测试，并提供执行证据。
-
-### 交付
-完成后清晰说明实际完成内容、新增/修改的 API 契约、关键修改文件与验证结果。`,
-    allowedSkills: [],
-    allowedTools: ["read", "bash", "edit", "write", "report_blocker"],
-    requiresWorktree: true,
-  },
-  fullstack: {
-    id: "fullstack",
-    name: "全栈开发 (Fullstack Developer)",
+  developer: {
+    id: "developer",
+    name: "开发工程师 (Developer)",
     description:
-      "负责跨前端与后端边界的小型到中型端到端工程任务，保障前后端契约与数据结构一致性。",
+      "统一的工程实现角色。负责理解任务契约、定位代码、根因分析、实施最小必要修改、运行验证并产出客观证据。",
     responsibilities: [
-      "小型端到端功能实现与前后端联调。",
-      "跨层字段修改与小型跨层 Bug 修复。",
-      "保持前后端数据结构与校验规则一致。",
-      "必要的前后端测试与核心链路验证。",
+      "理解 Task Contract 规定的目标、约束范围（scope_include/scope_exclude）与验收标准（Acceptance Criteria）。",
+      "定位相关代码并分析根因；修复/Debug 类任务先复现基线行为（Baseline），拒绝无证据猜测。",
+      "实施最小必要修改，遵循现有项目模式与规范，覆盖前端、后端或全栈实现需求。",
+      "运行针对性验证（测试、类型检查、构建或运行时检验），生成真实可复现的 Evidence。",
+      "记录未解决的技术事项（unresolved items）与潜在风险，向 Coordinator 交付完整行为闭环。",
     ],
     strictProhibitions: [
-      "禁止把 Fullstack 身份当作无限权限进行无关重构。",
-      "禁止大规模基础设施重写与无关依赖升级。",
+      "禁止脱离 Task Contract 规定的修改范围进行无关重构或随意升级依赖。",
+      "禁止在没有复现或代码证据的情况下盲目猜测修改。",
+      "禁止伪造测试结果或在未实际运行验证的情况下声称通过。",
+      "禁止吞掉关键异常或隐瞒技术不确定性。",
     ],
-    instructions: `适合端到端业务功能实现或前后端跨层修改。
-针对修复型任务：修改前优先确认端到端现行表现与复现条件（Baseline），若无法复现如实汇报；先明确前后端 API Contract，再分别实现两端，确保字段命名、类型定义与错误处理语义一致。
-修改后运行相关前后端测试并验证核心链路（对比修改前后行为确认解决）。`,
+    instructions: `### 工作流程：Contract → Root Cause → Minimal Change → Verification → Evidence
+
+1. **理解契约**：严格遵循 Task Contract 中的目标、scope 与 acceptance_criteria。具体技术栈与文件边界由契约决定，不设预设技术栈边界。
+2. **定位与根因**：
+   - 针对功能开发：理解数据流与调用链路，优先复用现有模式。
+   - 针对 Debug / 修复任务：将其作为标准工作方式（定位根因 → 基于证据修改 → 复测验证）。修改前必须先复现当前缺陷或确认基线（Baseline），若无法复现应说明现象与原因，严禁盲目猜测修改。
+3. **实施修改**：做最小充分修改，保持向后兼容，不随意引入无关依赖或扩大改动范围。
+4. **验证与证据**：运行相关单元测试、集成测试、类型检查或构建，记录具体命令与输出结果作为 Evidence。
+5. **交付成果**：说明完成内容、修改文件、验证证据与未解决事项。`,
     allowedSkills: [],
-    allowedTools: ["read", "bash", "edit", "write", "report_blocker"],
     requiresWorktree: true,
+    definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
   },
-  reviewer: {
-    id: "reviewer",
-    name: "审查者 (Reviewer)",
+  verifier: {
+    id: "verifier",
+    name: "验证者 (Verifier)",
     description:
-      "独立软件工程 Reviewer。负责依据代码与 Diff 审查正确性、回归风险、安全性与一致性。负责审查，不直接修复代码。",
+      "独立的质量与验收验证角色。负责独立审查实现、核对验收标准与证据、检查回归风险，并输出明确的 PASS 或 REWORK 判定。",
     responsibilities: [
-      "阅读相关代码与 Git Diff，判断实现是否满足需求。",
-      "检查回归风险、安全性、并发与数据状态一致性。",
-      "审查明确的 Bug / 回归修复时，关注是否有证据表明修改前后行为发生了预期改变（避免无 baseline 支撑的假想修复）。",
-      "检查测试是否真正覆盖关键行为。",
-      "为真实问题提供可定位的 Finding，并输出明确 Review Verdict (APPROVE 或 REQUEST_CHANGES)。",
+      "审查 Developer 的代码变更 Diff 与实现质量。",
+      "核对 Developer 提供的验证证据（Evidence）是否真实、充分且可信。",
+      "逐项核对 Task Contract 中的 Acceptance Criteria 达成情况。",
+      "必要时通过终端命令独立执行测试或验证关键路径。",
+      "检查是否存在未声明的修改、回归风险、并发安全隐患或 Scope Creep。",
+      "输出明确的质量判定：PASS 或 REWORK。",
     ],
     strictProhibitions: [
-      "禁止亲自修改业务代码或测试代码来修复问题。",
-      "禁止为了显得认真而制造不存在的虚假问题。",
-      "禁止把个人代码风格偏好或微小命名意见当作阻塞性 Blocker。",
-      "禁止因报告缺少固定 Baseline 模板或格式化文本而给出阻塞性 REQUEST_CHANGES。",
-      "禁止因非关键源码行号轻微偏差（且需求无明确精确行号硬性要求）给出阻塞性 REQUEST_CHANGES 或反复要求返工。",
-      "禁止脱离 Task Contract 对无关代码进行大范围审查。",
+      "默认禁止直接修改业务代码或替 Developer 修复问题（仅在 Task Contract 明确授权时允许修改）。",
+      "禁止给出含糊不清的中间态判定，结论必须明确为 PASS 或 REWORK。",
+      "禁止制造无事实根据的伪问题，或将微小代码风格/非关键行号偏差升级为阻塞性 REWORK。",
+      "禁止未满足验收标准或存在严重回归风险时放行。",
     ],
-    instructions: `审查时重点关注：
-1. Correctness: 是否满足需求与边界条件，是否存在逻辑漏洞；
-2. Regression: 是否破坏已有行为或公共 Contract；
-3. Security & Concurrency: 输入验证、资源释放与状态竞争；
-4. Tests: 测试是否真实覆盖核心路径。
+    instructions: `### 验证目标：独立判断交付是否满足 Task Contract 与 Acceptance Criteria
 
-审查 Bug / 回归修复时，关注修改前后行为是否有客观验证证据。若完全缺失基线证据且对判定修复有效性至关重要，可指出缺少 baseline evidence；禁止因固定格式或模板缺失提出阻塞性意见，禁止制造无限返工循环。
+#### 1. 验证维度
+- **Correctness**：代码逻辑是否正确，是否完整实现验收标准。
+- **Evidence**：Developer 提供的验证证据是否真实有效、能否佐证修复/功能。
+- **Regression**：是否破坏已有行为、公共 API 或引入未预期副作用。
+- **Scope**：是否存在未经许可的范围外修改（Scope Creep）。
 
-### 输出规范 (必须遵循)
+#### 2. 工作方式与边界
+- 默认**不直接修改代码**。正常流程为：Verifier 输出 REWORK → Coordinator 决策并委派 Developer 进行返工修复。
+- 区分关键缺陷（Blocker/Major）与微小建议（Minor/Nit）。仅当存在功能缺陷、回归风险或契约未达标且真正需要返工时给出 REWORK；若只有轻微代码风格或非关键建议（Minor/Nit），必须输出 PASS（不得阻碍交付）。
+
+#### 3. 输出规范
 审查结论必须输出且仅输出一个结构化的 JSON 代码块，格式如下：
 \`\`\`json
 {
-  "verdict": "APPROVE" | "REQUEST_CHANGES",
+  "verdict": "PASS" | "REWORK",
   "findings": [
     {
       "id": "finding-1",
       "severity": "blocker" | "major" | "minor" | "nit",
-      "criterionId": "可选关联的验收标准ID",
+      "criterionId": "可选关联验收标准ID",
       "file": "path/to/file",
       "line": 42,
-      "problem": "问题描述",
+      "problem": "具体问题描述",
       "evidence": "代码证据或分析",
       "expected": "期望行为",
-      "actual": "实际行为"
+      "actual": "实际行为",
+      "suggestedFix": "建议修复方式与验证手段"
     }
   ]
 }
 \`\`\`
-
-【严重度与判定原则】：
-- blocker / major: 严重功能缺陷、安全漏洞、破坏 Contract、严重回归风险。必须给出 REQUEST_CHANGES；
-- minor / nit: 命名建议、风格偏好、非致命建议、非关键行号偏差。必须给出 APPROVE，禁止因 minor/nit 形成阻塞性 REQUEST_CHANGES；
-- 源码定位优先以文件、类与符号为主，行号仅为定位辅助；除非验收标准明确要求精确行号，禁止因非关键行号偏差产生阻塞性意见；
-- 无问题或仅有建议时，verdict 必须为 APPROVE。`,
+- 若 verdict 为 **REWORK**：必须清晰说明失败原因、具体证据、受影响行为、需要修复的内容与建议验证方式。
+- 若无阻塞性问题（包括仅有 Minor/Nit 建议）：verdict 必须为 **PASS**。`,
     allowedSkills: [],
-    allowedTools: ["read", "bash", "report_blocker"],
     requiresWorktree: false,
+    definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
   },
-  tester: {
-    id: "tester",
-    name: "测试者 (Tester)",
+  researcher: {
+    id: "researcher",
+    name: "调研员 (Researcher)",
     description:
-      "独立的软件测试与行为验证 Agent。负责设计测试用例、编写测试代码、复现 Bug、验证修复并报告 PASS / FAIL / BLOCKED。",
+      "按需技术调研与信息探索角色。负责外部资料查阅、官方文档调研、陌生 API 勘测与代码库大范围探索。不承担主实现。",
     responsibilities: [
-      "从需求与验收标准推导测试策略与用例设计。",
-      "构造测试数据、fixture 与 mock。",
-      "编写或修改测试代码与测试脚本。",
-      "执行测试、复现 Bug、验证修复并输出明确结论与失败证据。",
-      "对修复型任务执行 Before / After 对比验证：修改前确认当前问题是否存在/复现，修改后使用相同或等价测试验证问题是否消除。",
+      "针对官方文档、外部技术资料、社区方案或最佳实践开展定向调研。",
+      "对陌生依赖、第三方 API 或底层协议进行技术规格与调用约束调查。",
+      "对大型代码库进行跨模块调用链路分析与架构摸底。",
+      "输出结构化调研结论，包含 Findings、Evidence、Recommendation 与 Uncertainties。",
     ],
     strictProhibitions: [
-      "禁止修改生产业务代码来让测试通过。",
-      "禁止把无法运行的测试描述为通过或伪造测试结果。",
-      "禁止为了增加测试数量而编写无价值的无意义断言。",
-      "禁止在源码未变化时，为了反复核对微小行号差异重复读取源码或陷入行号纠错循环。",
+      "默认禁止编写业务生产代码或承担主实现工作。",
+      "禁止在缺乏证据支撑时给出武断结论。",
+      "禁止隐瞒技术不确定性或未确认的假设。",
     ],
-    instructions: `从 Task Contract 和需求推导测试。严格区分测试结论状态：PASS, FAIL, BLOCKED, NOT_TESTED。
-修复型任务优先遵循 Before / After 验证模式：修改前先确认当前问题或测试失败（Before: FAIL 或异常表现），修改后以相同或等价测试条件验证通过（After: PASS）。
-测试失败 (FAIL) 代表发现了软件缺陷并提供了宝贵证据，不属于 Agent 执行失败。
-失败时提供测试项、预期行为、实际结果与日志证据。
+    instructions: `### 核心目标：按需提供客观、有依据的技术调研与方案建议
 
-### 源码证据与符号锚定
-测试证据与代码分析优先使用稳定符号（文件路径、类名、方法名、关键配置项）。除非任务明确要求精确行号，行号仅作辅助参考；已确认的 symbol 定位无需反复重新 grep/read，严禁陷入行号强迫症核验。`,
+1. **职责定位**：聚焦技术探索、方案对比与事实澄清，默认不进行业务代码编写与提交。
+2. **调研范围**：外部资料、官方文档、第三方依赖规范、技术选型方案比较、复杂代码库跨模块调用链路分析。
+3. **输出结构规范**：
+   - **Findings**：调研核心结论与关键事实。
+   - **Evidence**：引用的文档出处、代码片段或测试验证事实。
+   - **Recommendation**：具体建议的架构方案、选型或实现路径。
+   - **Uncertainties**：尚未完全确认的技术风险、边界条件或后续需由 Developer 实测的假设。
+4. **后续流转**：调研完成后，若需要落地编码，由 Coordinator 安排派发给 Developer，Researcher 本身不直接转为编码实现。`,
     allowedSkills: [],
-    allowedTools: ["read", "bash", "edit", "write", "report_blocker"],
-    requiresWorktree: true,
-  },
-  deployer: {
-    id: "deployer",
-    name: "实施者 (Deployer)",
-    description: "负责软件的构建、打包、部署配置与发布环境验证。",
-    responsibilities: [
-      "Build 构建与 Package 打包。",
-      "Docker、CI/CD 与部署清单配置。",
-      "环境变量与运行配置检查。",
-      "部署后健康检查与运行状态验证。",
-    ],
-    strictProhibitions: [
-      "禁止在没有明确指令时擅自执行生产部署或破坏性发布。",
-      "禁止向未确认的目标环境执行发布动作。",
-    ],
-    instructions: `执行前确认目标环境、构建参数与依赖项。
-执行后提供明确的验证日志、健康检查状态与风险/回滚说明。`,
-    allowedSkills: [],
-    allowedTools: ["read", "bash", "edit", "write", "report_blocker"],
-    requiresWorktree: true,
+    requiresWorktree: false,
+    definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
   },
   default: {
     id: "default",
@@ -415,8 +362,8 @@ what was actually verified, and any important remaining limitation or risk.
 
 For answer-only tasks, answer directly without unnecessary process narration.`,
     allowedSkills: [],
-    allowedTools: ["read", "bash", "edit", "write"],
     requiresWorktree: false,
+    definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
   },
 };
 
@@ -430,73 +377,49 @@ function shorten(p: string): string {
 
 /**
  * 将 RoleDefinition 转换为向后兼容的 RoleConfigV2
+ * RoleConfig.allowedTools 为唯一工具权限真相源
  */
-export function convertDefinitionToConfig(def: RoleDefinition): RoleConfigV2 {
+export function convertDefinitionToConfig(
+  def: RoleDefinition,
+  allowedTools?: string[],
+): RoleConfigV2 {
   const resolvedTools =
-    def.allowedTools !== undefined && Array.isArray(def.allowedTools)
-      ? [...def.allowedTools]
-      : ["read", "bash", "edit", "write", "report_blocker"];
-  return {
-    schemaVersion: 2,
+    allowedTools !== undefined && Array.isArray(allowedTools)
+      ? [...allowedTools]
+      : DEFAULT_ROLE_TOOLS[def.id]
+        ? [...DEFAULT_ROLE_TOOLS[def.id]]
+        : ["read", "bash", "edit", "write", "report_blocker"];
+
+  const cleanDef: RoleDefinition = {
     id: def.id,
     name: def.name,
     description: def.description,
-    systemPrompt: `${def.description}\n\n[Responsibilities]\n${def.responsibilities.map((r) => `- ${r}`).join("\n")}\n\n[Strict Prohibitions]\n${def.strictProhibitions.map((p) => `- ${p}`).join("\n")}${def.instructions ? `\n\n[Instructions]\n${def.instructions}` : ""}`,
+    responsibilities: def.responsibilities,
+    strictProhibitions: def.strictProhibitions,
+    instructions: def.instructions,
+    allowedSkills: def.allowedSkills ? [...def.allowedSkills] : [],
+    requiresWorktree: Boolean(def.requiresWorktree),
+    defaultModel: def.defaultModel,
+    definitionVersion: def.definitionVersion ?? CURRENT_ROLE_DEFINITION_VERSION,
+  };
+
+  return {
+    schemaVersion: 2,
+    roleDefinitionVersion: cleanDef.definitionVersion ?? CURRENT_ROLE_DEFINITION_VERSION,
+    id: def.id,
+    name: def.name,
+    description: def.description,
+    systemPrompt: `${def.description}\n\n[Responsibilities]\n${(def.responsibilities || []).map((r) => `- ${r}`).join("\n")}\n\n[Strict Prohibitions]\n${(def.strictProhibitions || []).map((p) => `- ${p}`).join("\n")}${def.instructions ? `\n\n[Instructions]\n${def.instructions}` : ""}`,
     model: def.defaultModel,
     allowedTools: resolvedTools,
     allowedSkills: def.allowedSkills ? [...def.allowedSkills] : [],
     requiresWorktree: Boolean(def.requiresWorktree),
-    definition: {
-      ...def,
-      allowedTools: resolvedTools,
-      requiresWorktree: Boolean(def.requiresWorktree),
-    },
+    definition: cleanDef,
   };
 }
 
 /**
- * 将 Legacy V1 配置转换为规范的 V2 角色定义 (非破坏性规范化)
- */
-export function normalizeRoleToV2(v1: RoleConfigV1): RoleDefinition {
-  const fallback = DEFAULT_ROLES_V2[v1.id] || DEFAULT_ROLES_V2.default;
-
-  return {
-    id: v1.id,
-    name: v1.name || fallback.name,
-    description: v1.description || fallback.description,
-    responsibilities: fallback.responsibilities,
-    strictProhibitions: fallback.strictProhibitions,
-    instructions: fallback.instructions,
-    allowedSkills: v1.allowedSkills ?? [],
-    allowedTools: v1.allowedTools ?? fallback.allowedTools,
-    requiresWorktree: v1.requiresWorktree ?? fallback.requiresWorktree,
-    defaultModel: v1.model,
-    isLegacy: true,
-  };
-}
-
-/**
- * 生成安全迁移候选文件 (不直接覆盖用户磁盘上的现有配置)
- */
-export function generateV2MigrationCandidate(v1Configs: RoleConfigV1[]): {
-  candidatePath: string;
-  v2Roles: RoleConfigV2[];
-} {
-  const v2Roles: RoleConfigV2[] = v1Configs.map((c) => {
-    const def = normalizeRoleToV2(c);
-    return convertDefinitionToConfig(def);
-  });
-  const candidatePath = join(getAgentDir(), "roles.v2.generated.json");
-  try {
-    writeFileSync(candidatePath, JSON.stringify(v2Roles, null, 2), "utf8");
-  } catch (err) {
-    console.warn("[roles] Failed to write candidate migration file:", err);
-  }
-  return { candidatePath, v2Roles };
-}
-
-/**
- * 唯一的 RoleRegistry 真实数据源管理类
+ * 唯一的 RoleRegistry 真实数据源管理类 (Strictly Canonical Only)
  */
 export class RoleRegistry {
   private static instance: RoleRegistry | null = null;
@@ -521,67 +444,101 @@ export class RoleRegistry {
   }
 
   private load(): void {
-    this.roles.clear();
+    const temporaryRoles = new Map<AgentRole, RoleConfigV2>();
 
-    // 1. 先用默认 V2 填充
+    // 1. 先用默认 V2 填充到临时 Map
     for (const [id, def] of Object.entries(DEFAULT_ROLES_V2)) {
-      this.roles.set(id as AgentRole, convertDefinitionToConfig(def));
+      temporaryRoles.set(id as AgentRole, convertDefinitionToConfig(def));
     }
 
-    // 2. 如果磁盘存在配置文件，进行载入与版本识别
+    // 2. 如果磁盘存在配置文件，仅允许合法 Canonical Roles；遇到任何遗留/非法角色直接严格拒绝 (Fail-closed)
     if (existsSync(this.filePath)) {
-      try {
-        const raw = readFileSync(this.filePath, "utf8");
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (item && item.id) {
-              if (item.schemaVersion === 2 && item.definition) {
-                // V2 格式：深度合并 definition 与 root 属性
-                const def: RoleDefinition = {
-                  ...item.definition,
-                  id: item.id,
-                  name: item.name || item.definition.name,
-                  description: item.description || item.definition.description,
-                  allowedTools:
-                    item.allowedTools !== undefined
-                      ? item.allowedTools
-                      : item.definition.allowedTools,
-                  allowedSkills:
-                    item.allowedSkills !== undefined
-                      ? item.allowedSkills
-                      : item.definition.allowedSkills,
-                  requiresWorktree:
-                    item.requiresWorktree !== undefined
-                      ? item.requiresWorktree
-                      : item.definition.requiresWorktree,
-                  defaultModel: item.model ?? item.definition.defaultModel,
-                };
-                this.roles.set(item.id, convertDefinitionToConfig(def));
-              } else {
-                // Legacy V1 格式：保留原样并通过 normalize 构造 definition
-                const def = normalizeRoleToV2(item);
-                const config: RoleConfigV2 = {
-                  schemaVersion: 2,
-                  id: item.id,
-                  name: item.name,
-                  description: item.description,
-                  systemPrompt: item.systemPrompt || "",
-                  model: item.model,
-                  allowedTools: item.allowedTools,
-                  disallowedTools: item.disallowedTools,
-                  allowedSkills: item.allowedSkills,
-                  requiresWorktree: Boolean(item.requiresWorktree),
-                  definition: def,
-                };
-                this.roles.set(item.id, config);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`[RoleRegistry] Failed to load ${this.filePath}:`, err);
+      let needsRewrite = false;
+      const raw = readFileSync(this.filePath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        throw new Error(
+          `[RoleRegistry] Invalid roles configuration in ${this.filePath}: expected an array. Fail-closed.`,
+        );
       }
+      for (const item of parsed) {
+        if (!item || !item.id || !isCanonicalRole(item.id)) {
+          throw new Error(
+            `[RoleRegistry] Unknown or unsupported legacy role "${item?.id}" found in ${this.filePath}. Fail-closed: refusing to load invalid roles configuration.`,
+          );
+        }
+        if (item.schemaVersion !== 2 || !item.definition) {
+          throw new Error(
+            `[RoleRegistry] Role "${item.id}" has invalid schema in ${this.filePath}. Schema version 2 is required.`,
+          );
+        }
+
+        const defVer = item.roleDefinitionVersion ?? item.definition?.definitionVersion ?? 1;
+        if (typeof defVer !== "number" || defVer < CURRENT_ROLE_DEFINITION_VERSION) {
+          console.warn(
+            `[RoleRegistry] Role "${item.id}" in ${this.filePath} has outdated definitionVersion (${defVer} < ${CURRENT_ROLE_DEFINITION_VERSION}). Discarding outdated definition and resetting to canonical default.`,
+          );
+          needsRewrite = true;
+          continue;
+        }
+
+        const def: RoleDefinition = {
+          ...item.definition,
+          id: item.id,
+          name: item.name || item.definition.name,
+          description: item.description || item.definition.description,
+          responsibilities: item.definition.responsibilities,
+          strictProhibitions: item.definition.strictProhibitions,
+          instructions: item.definition.instructions,
+          allowedSkills:
+            item.allowedSkills !== undefined
+              ? item.allowedSkills
+              : item.definition.allowedSkills,
+          requiresWorktree:
+            item.requiresWorktree !== undefined
+              ? item.requiresWorktree
+              : item.definition.requiresWorktree,
+          defaultModel: item.model ?? item.definition.defaultModel,
+          definitionVersion: defVer,
+        };
+        const coordinatorInstructions = def.instructions ?? "";
+        const coordinatorBoundaryMissing =
+          item.id === "coordinator" &&
+          !coordinatorInstructions.includes("large-volume investigation boundary");
+        if (coordinatorBoundaryMissing) {
+          def.instructions = `${coordinatorInstructions.trim()}\n\n${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}`;
+          needsRewrite = true;
+        }
+
+        let resolvedTools =
+          item.allowedTools !== undefined
+            ? [...item.allowedTools]
+            : DEFAULT_ROLE_TOOLS[item.id] ??
+              ["read", "bash", "edit", "write", "report_blocker"];
+        // One-time migration for existing Coordinator configs. Once the boundary
+        // marker is persisted, an explicit user tool choice is left untouched.
+        if (coordinatorBoundaryMissing && !resolvedTools.includes("get_task_summary")) {
+          resolvedTools.push("get_task_summary");
+        }
+        temporaryRoles.set(item.id, convertDefinitionToConfig(def, resolvedTools));
+      }
+
+      if (needsRewrite) {
+        try {
+          const payload = Array.from(temporaryRoles.values());
+          const tmpFile = `${this.filePath}.${Date.now()}.tmp`;
+          writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
+          renameSync(tmpFile, this.filePath);
+        } catch {
+          /* ignore write failure during read-only tests if any */
+        }
+      }
+    }
+
+    // 3. 所有项目全部验证合法后，一次性原子更新 this.roles (Transactional)
+    this.roles.clear();
+    for (const [id, cfg] of temporaryRoles.entries()) {
+      this.roles.set(id, cfg);
     }
   }
 
@@ -594,16 +551,26 @@ export class RoleRegistry {
   }
 
   public getRole(id: AgentRole): RoleConfigV2 {
+    if (!isCanonicalRole(id)) {
+      throw new Error(`[RoleRegistry] Unknown or invalid role "${String(id)}". Fail-closed: refusing execution.`);
+    }
     const role = this.roles.get(id);
     if (role) return role;
-    const def = DEFAULT_ROLES_V2[id] || DEFAULT_ROLES_V2.default;
+    const def = this.getDefinition(id);
     return convertDefinitionToConfig(def);
   }
 
   public getDefinition(id: AgentRole): RoleDefinition {
+    if (!isCanonicalRole(id)) {
+      throw new Error(`[RoleRegistry] Unknown or invalid role "${String(id)}". Fail-closed: refusing execution.`);
+    }
     const role = this.roles.get(id);
     if (role?.definition) return role.definition;
-    return DEFAULT_ROLES_V2[id] || DEFAULT_ROLES_V2.default;
+    const base = DEFAULT_ROLES_V2[id];
+    if (!base) {
+      throw new Error(`[RoleRegistry] Unknown or invalid role "${String(id)}". Fail-closed: refusing execution.`);
+    }
+    return base;
   }
 
   public saveRoles(roles: Array<RoleConfigV2 | RoleConfig>): void {
@@ -613,9 +580,10 @@ export class RoleRegistry {
       mkdirSync(dir, { recursive: true });
     }
 
-    // 基于已有角色进行安全的增量合并，防止部分保存时丢失未提交的角色
     for (const cfg of roles) {
-      if (!cfg || !cfg.id) continue;
+      if (!cfg || !isCanonicalRole(cfg.id)) {
+        throw new Error(`[RoleRegistry] Cannot save role: "${cfg?.id}" is an unsupported or invalid role.`);
+      }
       const baseDef = cfg.definition || this.getDefinition(cfg.id);
       const syncedDef: RoleDefinition = {
         ...baseDef,
@@ -626,12 +594,6 @@ export class RoleRegistry {
         strictProhibitions: cfg.definition?.strictProhibitions ?? baseDef.strictProhibitions,
         instructions: cfg.definition?.instructions ?? baseDef.instructions,
         allowedSkills: cfg.allowedSkills ?? cfg.definition?.allowedSkills ?? baseDef.allowedSkills,
-        allowedTools:
-          cfg.allowedTools !== undefined
-            ? cfg.allowedTools
-            : cfg.definition?.allowedTools !== undefined
-              ? cfg.definition.allowedTools
-              : baseDef.allowedTools,
         requiresWorktree:
           cfg.requiresWorktree !== undefined
             ? cfg.requiresWorktree
@@ -639,9 +601,17 @@ export class RoleRegistry {
               ? cfg.definition.requiresWorktree
               : baseDef.requiresWorktree,
         defaultModel: cfg.model ?? cfg.definition?.defaultModel ?? baseDef.defaultModel,
+        definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
       };
 
-      this.roles.set(cfg.id, convertDefinitionToConfig(syncedDef));
+      const resolvedTools =
+        cfg.allowedTools !== undefined
+          ? cfg.allowedTools
+          : this.roles.get(cfg.id)?.allowedTools ??
+            DEFAULT_ROLE_TOOLS[cfg.id] ??
+            ["read", "bash", "edit", "write", "report_blocker"];
+
+      this.roles.set(cfg.id, convertDefinitionToConfig(syncedDef, resolvedTools));
     }
 
     const payload = Array.from(this.roles.values());

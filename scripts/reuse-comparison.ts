@@ -173,7 +173,7 @@ async function main() {
   const tA0 = Date.now();
   const taskA = await manager.spawn({
     parentSessionId,
-    role: "tester",
+    role: "developer",
     taskTitle: "Spike-env-A cold discovery",
     taskPrompt: promptA,
     parentCwd: repo,
@@ -181,7 +181,7 @@ async function main() {
     taskContract: {
       taskId: `task-a-${Date.now()}`,
       parentSessionId,
-      role: "tester",
+      role: "developer",
       goal: "Discover python/pytest and write env-a.md",
       scope: { include: ["docs/evidence/**"], exclude: [] },
       acceptanceCriteria: ["docs/evidence/env-a.md exists with python version"],
@@ -218,7 +218,7 @@ async function main() {
     taskContract: {
       taskId: `task-b-reuse-${Date.now()}`,
       parentSessionId,
-      role: "tester",
+      role: "developer",
       goal: "Confirm env and write env-b.md with minimal rediscovery",
       scope: { include: ["docs/evidence/**"], exclude: [] },
       acceptanceCriteria: ["docs/evidence/env-b.md exists"],
@@ -241,7 +241,7 @@ async function main() {
   const tC0 = Date.now();
   const taskC = await manager.spawn({
     parentSessionId: parentSessionCold,
-    role: "tester",
+    role: "developer",
     taskTitle: "Spike-env-B cold",
     taskPrompt: promptB,
     parentCwd: repo,
@@ -249,7 +249,7 @@ async function main() {
     taskContract: {
       taskId: `task-b-cold-${Date.now()}`,
       parentSessionId: parentSessionCold,
-      role: "tester",
+      role: "developer",
       goal: "Confirm env and write env-b.md from scratch",
       scope: { include: ["docs/evidence/**"], exclude: [] },
       acceptanceCriteria: ["docs/evidence/env-b.md exists"],

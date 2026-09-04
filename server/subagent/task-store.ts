@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { UISubagentTask } from "../../shared/protocol.ts";
+import { isCanonicalRole } from "../contracts/roles.ts";
 import type { SubagentInstance } from "./types.ts";
 
 export const subagentTasks = new Map<string, SubagentInstance>();
@@ -53,6 +54,19 @@ export function loadPersistedTasks(): Map<string, UISubagentTask> {
         const content = readFileSync(join(dir, f), "utf8");
         const task = JSON.parse(content) as UISubagentTask;
         if (task && task.taskId) {
+          const role = (task as any).role;
+          const contractRole = (task as any).taskContract?.role;
+          if (
+            !isCanonicalRole(role) ||
+            (contractRole && !isCanonicalRole(contractRole)) ||
+            (contractRole && contractRole !== role)
+          ) {
+            console.warn(
+              `[SubagentManager] Quarantined legacy/invalid persisted task ${task.taskId} with non-canonical role: "${role}". Skipping.`,
+            );
+            continue;
+          }
+
           if (task.status === "running") {
             task.status = "interrupted";
             task.error = "服务重启已终止";
@@ -76,13 +90,15 @@ export function loadPersistedTasks(): Map<string, UISubagentTask> {
   return map;
 }
 
-export function deleteTaskFile(taskId: string): void {
+export function deleteTaskFile(taskId: string): boolean {
   const file = taskFilePath(taskId);
-  if (existsSync(file)) {
-    try {
-      unlinkSync(file);
-    } catch (err) {
-      console.warn(`[SubagentManager] Failed to remove task file ${file}:`, err);
-    }
+  if (!existsSync(file)) return true;
+  try {
+    unlinkSync(file);
+    return true;
+  } catch (err) {
+    console.warn(`[SubagentManager] Failed to remove task file ${file}:`, err);
+    return false;
   }
 }
+

@@ -38,7 +38,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       };
 
       const resolved = ConstraintResolver.resolve({
-        role: "reviewer",
+        role: "verifier",
         cwd: "/tmp/project",
       });
 
@@ -67,7 +67,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
 
       // 2. 切换至 Fullstack (包含开发写工具)
       const fullstackTools = ConstraintResolver.resolve({
-        role: "fullstack",
+        role: "developer",
         cwd: "/tmp/project",
       }).runtime.activeTools;
       mockSession.setActiveToolsByName(fullstackTools);
@@ -75,7 +75,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
 
       // 3. 切换至 Reviewer
       const reviewerTools = ConstraintResolver.resolve({
-        role: "reviewer",
+        role: "verifier",
         cwd: "/tmp/project",
       }).runtime.activeTools;
       mockSession.setActiveToolsByName(reviewerTools);
@@ -92,7 +92,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         async () => {
           await manager.spawn({
             parentSessionId: "session-test",
-            role: "junior_fe",
+            role: "developer",
             executionOptions: { requiresWorktree: true },
             taskTitle: "前端任务",
             taskPrompt: "实现按钮",
@@ -150,39 +150,38 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
   describe("3. Unified Role Registry Persistence & V2 Single Source of Truth", () => {
     it("should sync UI modifications and preserve them across registry reloads", () => {
       const registry = RoleRegistry.getInstance();
-      const feRole = registry.getRole("junior_fe");
+      const devRole = registry.getRole("developer");
 
       // 修改配置
       const updated: RoleConfigV2 = {
-        ...feRole,
-        description: "已通过 UI 更新的前端角色描述",
+        ...devRole,
+        description: "已通过 UI 更新的开发者角色描述",
         allowedTools: ["read", "bash", "grep"],
         definition: {
-          ...feRole.definition,
-          description: "已通过 UI 更新的前端角色描述",
+          ...devRole.definition,
+          description: "已通过 UI 更新的开发者角色描述",
           responsibilities: ["编写组件", "样式对齐", "页面调试"],
-          allowedTools: ["read", "bash", "grep"],
         },
       };
 
       saveRolesConfig([updated]);
 
       // 验证单一数据源立即同步
-      const fetchedConfig = getRoleConfig("junior_fe");
-      const fetchedDef = getRoleDefinition("junior_fe");
+      const fetchedConfig = getRoleConfig("developer");
+      const fetchedDef = getRoleDefinition("developer");
 
-      assert.equal(fetchedConfig.description, "已通过 UI 更新的前端角色描述");
-      assert.equal(fetchedDef.description, "已通过 UI 更新的前端角色描述");
+      assert.equal(fetchedConfig.description, "已通过 UI 更新的开发者角色描述");
+      assert.equal(fetchedDef.description, "已通过 UI 更新的开发者角色描述");
       assert.deepEqual(fetchedDef.responsibilities, ["编写组件", "样式对齐", "页面调试"]);
       assert.deepEqual(fetchedConfig.allowedTools, ["read", "bash", "grep"]);
-      assert.deepEqual(fetchedDef.allowedTools, ["read", "bash", "grep"]);
+      assert.equal((fetchedDef as any).allowedTools, undefined, "RoleDefinition must not duplicate allowedTools");
 
       // 重新从磁盘载入
       registry.reload();
-      assert.equal(registry.getRole("junior_fe").description, "已通过 UI 更新的前端角色描述");
-      assert.deepEqual(registry.getDefinition("junior_fe").responsibilities, ["编写组件", "样式对齐", "页面调试"]);
-      assert.deepEqual(registry.getRole("junior_fe").allowedTools, ["read", "bash", "grep"]);
-      assert.deepEqual(registry.getDefinition("junior_fe").allowedTools, ["read", "bash", "grep"]);
+      assert.equal(registry.getRole("developer").description, "已通过 UI 更新的开发者角色描述");
+      assert.deepEqual(registry.getDefinition("developer").responsibilities, ["编写组件", "样式对齐", "页面调试"]);
+      assert.deepEqual(registry.getRole("developer").allowedTools, ["read", "bash", "grep"]);
+      assert.equal((registry.getDefinition("developer") as any).allowedTools, undefined);
     });
   });
 
@@ -191,7 +190,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const contract: TaskContract = {
         taskId: "task-123",
         parentSessionId: "session-abc",
-        role: "junior_fe",
+        role: "developer",
         goal: "重构登录体系保障安全性 (Goal)",
         scope: {
           include: ["src/components/Login.tsx"],
@@ -277,12 +276,12 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       assert.ok(parsed.role_constraint.responsibilities.length > 0);
       assert.ok(parsed.role_constraint.instructions.includes("DISCOVER"));
 
-      // 2. Switch to fullstack role
-      capturedRole = "fullstack";
-      const resFullstack = await beforeStart({ systemPrompt: "base" });
-      const parsedFullstack = JSON.parse(resFullstack.systemPrompt);
-      assert.equal(parsedFullstack.role, "fullstack");
-      assert.equal(parsedFullstack.runtime_permissions, undefined, "runtime_permissions must NOT be present in prompt");
+      // 2. Switch to developer role
+      capturedRole = "developer";
+      const resDeveloper = await beforeStart({ systemPrompt: "base" });
+      const parsedDeveloper = JSON.parse(resDeveloper.systemPrompt);
+      assert.equal(parsedDeveloper.role, "developer");
+      assert.equal(parsedDeveloper.runtime_permissions, undefined, "runtime_permissions must NOT be present in prompt");
 
       // 3. Switch to default role (Standard Mode)
       capturedRole = "default";
@@ -340,7 +339,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-parent-1",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "失败测试任务",
         taskPrompt: "触发错误",
         status: "running",
@@ -407,7 +406,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-parent-blocker",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "前端阻塞任务",
         taskPrompt: "实现组件",
         status: "running",
@@ -434,7 +433,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       assert.ok(reportedTask);
       assert.equal(reportedTask.taskId, taskId);
       assert.equal(reportedTask.status, "running");
-      assert.equal(reportedTask.role, "junior_fe");
+      assert.equal(reportedTask.role, "developer");
       assert.equal(reportedTask.taskTitle, "前端阻塞任务");
       assert.deepEqual(reportedTask.logs, ["log line 1"]);
       assert.ok(reportedReportText.includes("[BLOCKING] 依赖的后端接口缺少 user_id 字段"));
@@ -450,7 +449,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-parent-race-1",
-        role: "junior_be",
+        role: "developer",
         taskTitle: "竞态恢复测试1",
         taskPrompt: "处理数据",
         status: "running",
@@ -507,7 +506,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-parent-race-2",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "竞态恢复测试2",
         taskPrompt: "构建UI",
         status: "running",
@@ -563,7 +562,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-parent-race-3",
-        role: "junior_be",
+        role: "developer",
         taskTitle: "竞态成功测试3",
         taskPrompt: "耗时操作",
         status: "running",
@@ -619,7 +618,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-parent-race-4",
-        role: "tester",
+        role: "verifier",
         taskTitle: "竞态成功测试4",
         taskPrompt: "执行测试",
         status: "running",
@@ -669,7 +668,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-duration-1",
-        role: "tester",
+        role: "verifier",
         taskTitle: "耗时统计成功测试",
         taskPrompt: "执行单元测试",
         status: "running",
@@ -714,7 +713,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const mockTask: UISubagentTask = {
         taskId,
         parentSessionId: "session-duration-2",
-        role: "fullstack",
+        role: "developer",
         taskTitle: "耗时统计中断测试",
         taskPrompt: "执行开发",
         status: "running",

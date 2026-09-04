@@ -74,7 +74,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
 
       const task = await subagentManager.spawn({
         parentSessionId: "session-fail-block",
-        role: "junior_be",
+        role: "developer",
         taskTitle: "未实际编写代码的任务",
         taskPrompt: "开发功能",
         parentCwd: gitRepoDir,
@@ -82,7 +82,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: "session-fail-block",
-          role: "junior_be",
+          role: "developer",
           goal: "开发功能",
         },
       });
@@ -106,7 +106,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       // 1. Spawn Task A (running)
       const taskA = await subagentManager.spawn({
         parentSessionId: "session-full-e2e",
-        role: "junior_be",
+        role: "developer",
         taskTitle: "后端接口开发",
         taskPrompt: "实现 /api/auth",
         parentCwd: gitRepoDir,
@@ -114,7 +114,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: taskAId,
           parentSessionId: "session-full-e2e",
-          role: "junior_be",
+          role: "developer",
           goal: "实现 /api/auth",
         },
       });
@@ -122,7 +122,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       // 2. Spawn Task B (blocked on Task A)
       const taskB = await subagentManager.spawn({
         parentSessionId: "session-full-e2e",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "前端界面开发",
         taskPrompt: "对接 /api/auth",
         parentCwd: gitRepoDir,
@@ -130,7 +130,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: taskBId,
           parentSessionId: "session-full-e2e",
-          role: "junior_fe",
+          role: "developer",
           goal: "对接 /api/auth",
           dependsOn: [taskAId],
         },
@@ -248,7 +248,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       const result = runVerification(["build/out.js"], {
         taskId: "t-1",
         parentSessionId: "s-1",
-        role: "junior_fe",
+        role: "developer",
         goal: "build",
       }, mockMessages);
       assert.equal(result.overall, "partially_verified");
@@ -289,7 +289,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
   // 7. Reviewer Minor Normalization & Scope Enforcement
   // -------------------------------------------------------------------------
   describe("7. Reviewer Minor Normalization & Scope Enforcement", () => {
-    it("should normalize minor-only REQUEST_CHANGES to APPROVE to prevent infinite rework", async () => {
+    it("should faithfully preserve explicit REQUEST_CHANGES without normalizing to APPROVE", async () => {
       const subagentManager = new SubagentManager(mockModelRuntime);
       const taskId = `task-rev-norm-${Date.now()}`;
 
@@ -321,7 +321,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
 
       const task = await subagentManager.spawn({
         parentSessionId: "session-rev-norm",
-        role: "reviewer",
+        role: "verifier",
         taskTitle: "Review",
         taskPrompt: "Review",
         parentCwd: gitRepoDir,
@@ -329,7 +329,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: "session-rev-norm",
-          role: "reviewer",
+          role: "verifier",
           goal: "Review",
         },
       });
@@ -340,8 +340,8 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       assert.equal(task.review.onlyMinorFindings, true);
       assert.equal(
         task.review.verdict,
-        "APPROVE",
-        "Verdict must be normalized to APPROVE when only minor/nit findings exist",
+        "REQUEST_CHANGES",
+        "Explicit REQUEST_CHANGES/REWORK must NOT be silently rewritten to APPROVE",
       );
     });
 
@@ -349,7 +349,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-scope-v1",
         parentSessionId: "session-scope",
-        role: "junior_fe",
+        role: "developer",
         goal: "修改前端",
         scope: { include: ["frontend/**"] },
       };

@@ -121,8 +121,8 @@ export async function performSessionCompaction(
   const headers = authResult?.auth?.headers;
   const env = authResult?.env;
 
-  // 使用 session.agent.streamFn 直接流式调用大模型
-  const stream = await session.agent.streamFn(
+  // 使用 session.agent.streamFunction 直接流式调用大模型
+  const stream = await session.agent.streamFunction(
     model,
     {
       systemPrompt: "You are a professional software engineering AI context compaction system.",

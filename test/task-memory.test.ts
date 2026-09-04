@@ -302,7 +302,7 @@ Phase 3: Stripe Webhook Integration
       {
         taskId,
         parentSessionId: "parent-1",
-        role: "junior_fe",
+        role: "developer",
         goal: "Fix type error",
       },
       { memoryPaths },
@@ -350,7 +350,7 @@ Phase 3: Stripe Webhook Integration
     // Task 1
     const task1 = await manager.spawn({
       parentSessionId,
-      role: "tester",
+      role: "verifier",
       taskTitle: "Task 1",
       taskPrompt: "Test suite 1",
       parentCwd: process.cwd(),
@@ -358,7 +358,7 @@ Phase 3: Stripe Webhook Integration
       taskContract: {
         taskId: task1Id,
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite 1",
         expectedEffects: ["analysis"],
       },
@@ -382,7 +382,7 @@ Phase 3: Stripe Webhook Integration
       taskContract: {
         taskId: task2Id,
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         goal: "Follow up task 2",
       },
     });
@@ -603,7 +603,7 @@ Phase 4: Query Index Optimization
         task: {
           taskId,
           parentSessionId,
-          role: "tester",
+          role: "verifier",
           taskTitle: "Task A",
           status: "completed",
           createdAt: new Date().toISOString(),
@@ -627,7 +627,7 @@ Phase 4: Query Index Optimization
         task: {
           taskId,
           parentSessionId,
-          role: "junior_fe",
+          role: "developer",
           taskTitle: "Task with no memory dir",
           status: "completed",
           createdAt: new Date().toISOString(),
@@ -652,7 +652,7 @@ Phase 4: Query Index Optimization
         task: {
           taskId,
           parentSessionId,
-          role: "reviewer",
+          role: "verifier",
           taskTitle: "Task error test",
           status: "completed",
           createdAt: new Date().toISOString(),
@@ -696,7 +696,7 @@ Phase 4: Query Index Optimization
           task: {
             taskId: tId,
             parentSessionId: pId,
-            role: "tester",
+            role: "verifier",
             taskTitle: `Title for ${tId}`,
             status: "completed",
             createdAt: new Date().toISOString(),
@@ -767,7 +767,7 @@ Phase 4: Query Index Optimization
         task: {
           taskId: taskA,
           parentSessionId,
-          role: "junior_be",
+          role: "developer",
           taskTitle: "Task A",
           status: "completed",
           createdAt: new Date().toISOString(),
@@ -778,7 +778,7 @@ Phase 4: Query Index Optimization
         task: {
           taskId: taskB,
           parentSessionId,
-          role: "junior_be",
+          role: "developer",
           taskTitle: "Task B (continued)",
           status: "running",
           createdAt: new Date().toISOString(),

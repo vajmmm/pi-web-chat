@@ -79,7 +79,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskAId = `task-a-${Date.now()}`;
       const taskA = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Create task_a.ts",
         parentCwd: gitRepoDir,
@@ -87,7 +87,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: taskAId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Create task_a.ts",
         },
       });
@@ -101,7 +101,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskBId = `task-b-${Date.now()}`;
       const taskB = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Create task_b.ts",
         parentCwd: gitRepoDir,
@@ -109,7 +109,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: taskBId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Create task_b.ts",
         },
       });
@@ -169,7 +169,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskId = `task-sq-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "fullstack",
+        role: "developer",
         taskTitle: "Squash feature",
         taskPrompt: "Create feature.ts",
         parentCwd: gitRepoDir,
@@ -177,7 +177,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "fullstack",
+          role: "developer",
           goal: "Create feature.ts",
         },
       });
@@ -222,7 +222,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskId = `task-protect-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Agent work",
         taskPrompt: "Agent edits other_file.ts",
         parentCwd: gitRepoDir,
@@ -230,7 +230,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Agent edits other_file.ts",
         },
       });
@@ -268,7 +268,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskId = `task-conf-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Modify shared.ts",
         taskPrompt: "Change shared.ts",
         parentCwd: gitRepoDir,
@@ -276,7 +276,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Change shared.ts",
         },
       });
@@ -326,7 +326,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskId = `task-staged-iso-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Agent feature",
         taskPrompt: "Create agent_staged_test.ts",
         parentCwd: gitRepoDir,
@@ -334,7 +334,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Create agent_staged_test.ts",
         },
       });
@@ -399,7 +399,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
       const taskId = `task-unrelated-c-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Agent Task",
         taskPrompt: "Create agent_unrelated.ts",
         parentCwd: gitRepoDir,
@@ -407,7 +407,7 @@ export function registerIntegrationWorkspaceTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_be",
+          role: "developer",
           goal: "Create agent_unrelated.ts",
         },
       });

@@ -35,7 +35,11 @@ export function createMockSession(messages: any[] = [{ role: "assistant", stopRe
     setActiveToolsByName: () => {},
     model: { provider: "mock", id: "mock-model", name: "Mock Model" },
     emit: (event: any) => {
-      for (const s of subscribers) s(event);
+      const promises: unknown[] = [];
+      for (const s of subscribers) {
+        promises.push(s(event));
+      }
+      return Promise.all(promises);
     },
   };
 }

@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoleConfig } from "../../shared/protocol.ts";
+import { isCanonicalRole } from "../contracts/roles.ts";
 import { loadRolesConfig, saveRolesConfig } from "../roles.ts";
 import { applyRoleToSession } from "../session/role-binding.ts";
+import { isPendingDeletion } from "../session/deletion-tombstone.ts";
 import { readBody, type ServerContext } from "./context.ts";
 
 export async function handleRolesRoutes(
@@ -21,10 +23,24 @@ export async function handleRolesRoutes(
       try {
         const { roles } = JSON.parse(body) as { roles: RoleConfig[] };
         if (Array.isArray(roles)) {
+          for (const r of roles) {
+            if (!r || !isCanonicalRole(r.id)) {
+              res.writeHead(400, { "content-type": "application/json" });
+              res.end(
+                JSON.stringify({
+                  error: `Unsupported or invalid role: "${r?.id}". Only canonical roles are supported.`,
+                }),
+              );
+              return true;
+            }
+          }
           saveRolesConfig(roles);
-          // 同步热更新所有活跃会话的工具集与角色约束
+          // 同步热更新所有活跃会话的工具集与角色约束（跳过 pending deletion，纳入 in-flight op gate）
           for (const entry of ctx.sessionRegistry.entries.values()) {
-            applyRoleToSession(entry, entry.activeRole);
+            if (isPendingDeletion(entry.id) || ctx.subagentManager.isDeleting(entry.id)) continue;
+            await ctx.sessionRegistry.trackInFlightOp(entry.id, async () => {
+              applyRoleToSession(entry, entry.activeRole);
+            });
           }
         }
         res.writeHead(200, { "content-type": "application/json" });
@@ -32,7 +48,7 @@ export async function handleRolesRoutes(
         return true;
       } catch (err) {
         res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `invalid JSON: ${String(err)}` }));
+        res.end(JSON.stringify({ error: `invalid request: ${String(err)}` }));
         return true;
       }
     }

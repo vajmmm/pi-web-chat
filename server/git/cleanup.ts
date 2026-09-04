@@ -1,157 +1,227 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CleanupResult } from "../contracts/task.ts";
-import { listWorktreeFolders, runGit } from "./git.ts";
 import type { IntegrationWorkspace } from "./integration-workspace.ts";
+import { probeGitBranch, probeGitWorktree, runGit } from "./git.ts";
+import { removeWorktree } from "./worktree.ts";
 import {
   hasRuntimeOwnership,
   isResourceNamespaceValid,
   unregisterRuntimeResource,
+  loadPendingGitRecovery,
+  removePendingGitRecovery,
 } from "./runtime-resources.ts";
-import { removeWorktree } from "./worktree.ts";
+
+export interface CleanupRunOptions {
+  _injectCleanupError?: boolean;
+  _injectWorktreeRemoveError?: boolean;
+  _injectBranchDeleteError?: boolean;
+}
 
 /**
- * 清理临时 task worktrees, task branches, integration worktree 与 integration branch (具备所有权与双重门禁保护)
+ * 严格基于所有权机制清理指定 Run 产生的所有 Worktrees 及 Branches
+ * 1. 杜绝任何基于 glob/正则的前缀扫描或批量删除；
+ * 2. 仅清理明确注册归属于该 runId 的资源；
+ * 3. 对非自身所有、命名空间不符或越界的路径严格跳过并上报；
+ * 4. 仅在底层物理资源确认删除成功后，才注销所有权；若删除失败则保留所有权记录供重试。
  */
 export async function cleanupRunResources(
   repoRoot: string,
   integration: IntegrationWorkspace,
   taskInstances?: { worktreePath?: string; branchName?: string }[],
-  options?: {
-    _injectCleanupError?: boolean;
-    _injectWorktreeRemoveError?: boolean;
-    _injectBranchDeleteError?: boolean;
-  },
+  options?: CleanupRunOptions,
 ): Promise<CleanupResult> {
+  const runId = integration.runId;
   const removed: string[] = [];
   const skipped: string[] = [];
   const leftovers: string[] = [];
   const errors: string[] = [];
-  const runId = integration.runId;
 
   if (options?._injectCleanupError) {
+    leftovers.push("injected_cleanup_error");
+    errors.push("Injected cleanup error");
+  }
+
+  if (!repoRoot || !existsSync(repoRoot)) {
     return {
       success: false,
       removed,
       skipped,
-      leftovers: ["injected_cleanup_leftover"],
-      errors: ["Simulated cleanup failure"],
+      leftovers,
+      errors: [`Repository root does not exist: ${repoRoot}`],
     };
   }
 
-  // 1. 清理 task worktrees
+  // 0. 整合 pending git recovery 记录
+  const pendingRecoveries = loadPendingGitRecovery(repoRoot).filter((r) => r.runId === runId);
+
+  const taskWorktreePaths: string[] = [];
+  const taskBranchNames: string[] = [];
   if (taskInstances) {
     for (const t of taskInstances) {
-      if (t.worktreePath) {
-        const wtPath = resolve(t.worktreePath);
-        const isNamespaceValid = isResourceNamespaceValid("task_worktree", wtPath, repoRoot);
-        const isOwned = hasRuntimeOwnership(runId, "task_worktree", wtPath, repoRoot);
+      if (t.worktreePath) taskWorktreePaths.push(resolve(t.worktreePath));
+      if (t.branchName) taskBranchNames.push(t.branchName.trim());
+    }
+  }
+  for (const rec of pendingRecoveries) {
+    if (rec.type === "task_worktree") {
+      const p = resolve(rec.nameOrPath);
+      if (!taskWorktreePaths.includes(p)) taskWorktreePaths.push(p);
+    } else if (rec.type === "task_branch") {
+      const b = rec.nameOrPath.trim();
+      if (!taskBranchNames.includes(b)) taskBranchNames.push(b);
+    }
+  }
 
-        if (!isOwned || !isNamespaceValid) {
-          skipped.push(`task_worktree:${wtPath} (no ownership or path/namespace invalid)`);
-        } else {
-          try {
-            if (options?._injectWorktreeRemoveError) {
-              throw new Error(`Injected worktree remove error for ${wtPath}`);
-            }
+  let intWorktreePath = integration.worktreePath ? resolve(integration.worktreePath) : undefined;
+  let intBranchName = integration.branch ? integration.branch.trim() : undefined;
+  for (const rec of pendingRecoveries) {
+    if (rec.type === "integration_worktree" && !intWorktreePath) {
+      intWorktreePath = resolve(rec.nameOrPath);
+    } else if (rec.type === "integration_branch" && !intBranchName) {
+      intBranchName = rec.nameOrPath.trim();
+    }
+  }
 
-            if (existsSync(wtPath)) {
-              await removeWorktree(repoRoot, wtPath);
-            }
+  // 1. 清理 task worktrees
+  for (const wtPath of taskWorktreePaths) {
+    const isNamespaceValid = isResourceNamespaceValid("task_worktree", wtPath, repoRoot);
+    const isOwned = hasRuntimeOwnership(runId, "task_worktree", wtPath, repoRoot);
 
-            // 再次确认资源不存在
-            if (existsSync(wtPath)) {
-              throw new Error(`Worktree directory still exists at ${wtPath} after removal`);
-            }
-            const list = await listWorktreeFolders(repoRoot);
-            if (list.some((w) => resolve(w.path) === wtPath)) {
-              throw new Error(`Worktree still listed in git worktree list: ${wtPath}`);
-            }
-
-            // 删除持久化 ownership
-            unregisterRuntimeResource(runId, "task_worktree", wtPath, repoRoot);
-            removed.push(`task_worktree:${wtPath}`);
-          } catch (err) {
-            leftovers.push(`task_worktree:${wtPath}`);
-            errors.push(`Failed to remove worktree ${wtPath}: ${String(err instanceof Error ? err.message : err)}`);
-          }
-        }
+    const wtProbe = await probeGitWorktree(repoRoot, wtPath);
+    if (wtProbe.status === "error") {
+      leftovers.push(`task_worktree:${wtPath}`);
+      errors.push(
+        `task_worktree:${wtPath} git probe operational error; refusing to delete or unregister (fail-closed): ${wtProbe.error}`,
+      );
+    } else if (!isOwned || !isNamespaceValid) {
+      skipped.push(`task_worktree:${wtPath} (no ownership or path/namespace invalid)`);
+      if (wtProbe.status === "exists") {
+        leftovers.push(`task_worktree:${wtPath}`);
+        errors.push(
+          `task_worktree:${wtPath} exists on disk but has missing/invalid ownership; refusing to delete unverified resource (fail-closed)`,
+        );
       }
+    } else {
+      try {
+        if (options?._injectWorktreeRemoveError) {
+          throw new Error(`Injected worktree remove error for ${wtPath}`);
+        }
 
-      // 2. 清理 task branch
-      if (t.branchName) {
-        const branch = t.branchName.trim();
-        const isNamespaceValid = isResourceNamespaceValid("task_branch", branch, repoRoot);
-        const isOwned = hasRuntimeOwnership(runId, "task_branch", branch, repoRoot);
+        if (wtProbe.status === "exists") {
+          await removeWorktree(repoRoot, wtPath);
+        }
 
-        if (!isOwned || !isNamespaceValid) {
-          skipped.push(`task_branch:${branch} (no ownership or invalid namespace)`);
-        } else {
-          try {
-            if (options?._injectBranchDeleteError) {
-              throw new Error(`Injected branch delete error for ${branch}`);
-            }
+        const afterProbe = await probeGitWorktree(repoRoot, wtPath);
+        if (afterProbe.status === "error") {
+          throw new Error(
+            `Worktree ${wtPath} git probe operational error after removal: ${afterProbe.error}`,
+          );
+        }
+        if (afterProbe.status === "exists") {
+          throw new Error(`Worktree still exists after removal: ${wtPath}`);
+        }
 
-            let branchExists = false;
-            try {
-              await runGit(repoRoot, ["show-ref", "--verify", `refs/heads/${branch}`]);
-              branchExists = true;
-            } catch {}
+        unregisterRuntimeResource(runId, "task_worktree", wtPath, repoRoot);
+        removePendingGitRecovery(repoRoot, runId, "task_worktree", wtPath);
+        removed.push(`task_worktree:${wtPath}`);
+      } catch (err) {
+        leftovers.push(`task_worktree:${wtPath}`);
+        errors.push(`Failed to remove worktree ${wtPath}: ${String(err instanceof Error ? err.message : err)}`);
+      }
+    }
+  }
 
-            if (branchExists) {
-              await runGit(repoRoot, ["branch", "-D", branch]);
-              // 再次确认分支不存在
-              try {
-                await runGit(repoRoot, ["show-ref", "--verify", `refs/heads/${branch}`]);
-                throw new Error(`Branch ${branch} still exists in git refs after deletion`);
-              } catch (checkErr: any) {
-                if (checkErr.message?.includes("still exists")) {
-                  throw checkErr;
-                }
-              }
-            }
+  // 2. 清理 task branches
+  for (const branch of taskBranchNames) {
+    const branchProbe = await probeGitBranch(repoRoot, branch);
+    const isNamespaceValid = isResourceNamespaceValid("task_branch", branch, repoRoot);
+    const isOwned = hasRuntimeOwnership(runId, "task_branch", branch, repoRoot);
 
-            // 删除持久化 ownership
-            unregisterRuntimeResource(runId, "task_branch", branch, repoRoot);
-            removed.push(`task_branch:${branch}`);
-          } catch (err) {
-            leftovers.push(`task_branch:${branch}`);
-            errors.push(`Failed to delete branch ${branch}: ${String(err instanceof Error ? err.message : err)}`);
+    if (branchProbe.status === "error") {
+      leftovers.push(`task_branch:${branch}`);
+      errors.push(
+        `task_branch:${branch} git probe operational error; refusing to delete or unregister (fail-closed): ${branchProbe.error}`,
+      );
+    } else if (!isOwned || !isNamespaceValid) {
+      skipped.push(`task_branch:${branch} (no ownership or invalid namespace)`);
+      if (branchProbe.status === "exists") {
+        leftovers.push(`task_branch:${branch}`);
+        errors.push(
+          `task_branch:${branch} exists in git refs but has missing/invalid ownership (fail-closed)`,
+        );
+      }
+    } else {
+      try {
+        if (options?._injectBranchDeleteError) {
+          throw new Error(`Injected branch delete error for ${branch}`);
+        }
+
+        if (branchProbe.status === "exists") {
+          await runGit(repoRoot, ["branch", "-D", branch]);
+          const afterProbe = await probeGitBranch(repoRoot, branch);
+          if (afterProbe.status === "error") {
+            throw new Error(
+              `Branch ${branch} git probe operational error after deletion: ${afterProbe.error}`,
+            );
+          }
+          if (afterProbe.status === "exists") {
+            throw new Error(`Branch ${branch} still exists in git refs after deletion`);
           }
         }
+
+        unregisterRuntimeResource(runId, "task_branch", branch, repoRoot);
+        removePendingGitRecovery(repoRoot, runId, "task_branch", branch);
+        removed.push(`task_branch:${branch}`);
+      } catch (err) {
+        leftovers.push(`task_branch:${branch}`);
+        errors.push(`Failed to delete branch ${branch}: ${String(err instanceof Error ? err.message : err)}`);
       }
     }
   }
 
   // 3. 清理 integration worktree
-  if (integration.worktreePath) {
-    const intWtPath = resolve(integration.worktreePath);
+  if (intWorktreePath) {
+    const intWtPath = resolve(intWorktreePath);
     const isNamespaceValid = isResourceNamespaceValid("integration_worktree", intWtPath, repoRoot);
     const isOwned = hasRuntimeOwnership(runId, "integration_worktree", intWtPath, repoRoot);
 
-    if (!isOwned || !isNamespaceValid) {
+    const intWtProbe = await probeGitWorktree(repoRoot, intWtPath);
+    if (intWtProbe.status === "error") {
+      leftovers.push(`integration_worktree:${intWtPath}`);
+      errors.push(
+        `integration_worktree:${intWtPath} git probe operational error; refusing to delete or unregister (fail-closed): ${intWtProbe.error}`,
+      );
+    } else if (!isOwned || !isNamespaceValid) {
       skipped.push(`integration_worktree:${intWtPath} (no ownership or path/namespace invalid)`);
+      if (intWtProbe.status === "exists") {
+        leftovers.push(`integration_worktree:${intWtPath}`);
+        errors.push(
+          `integration_worktree:${intWtPath} exists on disk but has missing/invalid ownership (fail-closed)`,
+        );
+      }
     } else {
       try {
         if (options?._injectWorktreeRemoveError) {
           throw new Error(`Injected integration worktree remove error for ${intWtPath}`);
         }
 
-        if (existsSync(intWtPath)) {
+        if (intWtProbe.status === "exists") {
           await removeWorktree(repoRoot, intWtPath);
         }
 
-        // 再次确认不存在
-        if (existsSync(intWtPath)) {
-          throw new Error(`Integration worktree directory still exists at ${intWtPath} after removal`);
+        const afterProbe = await probeGitWorktree(repoRoot, intWtPath);
+        if (afterProbe.status === "error") {
+          throw new Error(
+            `Integration worktree ${intWtPath} git probe operational error after removal: ${afterProbe.error}`,
+          );
         }
-        const list = await listWorktreeFolders(repoRoot);
-        if (list.some((w) => resolve(w.path) === intWtPath)) {
-          throw new Error(`Integration worktree still listed in git worktree list: ${intWtPath}`);
+        if (afterProbe.status === "exists") {
+          throw new Error(`Integration worktree still exists after removal: ${intWtPath}`);
         }
 
-        // 删除持久化 ownership
         unregisterRuntimeResource(runId, "integration_worktree", intWtPath, repoRoot);
+        removePendingGitRecovery(repoRoot, runId, "integration_worktree", intWtPath);
         removed.push(`integration_worktree:${intWtPath}`);
       } catch (err) {
         leftovers.push(`integration_worktree:${intWtPath}`);
@@ -161,40 +231,46 @@ export async function cleanupRunResources(
   }
 
   // 4. 清理 integration branch
-  if (integration.branch) {
-    const intBranch = integration.branch.trim();
+  if (intBranchName) {
+    const intBranch = intBranchName.trim();
+    const intBranchProbe = await probeGitBranch(repoRoot, intBranch);
     const isNamespaceValid = isResourceNamespaceValid("integration_branch", intBranch, repoRoot);
     const isOwned = hasRuntimeOwnership(runId, "integration_branch", intBranch, repoRoot);
 
-    if (!isOwned || !isNamespaceValid) {
+    if (intBranchProbe.status === "error") {
+      leftovers.push(`integration_branch:${intBranch}`);
+      errors.push(
+        `integration_branch:${intBranch} git probe operational error; refusing to delete or unregister (fail-closed): ${intBranchProbe.error}`,
+      );
+    } else if (!isOwned || !isNamespaceValid) {
       skipped.push(`integration_branch:${intBranch} (no ownership or invalid namespace)`);
+      if (intBranchProbe.status === "exists") {
+        leftovers.push(`integration_branch:${intBranch}`);
+        errors.push(
+          `integration_branch:${intBranch} exists in git refs but has missing/invalid ownership (fail-closed)`,
+        );
+      }
     } else {
       try {
         if (options?._injectBranchDeleteError) {
           throw new Error(`Injected integration branch delete error for ${intBranch}`);
         }
 
-        let branchExists = false;
-        try {
-          await runGit(repoRoot, ["show-ref", "--verify", `refs/heads/${intBranch}`]);
-          branchExists = true;
-        } catch {}
-
-        if (branchExists) {
+        if (intBranchProbe.status === "exists") {
           await runGit(repoRoot, ["branch", "-D", intBranch]);
-          // 再次确认分支不存在
-          try {
-            await runGit(repoRoot, ["show-ref", "--verify", `refs/heads/${intBranch}`]);
+          const afterProbe = await probeGitBranch(repoRoot, intBranch);
+          if (afterProbe.status === "error") {
+            throw new Error(
+              `Integration branch ${intBranch} git probe operational error after deletion: ${afterProbe.error}`,
+            );
+          }
+          if (afterProbe.status === "exists") {
             throw new Error(`Integration branch ${intBranch} still exists in git refs after deletion`);
-          } catch (checkErr: any) {
-            if (checkErr.message?.includes("still exists")) {
-              throw checkErr;
-            }
           }
         }
 
-        // 删除持久化 ownership
         unregisterRuntimeResource(runId, "integration_branch", intBranch, repoRoot);
+        removePendingGitRecovery(repoRoot, runId, "integration_branch", intBranch);
         removed.push(`integration_branch:${intBranch}`);
       } catch (err) {
         leftovers.push(`integration_branch:${intBranch}`);

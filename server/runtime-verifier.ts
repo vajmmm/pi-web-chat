@@ -14,6 +14,8 @@ import type {
   VerificationResult,
   VerificationStatus,
 } from "./contracts/task.ts";
+import type { AgentRole } from "../shared/protocol.ts";
+import { isCanonicalRole } from "./contracts/roles.ts";
 
 // ---------------------------------------------------------------------------
 // Glob matching (basic, no external dependency)
@@ -160,23 +162,24 @@ export function classifyCommandPurpose(command: string): CommandPurpose {
 // ---------------------------------------------------------------------------
 
 /** 各角色的默认 expectedEffects 兜底策略（显式 expectedEffects 优先） */
-export const DEFAULT_ROLE_EXPECTED_EFFECTS: Record<string, ExpectedEffect[]> = {
+export const DEFAULT_ROLE_EXPECTED_EFFECTS: Record<AgentRole, ExpectedEffect[]> = {
   coordinator: ["analysis"],
-  reviewer: ["analysis"],
-  tester: ["test_execution"],
-  junior_fe: ["code_change"],
-  junior_be: ["code_change"],
-  fullstack: ["code_change"],
-  deployer: ["deployment"],
+  developer: ["code_change"],
+  verifier: ["analysis"],
+  researcher: ["analysis"],
+  default: ["code_change"],
 };
 
 /** 解析任务生效的 expectedEffects（显式声明优先于角色默认兜底） */
 export function resolveExpectedEffects(
-  role: string,
+  role: AgentRole,
   expectedEffects?: ExpectedEffect[],
 ): ExpectedEffect[] {
   if (expectedEffects && expectedEffects.length > 0) {
     return expectedEffects;
+  }
+  if (!isCanonicalRole(role)) {
+    throw new Error(`[RuntimeVerifier] Unknown or invalid role "${String(role)}". Fail-closed: refusing verification.`);
   }
   return DEFAULT_ROLE_EXPECTED_EFFECTS[role] ?? ["code_change"];
 }
@@ -186,7 +189,7 @@ export function resolveExpectedEffects(
  */
 function verifyDiff(
   changedFiles: string[],
-  role: string,
+  role: AgentRole,
   expectedEffects?: ExpectedEffect[],
 ): VerificationCheck {
   const effectiveEffects = resolveExpectedEffects(role, expectedEffects);
@@ -212,13 +215,17 @@ function verifyDiff(
     effectiveEffects.includes("deployment") ||
     effectiveEffects.includes("artifact")
   ) {
+    if (changedFiles.length > 0) {
+      return {
+        name: "diff",
+        status: "fail",
+        detail: `UNAUTHORIZED_EFFECT: Produced unexpected file modifications (${changedFiles.length} file(s): ${changedFiles.slice(0, 3).join(", ")}) for role "${role}" expecting [${effectiveEffects.join(", ")}]`,
+      };
+    }
     return {
       name: "diff",
       status: "pass",
-      detail:
-        changedFiles.length > 0
-          ? `${changedFiles.length} file(s) changed (expected: ${effectiveEffects.join(", ")})`
-          : `No file changes required (expected: ${effectiveEffects.join(", ")})`,
+      detail: `No file changes required (expected: ${effectiveEffects.join(", ")})`,
     };
   }
 

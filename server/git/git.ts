@@ -14,6 +14,61 @@ export async function runGit(cwd: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+export type GitProbeStatus = "exists" | "missing" | "error";
+
+export interface GitProbeResult {
+  status: GitProbeStatus;
+  error?: string;
+}
+
+function gitErrorCode(err: unknown): string | number | undefined {
+  return (err as { code?: string | number })?.code;
+}
+
+function gitErrorMessage(err: unknown): string {
+  return String(err instanceof Error ? err.message : err);
+}
+
+/**
+ * Distinguish branch exists / missing / operational error.
+ * `git rev-parse --verify --quiet` returns 1 for a missing ref and 128+ for repo/git failures.
+ */
+export async function probeGitBranch(repoRoot: string, branch: string): Promise<GitProbeResult> {
+  try {
+    await runGit(repoRoot, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    return { status: "exists" };
+  } catch (err) {
+    const code = gitErrorCode(err);
+    if (code === 1) return { status: "missing" };
+    return { status: "error", error: gitErrorMessage(err) };
+  }
+}
+
+/**
+ * Distinguish worktree exists / missing / operational error.
+ * Git list failure is never treated as missing.
+ */
+export async function probeGitWorktree(repoRoot: string, worktreePath: string): Promise<GitProbeResult> {
+  const target = resolve(worktreePath);
+  const onDisk = existsSync(target);
+  try {
+    const out = await runGit(repoRoot, ["worktree", "list", "--porcelain"]);
+    const listed = out.split("\n").some((line) => {
+      if (!line.startsWith("worktree ")) return false;
+      return resolve(line.slice("worktree ".length).trim()) === target;
+    });
+    if (listed || onDisk) return { status: "exists" };
+    return { status: "missing" };
+  } catch (err) {
+    return {
+      status: "error",
+      error: onDisk
+        ? `Worktree path exists on disk but git worktree list failed: ${gitErrorMessage(err)}`
+        : gitErrorMessage(err),
+    };
+  }
+}
+
 /**
  * 检查指定目录是否在 Git 仓库内，并返回仓库根目录
  */

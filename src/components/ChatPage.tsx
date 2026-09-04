@@ -16,6 +16,7 @@ import { SessionsDrawer, SessionsSidebar } from "./SessionsDrawer";
 import { SettingsMenu } from "./SettingsMenu";
 import { SubagentDrawer } from "./SubagentDrawer";
 import { ThinkingMenu } from "./ThinkingMenu";
+import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 
 function connectionDotClass(connection: "connecting" | "connected" | "disconnected"): string {
   switch (connection) {
@@ -202,6 +203,7 @@ export function ChatPage() {
               activeTools={activeTools}
               isStreaming={isStreaming}
             />
+            <QueuedMessagesPanel />
             <Composer isStreaming={isStreaming} />
           </>
         )}

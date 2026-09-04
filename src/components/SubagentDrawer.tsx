@@ -6,13 +6,10 @@ import { Markdown } from "./Markdown";
 import { Message } from "./MessageList";
 
 const roleNameMap: Record<string, string> = {
-  fullstack: "全栈开发 (Fullstack)",
-  junior_fe: "初级前端 (Junior Frontend)",
-  junior_be: "初级后端 (Junior Backend)",
-  reviewer: "审查者 (Reviewer)",
-  tester: "测试者 (Tester)",
-  deployer: "实施者 (Deployer)",
   coordinator: "统筹者 (Coordinator)",
+  developer: "开发工程师 (Developer)",
+  verifier: "验证者 (Verifier)",
+  researcher: "调研员 (Researcher)",
   default: "普通智能体",
 };
 

@@ -65,27 +65,24 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
 
 
   describe("1. Worktree Isolation Defaults", () => {
-    it("should mandate requiresWorktree: true for all write roles by default", () => {
-      const writeRoles = ["junior_fe", "junior_be", "fullstack", "tester", "deployer"] as const;
-      for (const roleId of writeRoles) {
-        const def = getRoleDefinition(roleId);
-        assert.equal(
-          def.requiresWorktree,
-          true,
-          `Write role ${roleId} must default to requiresWorktree: true`,
-        );
+    it("should mandate requiresWorktree: true for developer role by default", () => {
+      const def = getRoleDefinition("developer");
+      assert.equal(
+        def.requiresWorktree,
+        true,
+        "Role developer must default to requiresWorktree: true",
+      );
 
-        const resolved = ConstraintResolver.resolve({ role: roleId, cwd: gitRepoDir });
-        assert.equal(
-          resolved.runtime.requiresWorktree,
-          true,
-          `Resolved runtime for write role ${roleId} must require worktree`,
-        );
-      }
+      const resolved = ConstraintResolver.resolve({ role: "developer", cwd: gitRepoDir });
+      assert.equal(
+        resolved.runtime.requiresWorktree,
+        true,
+        "Resolved runtime for developer must require worktree",
+      );
     });
 
-    it("should set requiresWorktree: false for read-only roles (reviewer & coordinator)", () => {
-      const readRoles = ["reviewer", "coordinator"] as const;
+    it("should set requiresWorktree: false for read-only non-isolated roles (researcher & coordinator)", () => {
+      const readRoles = ["researcher", "coordinator"] as const;
       for (const roleId of readRoles) {
         const def = getRoleDefinition(roleId);
         assert.equal(
@@ -123,7 +120,7 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
       // 1. Spawn Task A (running)
       const taskA = await subagentManager.spawn({
         parentSessionId: "session-dep-flow",
-        role: "junior_be",
+        role: "developer",
         taskTitle: "Task A: 创建后端接口",
         taskPrompt: "实现接口",
         parentCwd: gitRepoDir,
@@ -131,7 +128,7 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: taskAId,
           parentSessionId: "session-dep-flow",
-          role: "junior_be",
+          role: "developer",
           goal: "创建后端接口",
         },
       });
@@ -142,7 +139,7 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
       // 2. Spawn Task B (depends on Task A -> BLOCKED)
       const taskB = await subagentManager.spawn({
         parentSessionId: "session-dep-flow",
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B: 前端绑定",
         taskPrompt: "前端绑定",
         parentCwd: gitRepoDir,
@@ -150,7 +147,7 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId: taskBId,
           parentSessionId: "session-dep-flow",
-          role: "junior_fe",
+          role: "developer",
           goal: "前端绑定",
           dependsOn: [taskAId],
         },
@@ -192,7 +189,7 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
 
       const task = await subagentManager.spawn({
         parentSessionId: "session-autocommit",
-        role: "junior_be",
+        role: "developer",
         taskTitle: "修改数据库配置",
         taskPrompt: "配置数据库",
         parentCwd: gitRepoDir,
@@ -200,7 +197,7 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: "session-autocommit",
-          role: "junior_be",
+          role: "developer",
           goal: "配置数据库",
         },
       });

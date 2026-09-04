@@ -12,13 +12,26 @@ const textareaClass =
 
 const ROLE_ICONS: Record<string, string> = {
   coordinator: "👑",
-  junior_fe: "🎨",
-  junior_be: "⚙️",
-  fullstack: "⚡",
-  reviewer: "🔍",
-  tester: "🧪",
-  deployer: "🚀",
+  developer: "💻",
+  verifier: "🛡️",
+  researcher: "🔬",
   default: "🤖",
+};
+
+const DEFAULT_ROLE_PRESET_TOOLS: Record<string, string[]> = {
+  coordinator: [
+    "read",
+    "bash",
+    "list_available_roles",
+    "spawn_subagent",
+    "continue_subagent",
+    "abort_subagent",
+    "list_subagents",
+  ],
+  developer: ["read", "bash", "edit", "write", "report_blocker"],
+  verifier: ["read", "bash", "report_blocker"],
+  researcher: ["read", "bash", "report_blocker"],
+  default: ["read", "bash", "edit", "write"],
 };
 
 const DEFAULT_TOOLS_CATALOG: Array<{ name: string; label: string; description: string; category: string }> = [
@@ -73,7 +86,7 @@ export function RolesDialog({
     // 保护：如果当前已有角色的已授权工具列表中存在自定义/扩展工具（例如冷启动时未被扫描到），也自动纳入 Catalog
     if (draft) {
       for (const r of draft) {
-        const tools = r.allowedTools ?? r.definition?.allowedTools ?? [];
+        const tools = r.allowedTools ?? [];
         for (const toolName of tools) {
           if (toolName && !map.has(toolName)) {
             map.set(toolName, {
@@ -116,7 +129,6 @@ export function RolesDialog({
             name: updated.name || updated.definition.name,
             description: updated.description || updated.definition.description,
             allowedSkills: nextAllowedSkills,
-            allowedTools: nextAllowedTools,
             requiresWorktree:
               updated.requiresWorktree !== undefined
                 ? updated.requiresWorktree
@@ -135,26 +147,16 @@ export function RolesDialog({
       (prev ?? []).map((r) => {
         if (r.id !== activeRoleConfig.id || !r.definition) return r;
         const nextDef = { ...r.definition, ...updates };
-        const nextAllowedTools =
-          updates.allowedTools !== undefined
-            ? updates.allowedTools
-            : r.allowedTools !== undefined
-              ? r.allowedTools
-              : nextDef.allowedTools;
         return {
           ...r,
           name: nextDef.name || r.name,
           description: nextDef.description || r.description,
           allowedSkills: nextDef.allowedSkills ?? r.allowedSkills,
-          allowedTools: nextAllowedTools,
           requiresWorktree:
             nextDef.requiresWorktree !== undefined
               ? nextDef.requiresWorktree
               : r.requiresWorktree,
-          definition: {
-            ...nextDef,
-            allowedTools: nextAllowedTools,
-          },
+          definition: nextDef,
         };
       }),
     );
@@ -163,7 +165,6 @@ export function RolesDialog({
   const currentAllowedSkills = activeRoleConfig?.allowedSkills ?? [];
   const currentAllowedTools =
     activeRoleConfig?.allowedTools ??
-    activeRoleConfig?.definition?.allowedTools ??
     ["read", "bash", "edit", "write", "report_blocker"];
 
   const toggleTool = (toolName: string) => {
@@ -207,8 +208,6 @@ export function RolesDialog({
     setStatus("idle");
     setError(null);
   };
-
-  const isLegacy = Boolean(activeRoleConfig?.definition?.isLegacy);
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -472,13 +471,14 @@ export function RolesDialog({
                         <button
                           type="button"
                           onClick={() => {
-                            const defaultTools = activeRoleConfig.definition?.allowedTools ?? [
-                              "read",
-                              "bash",
-                              "edit",
-                              "write",
-                              "report_blocker",
-                            ];
+                            const defaultTools =
+                              DEFAULT_ROLE_PRESET_TOOLS[activeRoleConfig.id] ?? [
+                                "read",
+                                "bash",
+                                "edit",
+                                "write",
+                                "report_blocker",
+                              ];
                             updateActiveRole({ allowedTools: [...defaultTools] });
                           }}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-accent transition-colors"
@@ -527,22 +527,6 @@ export function RolesDialog({
                       })}
                     </div>
                   </div>
-
-                  {/* 仅在 Legacy 模式下显示的原始 System Prompt */}
-                  {isLegacy ? (
-                    <label className="flex flex-col gap-1 border-2 border-amber-500/30 p-2.5 bg-amber-500/5">
-                      <span className="text-[11px] font-bold text-amber-600">
-                        ⚠️ V1 Legacy 模式提示词 (已保留，建议迁移至 V2 职责/禁令)
-                      </span>
-                      <textarea
-                        rows={5}
-                        className={textareaClass}
-                        value={activeRoleConfig.systemPrompt}
-                        onChange={(e) => updateActiveRole({ systemPrompt: e.target.value })}
-                      />
-                    </label>
-                  ) : null}
-
                   {/* 专属业务技能复选框列表 */}
                   <div className="border-2 border-line bg-canvas/30 p-3 space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">

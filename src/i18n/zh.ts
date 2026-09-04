@@ -25,10 +25,11 @@ export const zh: Messages = {
   closeSidebar: "关闭侧边栏",
 
   sendMessage: "发送消息",
-  streamingPlaceholder: "流式输出中…（发送可进行引导）",
+  streamingPlaceholder: "流式输出中…（发送将进入队列等待当前轮完成）",
   attachImage: "附加图片",
   removeImage: "移除图片",
   send: "发送",
+  queueSend: "排队发送",
   abort: "停止",
 
   selectModel: "选择模型",

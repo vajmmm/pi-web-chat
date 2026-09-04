@@ -253,6 +253,22 @@ class ChatClient {
     this.send({ type: "clear_subagent_tasks" });
   }
 
+  editQueuedMessage(id: string, text: string) {
+    this.send({ type: "edit_queued_message", id, text });
+  }
+
+  cancelQueuedMessage(id: string, restoreText?: string) {
+    this.send({ type: "cancel_queued_message", id });
+    if (restoreText) {
+      this.update({ injectText: restoreText });
+      this.requestComposerFocus();
+    }
+  }
+
+  sendQueuedMessageNow(id: string) {
+    this.send({ type: "send_queued_message_now", id });
+  }
+
   consumeInjectText() {
     if (this.state.injectText !== null) this.update({ injectText: null });
   }

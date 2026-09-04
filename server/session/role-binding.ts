@@ -1,15 +1,21 @@
 import type { AgentRole } from "../../shared/protocol.ts";
 import {
+  CANONICAL_ROLES,
   ConstraintResolver,
   DEFAULT_ROLES_V2,
+  isCanonicalRole,
   PromptAssembler,
 } from "../contracts/index.ts";
 import { adjustSkillsInBasePrompt } from "../skills.ts";
 import type { SessionEntry } from "./session-registry.ts";
 
 export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
-  entry.activeRole = role;
-  const session = entry.runtime.session;
+  // Fail-closed 校验：在产生任何变更前确保角色为合法的 Canonical Role，严禁污染 activeRole
+  if (!isCanonicalRole(role)) {
+    throw new Error(
+      `[RoleBinding] Cannot apply unknown or invalid role "${String(role)}". Available canonical roles: ${CANONICAL_ROLES.join(", ")}.`,
+    );
+  }
 
   const effectiveContext = ConstraintResolver.resolve({
     role,
@@ -17,6 +23,10 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
     branchName: entry.gitBranch,
     isGitRepo: entry.isGitRepo,
   });
+
+  // 校验与解析成功后才赋值
+  entry.activeRole = role;
+  const session = entry.runtime.session;
 
   // 1. 设置有效工具集 (直接通过 setActiveToolsByName 暴露)
   if (typeof session.setActiveToolsByName === "function") {

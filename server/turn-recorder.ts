@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { UILLMToolDefinition, UILLMTurnRecord } from "../shared/protocol.ts";
@@ -214,4 +214,17 @@ export function installTurnRecorderOnSession(
 
     return originalStreamFn.call(session.agent, model, context, interceptedOptions);
   };
+}
+
+export function deleteSessionTurns(sessionId: string): boolean {
+  memoryTurns.delete(sessionId);
+  const file = turnFilePath(sessionId);
+  if (!existsSync(file)) return true;
+  try {
+    unlinkSync(file);
+    return true;
+  } catch (err) {
+    console.warn(`[TurnRecorder] Failed to unlink turns file for ${sessionId}:`, err);
+    return false;
+  }
 }

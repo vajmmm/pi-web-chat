@@ -42,9 +42,6 @@ describe("Phase 8.1 Regression: ServerContext ModelRuntime dynamic reload", () =
       sessionRegistry,
       subagentManager,
       getModelRuntime: () => currentModelRuntime,
-      get modelRuntime() {
-        return currentModelRuntime;
-      },
       homeDir: tmpdir(),
       agentCwd: tmpdir(),
       distDir: tmpdir(),
@@ -90,9 +87,8 @@ describe("Phase 8.1 Regression: ServerContext ModelRuntime dynamic reload", () =
       ctx.updateModelRuntime(updatedRuntime);
       subagentManager.updateModelRuntime(updatedRuntime);
 
-      // 验证 getter 返回的是新实例，而不是 stale reference
+      // 验证 getModelRuntime 返回的是新实例，而不是 stale reference
       assert.strictEqual(ctx.getModelRuntime(), updatedRuntime);
-      assert.strictEqual(ctx.modelRuntime, updatedRuntime);
 
       // 5. 第二次请求 /api/models：必须读取到更新后的 ModelRuntime (model-beta)
       const res2 = await fetch(`${baseUrl}/api/models`);

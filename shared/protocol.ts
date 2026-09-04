@@ -37,13 +37,9 @@ export type UIThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "x
 export type AgentRole =
   | "default"
   | "coordinator"
-  | "fullstack"
-  | "junior_fe"
-  | "junior_be"
-  | "reviewer"
-  | "tester"
-  | "deployer"
-  | (string & {});
+  | "developer"
+  | "verifier"
+  | "researcher";
 
 export interface RoleDefinition {
   id: AgentRole;
@@ -54,16 +50,14 @@ export interface RoleDefinition {
   /** 角色专属工作方法、流程与判断原则 */
   instructions?: string;
   allowedSkills?: string[];
-  allowedTools?: string[];
   requiresWorktree?: boolean;
   defaultModel?: {
     provider?: string;
     modelId: string;
     thinkingLevel?: UIThinkingLevel;
   };
-  isLegacy?: boolean;
-  legacySystemPrompt?: string;
-  legacyAllowedTools?: string[];
+  /** 角色定义规范版本号 */
+  definitionVersion?: number;
 }
 
 export interface RoleConfig {
@@ -71,13 +65,13 @@ export interface RoleConfig {
   name: string;
   description: string;
   systemPrompt: string;
+  roleDefinitionVersion?: number;
   model?: {
     provider?: string;
     modelId: string;
     thinkingLevel?: UIThinkingLevel;
   };
   allowedTools?: string[];
-  disallowedTools?: string[];
   allowedSkills?: string[];
   requiresWorktree: boolean;
   /** V2 架构下的结构化角色定义 (若存在) */
@@ -92,7 +86,7 @@ export interface TaskScope {
 export interface TaskContract {
   taskId: string;
   parentSessionId: string;
-  role: string;
+  role: AgentRole;
   goal: string;
   scope?: TaskScope;
   contextFiles?: string[];
@@ -201,6 +195,7 @@ export interface ReviewFinding {
   evidence: string;
   expected?: string;
   actual?: string;
+  suggestedFix?: string;
 }
 
 export interface ReviewResult {
@@ -211,7 +206,7 @@ export interface ReviewResult {
 
 export interface TaskResult {
   taskId: string;
-  role: string;
+  role: AgentRole;
   status: TaskExecutionStatus;
   summary: string;
   changedFiles?: string[];
@@ -315,6 +310,19 @@ export interface UITokenUsageStats {
   byRole?: UITokenUsageByRole[];
 }
 
+export interface UIQueuedMessage {
+  id: string;
+  text: string;
+  mode: "followUp" | "steer";
+  createdAt?: string;
+  source?: "user" | "subagent";
+  taskId?: string;
+  taskTitle?: string;
+  role?: AgentRole;
+  taskStatus?: TaskExecutionStatus;
+  kind?: "subagent_terminal" | "subagent_blocker";
+}
+
 export interface UISnapshot {
   messages: UIMessage[];
   isStreaming: boolean;
@@ -337,6 +345,8 @@ export interface UISnapshot {
   subagents?: UISubagentTask[];
   /** 会话 Token 用量与上下文窗口统计 */
   tokenUsage?: UITokenUsageStats;
+  /** 当前正在排队等待执行的消息列表 */
+  queuedMessages?: UIQueuedMessage[];
 }
 
 export interface UISessionInfo {
@@ -613,4 +623,7 @@ export type ClientCommand =
   | { type: "fork"; entryId: string }
   | { type: "compact"; customInstructions?: string }
   | { type: "delete_subagent_task"; taskId: string }
-  | { type: "clear_subagent_tasks" };
+  | { type: "clear_subagent_tasks" }
+  | { type: "edit_queued_message"; id: string; text: string }
+  | { type: "cancel_queued_message"; id: string }
+  | { type: "send_queued_message_now"; id: string };

@@ -5,11 +5,12 @@ import {
   type ExtensionAPI,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentRole } from "../shared/protocol.ts";
+import type { AgentRole, UISubagentTask } from "../shared/protocol.ts";
 import {
   ConstraintResolver,
   formatWorkspaceContext,
   getAllRoleDefinitions,
+  getRoleConfig,
   PromptAssembler,
   type TaskContract,
   type WorkspaceContextDetails,
@@ -21,6 +22,211 @@ import { resolveProjectRoot } from "./worktree.ts";
 
 export const COORDINATOR_EXTENSION_NAME = "pi-coordinator-tools";
 
+/** Keep parent-session investigation output materially below the built-in 50KB limit. */
+export const COORDINATOR_TOOL_OUTPUT_LIMIT = 12 * 1024;
+/** Task summaries are intentionally compact and never include transcript/log collections. */
+export const COORDINATOR_TASK_SUMMARY_LIMIT = 2 * 1024;
+export const COORDINATOR_OUTPUT_TRUNCATION_MESSAGE =
+  "Output truncated for Coordinator. Use a narrower query or delegate large-volume investigation to a Subagent.";
+
+function utf8Prefix(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, mid), "utf8") <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return text.slice(0, low);
+}
+
+function truncateUtf8(
+  text: string,
+  maxBytes: number,
+  marker = "… [truncated]",
+): { value: string; truncated: boolean } {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
+    return { value: text, truncated: false };
+  }
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  const prefix = utf8Prefix(text, Math.max(0, maxBytes - markerBytes));
+  return { value: `${prefix}${marker}`, truncated: true };
+}
+
+/**
+ * Apply the Coordinator-only boundary to read/bash tool results after execution.
+ * Non-text blocks are retained; textual output is capped by UTF-8 byte size.
+ */
+export function truncateCoordinatorToolContent(
+  content: readonly any[],
+  maxBytes = COORDINATOR_TOOL_OUTPUT_LIMIT,
+): { content: any[]; truncated: boolean } {
+  const textBlocks = content.filter(
+    (block) => block && block.type === "text" && typeof block.text === "string",
+  );
+  const totalBytes = textBlocks.reduce(
+    (total, block) => total + Buffer.byteLength(block.text, "utf8"),
+    0,
+  );
+  if (totalBytes <= maxBytes) {
+    return { content: [...content], truncated: false };
+  }
+
+  const suffix = `\n\n${COORDINATOR_OUTPUT_TRUNCATION_MESSAGE}`;
+  const lastTextIndex = content.reduce(
+    (last, block, index) =>
+      block && block.type === "text" && typeof block.text === "string" ? index : last,
+    -1,
+  );
+  let remainingBytes = Math.max(0, maxBytes - Buffer.byteLength(suffix, "utf8"));
+  let suffixAdded = false;
+
+  const bounded = content.map((block, index) => {
+    if (!block || block.type !== "text" || typeof block.text !== "string") return block;
+
+    const prefix = utf8Prefix(block.text, remainingBytes);
+    remainingBytes -= Buffer.byteLength(prefix, "utf8");
+    const mustAddSuffix = !suffixAdded &&
+      (prefix.length < block.text.length || index === lastTextIndex);
+    if (mustAddSuffix) {
+      suffixAdded = true;
+      return { ...block, text: `${prefix}${suffix}` };
+    }
+    return { ...block, text: prefix };
+  });
+
+  return { content: bounded, truncated: true };
+}
+
+export interface CoordinatorTaskSummary {
+  taskId: string;
+  status: string;
+  role: string;
+  agent: string | null;
+  error: string | null;
+  failureSummary: string | null;
+  verificationStatus: string | null;
+  lastMeaningfulFailure: string | null;
+  resultSummary: string | null;
+  truncated: boolean;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function firstFailedVerificationDetail(task: UISubagentTask): string | null {
+  const verification = task.verification ?? task.taskResult?.verification;
+  if (!verification) return null;
+
+  const checks = [verification.testExecution, verification.scope, verification.diff].filter(Boolean);
+  for (const check of checks) {
+    if (check && check.status !== "pass") {
+      return optionalString(check.detail) ?? `${check.name}: ${check.status}`;
+    }
+  }
+
+  const failedCommand = [...verification.commands].reverse().find((command) => !command.passed);
+  return failedCommand
+    ? optionalString(failedCommand.stderrSummary) ??
+        optionalString(failedCommand.stdoutSummary) ??
+        `Command failed: ${failedCommand.command}`
+    : null;
+}
+
+function lastFailureLog(task: UISubagentTask): string | null {
+  const logs = task.logs ?? [];
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const line = logs[index];
+    if (typeof line === "string" && /error|fail|failure|blocked|timeout|truncat|conflict/i.test(line)) {
+      const toolEvent = line.match(/\[Tool\]\s+([^\s]+)\s+->\s+(Error|Success)/i);
+      if (toolEvent) {
+        return `Tool ${toolEvent[1]} reported ${toolEvent[2].toLowerCase()}.`;
+      }
+      return "A failure-like event was recorded during task execution.";
+    }
+  }
+  return null;
+}
+
+function summaryField(value: string | null, maxBytes = 320): { value: string | null; truncated: boolean } {
+  if (value === null) return { value: null, truncated: false };
+  return truncateUtf8(value, maxBytes);
+}
+
+export function buildCoordinatorTaskSummary(task: UISubagentTask): CoordinatorTaskSummary {
+  const verification = task.verification ?? task.taskResult?.verification;
+  const metaError = task.taskResult?.meta?.error;
+  const error = optionalString(task.error) ?? optionalString(metaError);
+  const verificationFailure = firstFailedVerificationDetail(task);
+  const failureSummary = error ?? verificationFailure ??
+    (task.review?.verdict === "REQUEST_CHANGES"
+      ? optionalString(task.review.findings[0]?.problem)
+      : null);
+  const lastMeaningfulFailure = lastFailureLog(task) ?? failureSummary;
+  const resultSummary = optionalString(task.taskResult?.summary) ?? optionalString(task.summary);
+
+  const fields = {
+    taskId: summaryField(task.taskId, 256),
+    agent: summaryField(task.agentId ?? null, 160),
+    error: summaryField(error),
+    failureSummary: summaryField(failureSummary),
+    lastMeaningfulFailure: summaryField(lastMeaningfulFailure),
+    resultSummary: summaryField(resultSummary),
+  };
+  return {
+    taskId: fields.taskId.value ?? "",
+    status: task.status,
+    role: task.role,
+    agent: fields.agent.value,
+    error: fields.error.value,
+    failureSummary: fields.failureSummary.value,
+    verificationStatus: verification?.overall ?? null,
+    lastMeaningfulFailure: fields.lastMeaningfulFailure.value,
+    resultSummary: fields.resultSummary.value,
+    truncated: Object.values(fields).some((field) => field.truncated),
+  };
+}
+
+export function serializeCoordinatorTaskSummary(summary: CoordinatorTaskSummary): string {
+  const initial = JSON.stringify(summary);
+  if (Buffer.byteLength(initial, "utf8") <= COORDINATOR_TASK_SUMMARY_LIMIT) return initial;
+
+  const compacted: CoordinatorTaskSummary = {
+    ...summary,
+    taskId: truncateUtf8(summary.taskId, 128).value,
+    agent: summary.agent ? truncateUtf8(summary.agent, 80).value : null,
+    error: summary.error ? truncateUtf8(summary.error, 120).value : null,
+    failureSummary: summary.failureSummary ? truncateUtf8(summary.failureSummary, 120).value : null,
+    lastMeaningfulFailure: summary.lastMeaningfulFailure
+      ? truncateUtf8(summary.lastMeaningfulFailure, 120).value
+      : null,
+    resultSummary: summary.resultSummary ? truncateUtf8(summary.resultSummary, 120).value : null,
+    truncated: true,
+  };
+  const compactJson = JSON.stringify(compacted);
+  if (Buffer.byteLength(compactJson, "utf8") <= COORDINATOR_TASK_SUMMARY_LIMIT) return compactJson;
+
+  return JSON.stringify({
+    taskId: truncateUtf8(summary.taskId, 128).value,
+    status: truncateUtf8(summary.status, 64).value,
+    role: truncateUtf8(summary.role, 64).value,
+    agent: null,
+    error: null,
+    failureSummary: null,
+    verificationStatus: summary.verificationStatus,
+    lastMeaningfulFailure: null,
+    resultSummary: null,
+    truncated: true,
+  });
+}
+
 export function createCoordinatorExtension(
   subagentManager: SubagentManager,
   getSessionContext: () => {
@@ -30,7 +236,11 @@ export function createCoordinatorExtension(
     activeRole: AgentRole;
     customSession?: any;
     onUpdate?: (task: any) => void;
-    onReport?: (task: any, reportText: string) => void;
+    onReport?: (
+      task: any,
+      reportText: string,
+      metadata?: { kind?: "terminal" | "blocker" },
+    ) => void | Promise<void>;
   },
 ): InlineExtension {
   return {
@@ -49,19 +259,19 @@ export function createCoordinatorExtension(
             const definitions = getAllRoleDefinitions().filter(
               (r) => r.id !== "coordinator" && r.id !== "default",
             );
-            const summary = definitions.map((d) => ({
-              role_id: d.id,
-              name: d.name,
-              description: d.description,
-              responsibilities: d.responsibilities,
-              strict_prohibitions: d.strictProhibitions,
-              allowed_skills: d.allowedSkills ?? [],
-              allowed_tools:
-                Array.isArray(d.allowedTools)
-                  ? [...d.allowedTools]
-                  : ["read", "bash", "edit", "write", "report_blocker"],
-              requires_worktree: Boolean(d.requiresWorktree),
-            }));
+            const summary = definitions.map((d) => {
+              const cfg = getRoleConfig(d.id);
+              return {
+                role_id: d.id,
+                name: d.name,
+                description: d.description,
+                responsibilities: d.responsibilities,
+                strict_prohibitions: d.strictProhibitions,
+                allowed_skills: d.allowedSkills ?? [],
+                allowed_tools: Array.isArray(cfg?.allowedTools) ? [...cfg.allowedTools] : [],
+                requires_worktree: Boolean(d.requiresWorktree ?? cfg?.requiresWorktree),
+              };
+            });
             return {
               details: undefined,
               content: [
@@ -81,28 +291,87 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 1. 派发子智能体工具 (spawn_subagent)
+      // 1. 获取单个 Task 的低输出量状态摘要 (get_task_summary)
+      pi.registerTool(
+        defineTool({
+          name: "get_task_summary",
+          label: "获取 Task 摘要",
+          description:
+            "按 taskId 获取一个属于当前 Coordinator 会话的压缩 Task 状态摘要。只返回状态、角色、错误/失败摘要、验证状态和结果摘要，不返回完整消息历史、stdout、JSONL 或 tool call history。",
+          promptSnippet: "获取单个 Task 的压缩状态、失败与验证摘要",
+          parameters: Type.Object({
+            taskId: Type.String({
+              description: "要查询的 Task ID",
+            }),
+          }),
+          async execute(_toolCallId, params) {
+            const ctx = getSessionContext();
+            if (ctx.activeRole !== "coordinator") {
+              return {
+                isError: true,
+                details: undefined,
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({ error: "tool_not_available_for_role" }),
+                  },
+                ],
+              };
+            }
+
+            const task = subagentManager.getTask(params.taskId);
+            if (!task || task.parentSessionId !== ctx.parentSessionId) {
+              return {
+                isError: true,
+                details: undefined,
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      error: "task_not_found",
+                      taskId: truncateUtf8(params.taskId, 256).value,
+                    }),
+                  },
+                ],
+              };
+            }
+
+            const summary = buildCoordinatorTaskSummary(task);
+            return {
+              details: undefined,
+              content: [
+                {
+                  type: "text",
+                  text: serializeCoordinatorTaskSummary(summary),
+                },
+              ],
+            };
+          },
+        }),
+      );
+
+      // 2. 派发子智能体工具 (spawn_subagent)
       pi.registerTool(
         defineTool({
           name: "spawn_subagent",
           label: "派发子任务",
           description:
-            "派发一个结构化契约子智能体任务。后台异步非阻塞执行（若显式启用 requiresWorktree 则在独立 Git 分支隔离运行，默认在主工作区执行），完成后系统会自动向统筹者主动上报成果。",
+            "派发一个结构化契约子智能体任务。后台异步非阻塞执行（Developer / Verifier 在独立 Git 分支 Worktree 隔离运行，Researcher 在只读工作区执行）。子任务完成后成果将进入 Coordinator Inbox 暂存，不会打断当前对话，用户确认引导后由系统在后续轮次接入。",
           promptSnippet: "派发一个独立的异步子智能体任务。派发前可调用 list_available_roles 查看可用角色",
           promptGuidelines: [
-            "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具列表；",
-            "【任务粒度与拆分原则】能独立调查、独立验证、独立交付的子目标（如独立子系统、不同配置源、独立调用链或故障域）优先拆成多个 Subagent Task（例如派发给多个 Tester/Developer），避免因复合目标造成不必要的超长上下文和大量低价值重复工具调用；高度耦合需共享深入上下文的子目标保持单任务，不要机械拆分；深度调查与多份文档交付可拆分为调查验证阶段与交付物整理阶段；同一 Task 内通过 Working Memory 保持连贯，跨 Task 则通过 ReusableSubagent Knowledge、context_files 或明确产物传递结论（Working Memory 不跨 Task 自动继承）；",
+            "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具列表（核心角色为 developer、verifier、researcher）；",
+            "【任务粒度与拆分原则】遵循“Prefer fewer, larger, behavior-complete tasks”，避免机械拆解缺乏独立验证与闭环的微任务。能独立调查、独立验证、独立交付的完整行为闭环拆为 Subagent Task（例如派发给 Developer 或 Researcher）；高度耦合需共享深入上下文的子目标保持单任务，不拆分；同一 Task 内通过 Working Memory 保持连贯，跨 Task 则通过 ReusableSubagent Knowledge、context_files 或明确产物传递结论（Working Memory 不跨 Task 自动继承）；",
             "可连续多次调用 spawn_subagent 以并行启动多个独立的子智能体，各子任务异步执行；",
             "支持传入结构化 Task Contract 字段 (如 expected_effects, acceptance_criteria, context_files, scope_include)；",
-            "派发任务时，根据任务真实目标填写 expected_effects（例如 Tester 仅运行测试声明 ['test_execution']，Tester 修复测试代码声明 ['code_change']）；",
-            "派发后无需阻塞等待，严禁使用 bash (如 sleep、轮询脚本、死循环检查 git log) 阻塞等待子任务！子任务完成后系统会自动向你主动注入汇报结果与产出，并唤醒下一轮对话；",
+            "派发任务时，根据任务真实目标填写 expected_effects（例如 Verifier 核查分析填 ['analysis'] 或 ['test_execution']，Developer 实现代码填 ['code_change']）；",
+            "【Inbox 暂存与流转】派发后无需阻塞等待，严禁使用 bash (如 sleep、轮询脚本、死循环检查 git log) 阻塞等待子任务！子任务完成后的 report 仅在 Coordinator Inbox 暂存，不自动打断或唤醒 Coordinator；用户可编辑、引导或取消；只有用户在界面点击引导后，才会在合法的下一 Coordinator Turn 注入；",
             "已经委派给 Subagent 的调查任务，默认不要自己再重复 read/grep；只有协调、结果冲突、证据不足或最终验证时再自行检查。",
             "子智能体默认继承主会话模型，除非角色配置或任务执行选项中显式指定了专属模型。",
           ],
           executionMode: "parallel",
           parameters: Type.Object({
             role: Type.String({
-              description: "子智能体角色标识（必须从 list_available_roles 获取，例如 'fullstack'、'junior_fe'、'junior_be'、'reviewer'、'tester'、'deployer'，严禁使用 default）",
+              description: "子智能体角色标识（必须从 list_available_roles 获取，例如 'developer'、'verifier'、'researcher'，严禁使用 default 或 coordinator）",
             }),
             task_title: Type.String({
               description: "简短明确的任务标题，例如 '实现用户个人资料卡片组件'",
@@ -126,7 +395,7 @@ export function createCoordinatorExtension(
                 ]),
                 {
                   description:
-                    "任务预期产出/效果类型列表（如 ['test_execution'] 或 ['code_change']）。派发时请根据真实目标填写，不要仅凭角色猜测（例如：Tester 仅运行测试填 ['test_execution']，Tester 修复测试代码填 ['code_change']）。",
+                    "任务预期产出/效果类型列表（如 ['test_execution'] 或 ['code_change']）。派发时请根据真实目标填写（例如：Verifier 进行质量核查填 ['analysis'] 或 ['test_execution']，Developer 修改业务代码填 ['code_change']）。",
                 },
               ),
             ),
@@ -175,22 +444,19 @@ export function createCoordinatorExtension(
           }),
           async execute(_toolCallId, params) {
             const ctx = getSessionContext();
-            const validRoles: AgentRole[] = [
-              "fullstack",
-              "junior_fe",
-              "junior_be",
-              "reviewer",
-              "tester",
-              "deployer",
+            const validRoles = [
+              "developer",
+              "verifier",
+              "researcher",
             ];
-            if (!validRoles.includes(params.role as AgentRole)) {
+            if (!validRoles.includes(params.role)) {
               return {
                 isError: true,
                 details: undefined,
                 content: [
                   {
                     type: "text",
-                    text: `[spawn_subagent] 失败: 非法的子智能体角色 '${params.role}'。当前仅支持 list_available_roles 中的角色。`,
+                    text: `[spawn_subagent] 失败: 非法的子智能体角色 '${params.role}'。当前仅支持 list_available_roles 中的角色 (如 'developer', 'verifier', 'researcher')。`,
                   },
                 ],
               };
@@ -243,8 +509,8 @@ export function createCoordinatorExtension(
                         worktree: task.worktreePath ?? null,
                         message:
                           task.status === "blocked"
-                            ? `子任务 [${task.taskId}] 已派发，因前置依赖尚未完成处于 blocked 挂起状态。前置依赖完成后将自动唤醒。`
-                            : `子任务 [${task.taskId}] 已成功启动（异步执行中）。执行完毕后系统将自动向你注入成果汇报，请勿使用 bash 轮询等待。`,
+                            ? `子任务 [${task.taskId}] 已派发，因前置依赖尚未完成处于 blocked 挂起状态。前置依赖全部完成后将自动解除挂起。`
+                            : `子任务 [${task.taskId}] 已成功启动（异步执行中）。执行完毕后成果将进入 Coordinator Inbox 暂存，等待用户确认引导后在下一轮次注入，请勿使用 bash 轮询等待。`,
                       },
                       null,
                       2,
@@ -268,7 +534,7 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 2. 列出子任务与可复用 Agent 状态工具 (list_subagents)
+      // 3. 列出子任务与可复用 Agent 状态工具 (list_subagents)
       pi.registerTool(
         defineTool({
           name: "list_subagents",
@@ -395,7 +661,7 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 3. 复用已有智能体启动新任务工具 (continue_subagent)
+      // 4. 复用已有智能体启动新任务工具 (continue_subagent)
       pi.registerTool(
         defineTool({
           name: "continue_subagent",
@@ -445,10 +711,12 @@ export function createCoordinatorExtension(
 
             try {
               const reworkOfTaskId = params.rework_of_task_id;
+              const existingAgent = subagentManager.reusableAgents.get(params.agent_id);
+              const targetRole: AgentRole = existingAgent ? existingAgent.role : "developer";
               const taskContract: TaskContract = {
                 taskId: "",
                 parentSessionId: ctx.parentSessionId,
-                role: "", // continueAgent 会自动补全为 agent.role
+                role: targetRole,
                 goal: params.goal || params.task_title || params.prompt,
                 expectedEffects: params.expected_effects,
                 contextFiles: params.context_files,
@@ -514,7 +782,7 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 4. 中断子智能体工具 (abort_subagent)
+      // 5. 中断子智能体工具 (abort_subagent)
       pi.registerTool(
         defineTool({
           name: "abort_subagent",
@@ -524,7 +792,7 @@ export function createCoordinatorExtension(
             task_id: Type.String({ description: "要中断的任务ID，如 'task-abc12345'" }),
           }),
           async execute(_toolCallId, params) {
-            const success = await subagentManager.abort(params.task_id);
+            const success = await subagentManager.abort(params.task_id, { source: "coordinator" });
             return {
               details: undefined,
               content: [
@@ -546,7 +814,20 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 5. 拦截 before_agent_start 动态注入当前活跃角色的分层系统提示词与首轮 Workspace Context
+      // 6. 仅在 Coordinator 主会话中限制 read/bash 的异常大结果；不阻止小范围检查，
+      // 也不影响 Developer / Verifier 等执行角色。
+      pi.on("tool_result", async (event) => {
+        const { activeRole } = getSessionContext();
+        if (activeRole !== "coordinator" || (event.toolName !== "read" && event.toolName !== "bash")) {
+          return;
+        }
+
+        const bounded = truncateCoordinatorToolContent(event.content);
+        if (!bounded.truncated) return;
+        return { content: bounded.content };
+      });
+
+      // 7. 拦截 before_agent_start 动态注入当前活跃角色的分层系统提示词与首轮 Workspace Context
       pi.on("before_agent_start", async (event, ctx) => {
         const sessionCtx = getSessionContext();
         const role = sessionCtx.activeRole || "coordinator";
@@ -583,6 +864,42 @@ export function createCoordinatorExtension(
           systemPromptStr = assembled.systemPrompt;
         }
 
+        return {
+          systemPrompt: systemPromptStr,
+        };
+      });
+
+      // 8. 拦截 context 事件：在 LLM 发送前动态将权威 Workspace Context 前置拼入首条用户消息开头（严格仅在第一条消息，不生成单独条目，UI保持静默）
+      pi.on("context", async (event, ctx) => {
+        const sessionCtx = getSessionContext();
+        const role = sessionCtx.activeRole || "coordinator";
+        const currentCwd = sessionCtx.parentCwd || ctx.cwd;
+
+        if (!event.messages || event.messages.length === 0) {
+          return;
+        }
+
+        // 严格仅在整个会话的第一条用户消息中插入
+        const firstUserIndex = event.messages.findIndex((m) => m.role === "user");
+        if (firstUserIndex === -1) {
+          return;
+        }
+
+        // 检查首条用户消息是否已经包含 Workspace Context
+        const firstUserMsg = event.messages[firstUserIndex] as { role: string; content?: unknown };
+        let alreadyHasWsContext = false;
+        if (typeof firstUserMsg.content === "string") {
+          alreadyHasWsContext = firstUserMsg.content.includes("## Workspace Context");
+        } else if (Array.isArray(firstUserMsg.content)) {
+          alreadyHasWsContext = firstUserMsg.content.some(
+            (b: any) => b && typeof b.text === "string" && b.text.includes("## Workspace Context"),
+          );
+        }
+
+        if (alreadyHasWsContext) {
+          return;
+        }
+
         // 解析工作区环境动态上下文
         const projectInfo = await resolveProjectRoot(currentCwd);
         const wsDetails: WorkspaceContextDetails = {
@@ -598,47 +915,22 @@ export function createCoordinatorExtension(
         };
         const wsContent = formatWorkspaceContext(wsDetails);
 
-        // 检查会话上下文，避免每一轮重复注入 Workspace Context；仅在首轮或 workspace 实际变化时注入
-        let shouldInjectWorkspaceMessage = true;
-        try {
-          const entries = ctx?.sessionManager?.getEntries?.() ?? [];
-          for (let i = entries.length - 1; i >= 0; i--) {
-            const e = entries[i];
-            if (
-              e.type === "message" &&
-              e.message.role === "custom" &&
-              e.message.customType === "workspace-context"
-            ) {
-              const text =
-                typeof e.message.content === "string"
-                  ? e.message.content
-                  : Array.isArray(e.message.content)
-                    ? e.message.content.map((c: any) => (c as { text?: string }).text ?? "").join("")
-                    : "";
-              if (text.includes(`- cwd: ${currentCwd}`)) {
-                shouldInjectWorkspaceMessage = false;
-                break;
-              }
-            }
+        const newMessages = structuredClone(event.messages);
+        const modMsg = newMessages[firstUserIndex] as { role: string; content?: unknown };
+        if (typeof modMsg.content === "string") {
+          modMsg.content = `${wsContent}\n\n${modMsg.content}`;
+        } else if (Array.isArray(modMsg.content)) {
+          const firstText = modMsg.content.find((b: any) => b && b.type === "text") as
+            | { type: "text"; text: string }
+            | undefined;
+          if (firstText) {
+            firstText.text = `${wsContent}\n\n${firstText.text || ""}`;
+          } else {
+            modMsg.content.unshift({ type: "text", text: wsContent });
           }
-        } catch {
-          // If sessionManager entries inspection throws, fallback to injecting
         }
 
-        if (shouldInjectWorkspaceMessage) {
-          return {
-            systemPrompt: systemPromptStr,
-            message: {
-              customType: "workspace-context",
-              content: wsContent,
-              display: false,
-            },
-          };
-        }
-
-        return {
-          systemPrompt: systemPromptStr,
-        };
+        return { messages: newMessages };
       });
     },
   };

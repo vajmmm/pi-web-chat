@@ -105,6 +105,8 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
       continue;
     }
 
+    if (m.display === false || (m as any).customType === "workspace-context") continue;
+
     const text = textFromContent(m.content);
     if (text) out.push({ role: "custom", content: [{ type: "text", text }] });
   }

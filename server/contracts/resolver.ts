@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentRole } from "../../shared/protocol.ts";
 import { loadSkillsContent } from "../skills.ts";
-import { getRoleDefinition, type RoleDefinition } from "./roles.ts";
+import { getRoleConfig, getRoleDefinition, type RoleDefinition } from "./roles.ts";
 import { SHARED_DEFAULTS, SHARED_INVARIANTS } from "./rules.ts";
 import type { SubagentExecutionOptions, TaskContract } from "./task.ts";
 
@@ -97,8 +97,9 @@ export function loadProjectRules(cwd: string, projectRoot?: string): string[] {
  */
 export class ConstraintResolver {
   public static resolve(options: ResolveOptions): EffectiveContext {
-    // 1. 获取角色定义
+    // 1. 获取角色定义与角色配置 (RoleConfig.allowedTools 为唯一工具权限真相源)
     const role = getRoleDefinition(options.role);
+    const roleConfig = getRoleConfig(options.role);
 
     // 2. 计算实际运行时配置
     const isWorktree = !!options.worktreePath;
@@ -114,18 +115,16 @@ export class ConstraintResolver {
         : undefined);
 
     const activeTools =
-      Array.isArray(role.allowedTools)
-        ? [...role.allowedTools]
-        : role.isLegacy && Array.isArray(role.legacyAllowedTools)
-          ? [...role.legacyAllowedTools]
-          : ["read", "bash", "edit", "write", "report_blocker"];
+      Array.isArray(roleConfig?.allowedTools)
+        ? [...roleConfig.allowedTools]
+        : ["read", "bash", "edit", "write", "report_blocker"];
 
     const runtime: EffectiveRuntimeConfig = {
       activeTools,
       requiresWorktree:
         options.executionOptions?.requiresWorktree !== undefined
           ? options.executionOptions.requiresWorktree
-          : Boolean(role.requiresWorktree),
+          : Boolean(role.requiresWorktree ?? roleConfig?.requiresWorktree),
       isWorktree,
       worktreePath: options.worktreePath,
       targetCwd: options.targetCwd,
@@ -147,9 +146,7 @@ export class ConstraintResolver {
       runtime,
       invariants: SHARED_INVARIANTS,
       roleConstraints: {
-        responsibilities: role.isLegacy && role.legacySystemPrompt
-          ? [role.legacySystemPrompt, ...role.responsibilities]
-          : [...role.responsibilities],
+        responsibilities: [...role.responsibilities],
         strictProhibitions: [...role.strictProhibitions],
       },
       projectRules,

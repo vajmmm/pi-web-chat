@@ -15,8 +15,7 @@ import { after, before, describe, it } from "node:test";
 const testAgentDir = mkdtempSync(join(tmpdir(), "pi-reuse-test-"));
 process.env.PI_CODING_AGENT_DIR = testAgentDir;
 
-import type { UISubagentTask } from "../shared/protocol.ts";
-import { getRoleDefinition, RoleRegistry } from "../server/contracts/index.ts";
+import { getRoleConfig, getRoleDefinition, RoleRegistry } from "../server/contracts/index.ts";
 import {
   MAX_SUBAGENT_REUSE,
   extractKnowledgeFromTask,
@@ -152,7 +151,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const task: UISubagentTask = {
         taskId: "task-extract-1",
         parentSessionId: "s1",
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike-05",
         taskPrompt: "explore pytest",
         status: "completed",
@@ -212,7 +211,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const task: UISubagentTask = {
         taskId: "task-extract-failures",
         parentSessionId: "s1",
-        role: "tester",
+        role: "verifier",
         taskTitle: "mixed failures",
         taskPrompt: "x",
         status: "completed",
@@ -289,7 +288,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const knowledge = extractKnowledgeFromTask({
         taskId: "t1",
         parentSessionId: "s1",
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike-05",
         taskPrompt: "x",
         status: "completed",
@@ -334,7 +333,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const registry = new ReusableSubagentRegistry();
       const agent = registry.create({
         parentSessionId: "parent-1",
-        role: "tester",
+        role: "verifier",
         taskId: "task-a",
         taskTitle: "Spike-05",
       });
@@ -344,7 +343,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const taskLike: UISubagentTask = {
         taskId: "task-a",
         parentSessionId: "parent-1",
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike-05",
         taskPrompt: "x",
         status: "completed",
@@ -375,14 +374,14 @@ describe("Reusable Subagent (Scheme B)", () => {
       const registry = new ReusableSubagentRegistry();
       const agent = registry.create({
         parentSessionId: "parent-2",
-        role: "tester",
+        role: "verifier",
         taskId: "task-0",
         taskTitle: "T0",
       });
       const baseTask = (id: string): UISubagentTask => ({
         taskId: id,
         parentSessionId: "parent-2",
-        role: "tester",
+        role: "verifier",
         taskTitle: id,
         taskPrompt: "x",
         status: "completed",
@@ -412,7 +411,7 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const taskA = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "developer",
         taskTitle: "Spike-05 env discovery",
         taskPrompt: "Discover python and pytest",
         parentCwd: gitRepoDir,
@@ -420,9 +419,9 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId: taskAId,
           parentSessionId,
-          role: "tester",
+          role: "developer",
           goal: "Discover python and pytest",
-          expectedEffects: ["analysis"],
+          expectedEffects: ["code_change"],
         },
       });
 
@@ -457,9 +456,9 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId: taskBId,
           parentSessionId,
-          role: "tester",
+          role: "developer",
           goal: "Spike-06 follow-up",
-          expectedEffects: ["analysis"],
+          expectedEffects: ["code_change"],
           acceptanceCriteria: ["reuse prior env facts"],
         },
       });
@@ -493,7 +492,7 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const task = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "developer",
         taskTitle: "seed",
         taskPrompt: "seed",
         parentCwd: gitRepoDir,
@@ -501,7 +500,7 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId,
           parentSessionId,
-          role: "tester",
+          role: "developer",
           goal: "seed",
         },
       });
@@ -526,7 +525,7 @@ describe("Reusable Subagent (Scheme B)", () => {
             taskContract: {
               taskId: `task-rollback-b-${Date.now()}`,
               parentSessionId,
-              role: "tester",
+              role: "developer",
               goal: "fail",
             },
           }),
@@ -553,7 +552,7 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const task = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "will fail",
         taskPrompt: "x",
         parentCwd: gitRepoDir,
@@ -561,7 +560,7 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId,
           parentSessionId,
-          role: "tester",
+          role: "verifier",
           goal: "x",
         },
       });
@@ -577,7 +576,7 @@ describe("Reusable Subagent (Scheme B)", () => {
 
   describe("coordinator tools", () => {
     it("registers list_subagents and continue_subagent; coordinator allowlist includes them", () => {
-      const coordinator = getRoleDefinition("coordinator");
+      const coordinator = getRoleConfig("coordinator");
       assert.ok(coordinator.allowedTools?.includes("list_subagents"));
       assert.ok(coordinator.allowedTools?.includes("continue_subagent"));
       assert.ok(coordinator.allowedTools?.includes("spawn_subagent"));
@@ -608,7 +607,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const taskId = `task-list-${Date.now()}`;
       const task = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike-05",
         taskPrompt: "discover",
         parentCwd: gitRepoDir,
@@ -616,7 +615,7 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId,
           parentSessionId,
-          role: "tester",
+          role: "verifier",
           goal: "discover",
         },
       });
@@ -644,7 +643,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const agent = payload.reusable_agents.find((a: any) => a.agent_id === task.agentId);
       assert.ok(agent);
       assert.equal(agent.state, "idle_reusable");
-      assert.equal(agent.role, "tester");
+      assert.equal(agent.role, "verifier");
       assert.equal(agent.last_task_id, taskId);
       assert.ok(typeof agent.reuse_count === "number");
       assert.ok(Array.isArray(agent.topics));
@@ -658,7 +657,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const taskId2 = `task-filter-2-${Date.now()}`;
       const task1 = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task-1",
         taskPrompt: "prompt-1",
         parentCwd: gitRepoDir,
@@ -666,13 +665,13 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId: taskId1,
           parentSessionId,
-          role: "tester",
+          role: "verifier",
           goal: "prompt-1",
         },
       });
       const task2 = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task-2",
         taskPrompt: "prompt-2",
         parentCwd: gitRepoDir,
@@ -680,7 +679,7 @@ describe("Reusable Subagent (Scheme B)", () => {
         taskContract: {
           taskId: taskId2,
           parentSessionId,
-          role: "tester",
+          role: "verifier",
           goal: "prompt-2",
         },
       });
@@ -740,7 +739,7 @@ describe("Reusable Subagent (Scheme B)", () => {
       const prompt = buildSubagentUserPrompt("do follow-up", {
         taskId: "task-x",
         parentSessionId: "s",
-        role: "tester",
+        role: "verifier",
         goal: "follow-up",
         scope: { include: ["docs/**"], exclude: [] },
         acceptanceCriteria: ["ok"],
@@ -795,12 +794,12 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const taskA = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
         customSession: createMockSession(explorationMessages()),
-        taskContract: { taskId: taskIdA, parentSessionId, role: "tester", goal: "Do A" },
+        taskContract: { taskId: taskIdA, parentSessionId, role: "verifier", goal: "Do A" },
       });
       await manager.handleSubagentCompletion(taskIdA);
 
@@ -841,12 +840,12 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const taskA = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
         customSession: createMockSession(explorationMessages()),
-        taskContract: { taskId: taskIdA, parentSessionId, role: "tester", goal: "Do A" },
+        taskContract: { taskId: taskIdA, parentSessionId, role: "verifier", goal: "Do A" },
       });
       await manager.handleSubagentCompletion(taskIdA);
       const agentId = taskA.agentId!;
@@ -882,12 +881,12 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const taskA = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
         customSession: createMockSession(explorationMessages()),
-        taskContract: { taskId: taskIdA, parentSessionId, role: "tester", goal: "Do A" },
+        taskContract: { taskId: taskIdA, parentSessionId, role: "verifier", goal: "Do A" },
       });
       await manager.handleSubagentCompletion(taskIdA);
       const agentId = taskA.agentId!;
@@ -918,12 +917,12 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const taskA = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Spike A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
         customSession: createMockSession(explorationMessages()),
-        taskContract: { taskId: taskIdA, parentSessionId, role: "tester", goal: "Do A" },
+        taskContract: { taskId: taskIdA, parentSessionId, role: "verifier", goal: "Do A" },
       });
       await manager.handleSubagentCompletion(taskIdA);
       const agentId = taskA.agentId!;
@@ -951,12 +950,12 @@ describe("Reusable Subagent (Scheme B)", () => {
 
       const taskA = await manager.spawn({
         parentSessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task A Failed",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
         customSession: createMockSession(explorationMessages()),
-        taskContract: { taskId: taskIdA, parentSessionId, role: "tester", goal: "Do A" },
+        taskContract: { taskId: taskIdA, parentSessionId, role: "verifier", goal: "Do A" },
       });
       taskA.status = "completed";
       taskA.verification = { diff: { name: "diff", status: "fail" }, scope: { name: "scope", status: "pass" }, commands: [], overall: "fail" };

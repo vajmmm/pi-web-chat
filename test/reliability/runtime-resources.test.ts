@@ -223,7 +223,7 @@ export function registerRuntimeResourcesTests(getGitRepoDir: () => string) {
       const taskId = `task-cs-${Date.now()}`;
       const task = await subagentManager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Cleanup failsafe task",
         taskPrompt: "Create file_cs.ts",
         parentCwd: gitRepoDir,
@@ -231,7 +231,7 @@ export function registerRuntimeResourcesTests(getGitRepoDir: () => string) {
         taskContract: {
           taskId,
           parentSessionId: sessionId,
-          role: "junior_fe",
+          role: "developer",
           goal: "Create file_cs.ts",
         },
       });

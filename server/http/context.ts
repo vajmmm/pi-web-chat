@@ -8,7 +8,6 @@ export interface ServerContext {
   sessionRegistry: SessionRegistry;
   subagentManager: SubagentManager;
   getModelRuntime: () => ModelRuntime;
-  get modelRuntime(): ModelRuntime;
   homeDir: string;
   agentCwd: string;
   distDir: string;

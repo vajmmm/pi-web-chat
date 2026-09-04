@@ -22,10 +22,11 @@ import { installTurnRecorderOnSession } from "./turn-recorder.ts";
 import { readCustomModels } from "./models-config.ts";
 import { sanitizeEmptyAvailableModelIds } from "./auth-config.ts";
 import { SubagentManager } from "./subagent-manager.ts";
-import { getCurrentGitBranch, resolveGitRepoRoot } from "./worktree.ts";
+import { getCurrentGitBranch, recoverRuntimeResources, resolveGitRepoRoot } from "./worktree.ts";
 import { registerKnownProjectPath } from "./projects.ts";
 import {
   applyRoleToSession,
+  isPendingDeletion,
   resolveSessionPath,
   sessionIdOf,
   SessionRegistry,
@@ -87,6 +88,16 @@ sanitizeEmptyAvailableModelIds();
 let modelRuntime = await ModelRuntime.create();
 const subagentManager = new SubagentManager(modelRuntime);
 
+// Startup recovery of persisted git runtime resources
+try {
+  const root = await resolveGitRepoRoot(AGENT_CWD);
+  if (root) {
+    await recoverRuntimeResources(root);
+  }
+} catch {
+  /* best effort on startup */
+}
+
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({
     cwd,
@@ -108,16 +119,51 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
                 broadcastTo(currentEntry, { type: "subagent_updated", task });
               }
             },
-            onReport: (task, reportText) => {
-              if (currentEntry) {
-                broadcastTo(currentEntry, { type: "subagent_reported", task, reportText });
-                if (currentEntry.runtime.session.isStreaming) {
-                  currentEntry.pendingReports.push(reportText);
-                  subagentManager.notifyCoordinatorReportPending(currentEntry.id, 1);
+            onReport: async (
+              task: any,
+              reportText: string,
+              metadata?: { kind?: "terminal" | "blocker" },
+            ) => {
+              if (!currentEntry) return;
+              broadcastTo(currentEntry, { type: "subagent_reported", task, reportText });
+
+              if (subagentManager.isDeleting(currentEntry.id) || isPendingDeletion(currentEntry.id)) {
+                return;
+              }
+
+              const session = currentEntry.runtime.session;
+              const isBlocker = metadata?.kind === "blocker";
+              const mode = isBlocker ? "steer" : "followUp";
+
+              if (session.isStreaming) {
+                const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                if (!currentEntry.queuedMessages) currentEntry.queuedMessages = [];
+                currentEntry.queuedMessages.push({
+                  id,
+                  text: reportText,
+                  mode,
+                  createdAt: new Date().toISOString(),
+                  source: "subagent",
+                  taskId: task.taskId,
+                  taskTitle: task.taskTitle,
+                  role: task.role,
+                  taskStatus: task.status,
+                  kind: isBlocker ? "subagent_blocker" : "subagent_terminal",
+                });
+                if (isBlocker) {
+                  await session.steer(reportText);
                 } else {
-                  subagentManager.notifyCoordinatorTurnStart(currentEntry.id);
-                  currentEntry.runtime.session.prompt(reportText).catch(console.error);
+                  await session.followUp(reportText);
                 }
+                broadcastSnapshot(currentEntry);
+              } else {
+                sessionRegistry.trackInFlightOp(currentEntry.id, async () => {
+                  try {
+                    await session.prompt(reportText);
+                  } catch (err) {
+                    console.error(`[onReport] Failed to prompt report for ${currentEntry.id}:`, err);
+                  }
+                });
               }
             },
           };
@@ -135,7 +181,16 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
 const sessionRegistry = new SessionRegistry();
 const entries = sessionRegistry.entries;
 const wsEntry = sessionRegistry.wsEntry;
-sessionRegistry.startIdlePruning();
+sessionRegistry.isDeleting = (id) => subagentManager.isDeleting(id) || isPendingDeletion(id);
+
+sessionRegistry.startIdlePruning((sessionId) => {
+  if (isPendingDeletion(sessionId) || subagentManager.isDeleting(sessionId)) return false;
+  if (subagentManager.hasActiveTasksForParent(sessionId)) return false;
+  if (subagentManager.isCoordinatorActive(sessionId)) return false;
+  const entry = sessionRegistry.get(sessionId);
+  if (entry?.queuedMessages && entry.queuedMessages.length > 0) return false;
+  return true;
+});
 
 function broadcastSnapshot(entry: SessionEntry) {
   broadcastEntrySnapshot(entry, subagentManager);
@@ -164,7 +219,7 @@ async function createEntry(id: string | null, customCwd?: string): Promise<Sessi
     cwd: effectiveCwd,
     isGitRepo: !!repoRoot,
     gitBranch,
-    pendingReports: [],
+    queuedMessages: [],
   };
   applyRoleToSession(entry, entry.activeRole);
   installTurnRecorderOnSession(runtime.session, () => entry.id);
@@ -192,26 +247,29 @@ async function reloadModelProviders(providers: UICustomProvider[]): Promise<stri
 
   try {
     for (const entry of entries.values()) {
-      const sessionModels = entry.runtime.services.modelRuntime;
-      for (const key of previousKeys) {
-        if (!knownCustomProviderKeys.has(key)) sessionModels.unregisterProvider(key);
-      }
-      for (const p of providers) {
-        sessionModels.registerProvider(p.key, {
-          baseUrl: p.baseUrl,
-          apiKey: p.apiKey,
-          api: p.api,
-          models: p.models.map((m) => ({
-            id: m.id,
-            name: m.name ?? m.id,
-            reasoning: m.reasoning ?? false,
-            input: m.input && m.input.length > 0 ? m.input : ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: m.contextWindow ?? 128_000,
-            maxTokens: m.maxTokens ?? 131_072,
-          })),
-        });
-      }
+      if (isPendingDeletion(entry.id) || subagentManager.isDeleting(entry.id)) continue;
+      await sessionRegistry.trackInFlightOp(entry.id, async () => {
+        const sessionModels = entry.runtime.services.modelRuntime;
+        for (const key of previousKeys) {
+          if (!knownCustomProviderKeys.has(key)) sessionModels.unregisterProvider(key);
+        }
+        for (const p of providers) {
+          sessionModels.registerProvider(p.key, {
+            baseUrl: p.baseUrl,
+            apiKey: p.apiKey,
+            api: p.api,
+            models: p.models.map((m) => ({
+              id: m.id,
+              name: m.name ?? m.id,
+              reasoning: m.reasoning ?? false,
+              input: m.input && m.input.length > 0 ? m.input : ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: m.contextWindow ?? 128_000,
+              maxTokens: m.maxTokens ?? 131_072,
+            })),
+          });
+        }
+      });
     }
   } catch (err) {
     return `models.json saved, but live reload failed (restart pi --web to apply): ${
@@ -228,9 +286,6 @@ const serverContext: ServerContext = {
   sessionRegistry,
   subagentManager,
   getModelRuntime: () => modelRuntime,
-  get modelRuntime() {
-    return modelRuntime;
-  },
   homeDir: HOME,
   agentCwd: AGENT_CWD,
   distDir: DIST_DIR,
@@ -259,9 +314,6 @@ wss.on("connection", (ws, req) => {
     sessionRegistry,
     subagentManager,
     getModelRuntime: () => modelRuntime,
-    get modelRuntime() {
-      return modelRuntime;
-    },
     homeDir: HOME,
     agentCwd: AGENT_CWD,
     createRuntime,

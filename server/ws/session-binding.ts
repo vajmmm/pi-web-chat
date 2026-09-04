@@ -9,7 +9,7 @@ export function bindSessionEvents(
   subagentManager: SubagentManager,
 ): void {
   entry.unsubscribe?.();
-  entry.unsubscribe = entry.runtime.session.subscribe((event) => {
+  entry.unsubscribe = entry.runtime.session.subscribe(async (event) => {
     entry.lastActive = Date.now();
     const broadcast = (e: ServerEvent) => broadcastTo(entry, e);
     switch (event.type) {
@@ -47,24 +47,49 @@ export function bindSessionEvents(
         snap.isStreaming = false;
         broadcast({ type: "snapshot", snapshot: snap });
 
-        // 检查并消费子任务主动上报队列
-        if (entry.pendingReports.length > 0) {
-          const nextReport = entry.pendingReports.shift();
-          subagentManager.notifyCoordinatorReportConsumed(entry.id);
-          if (nextReport) {
-            setTimeout(() => {
-              subagentManager.notifyCoordinatorTurnStart(entry.id);
-              entry.runtime.session
-                .prompt(nextReport, {
-                  ...(entry.runtime.session.isStreaming ? { streamingBehavior: "followUp" as const } : {}),
-                })
-                .catch(console.error);
-            }, 200);
+        // 标记 Coordinator 当前 turn 结束
+        subagentManager.notifyCoordinatorTurnEnd(entry.id);
+
+        // 若队列已空且 Coordinator 空闲，触发 Auto Finalize 检查
+        if (!entry.queuedMessages || entry.queuedMessages.length === 0) {
+          if (subagentManager.autoFinalize) {
+            await subagentManager.tryAutoFinalizeRun(entry.id);
           }
-        } else {
-          // Coordinator Safe Boundary: 当前 Turn 已完整结束且没有等待消费的汇报
-          subagentManager.notifyCoordinatorTurnEnd(entry.id, { hasPendingReports: false }).catch(console.error);
         }
+        break;
+      }
+      case "queue_update": {
+        const steering = ((event as any).steering as string[]) ?? [];
+        const followUp = ((event as any).followUp as string[]) ?? [];
+        const remainingFollowUps = [...followUp];
+        const remainingSteerings = [...steering];
+        const newQueuedList: typeof entry.queuedMessages = [];
+
+        if (entry.queuedMessages) {
+          for (const item of entry.queuedMessages) {
+            if (item.mode === "steer") {
+              const idx = remainingSteerings.indexOf(item.text);
+              if (idx !== -1) {
+                newQueuedList.push(item);
+                remainingSteerings.splice(idx, 1);
+              }
+            } else {
+              const idx = remainingFollowUps.indexOf(item.text);
+              if (idx !== -1) {
+                newQueuedList.push(item);
+                remainingFollowUps.splice(idx, 1);
+              }
+            }
+          }
+        }
+        for (const s of remainingSteerings) {
+          newQueuedList.push({ id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: s, mode: "steer", createdAt: new Date().toISOString() });
+        }
+        for (const f of remainingFollowUps) {
+          newQueuedList.push({ id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: f, mode: "followUp", createdAt: new Date().toISOString() });
+        }
+        entry.queuedMessages = newQueuedList;
+        broadcastSnapshot(entry, subagentManager);
         break;
       }
     }

@@ -12,20 +12,24 @@ import {
   canonicalizePath,
   ConstraintResolver,
   DEFAULT_ROLES_V2,
-  generateV2MigrationCandidate,
+  convertDefinitionToConfig,
+  CURRENT_ROLE_DEFINITION_VERSION,
+  CANONICAL_ROLES,
+  getAllRoleDefinitions,
+  getRoleConfig,
   getRoleDefinition,
+  isCanonicalRole,
   isPathContained,
-  normalizeRoleToV2,
   PromptAssembler,
   RoleRegistry,
   rolesPath,
   SHARED_DEFAULTS,
   SHARED_INVARIANTS,
-  type RoleConfigV1,
   type RoleConfigV2,
   type TaskContract,
 } from "../server/contracts/index.ts";
 import { saveRolesConfig } from "../server/roles.ts";
+import { tryParseReviewResult } from "../server/subagent-manager.ts";
 import {
   deleteAuthCredential,
   readAuthCredentials,
@@ -67,98 +71,141 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
     });
   });
 
-  describe("2. RoleDefinition V2 & Standard Mode", () => {
-    it("should have standard built-in V2 roles with clean prompt breakdown, baseline-first and instructions", () => {
+  describe("2. RoleDefinition V2 & Converged 4-Role System", () => {
+    it("1. should have only Coordinator, Developer, Verifier, Researcher (and default) as default built-in V2 roles", () => {
       RoleRegistry.getInstance().reload();
 
-      const requiredRoles = ["coordinator", "junior_fe", "junior_be", "fullstack", "reviewer", "tester", "deployer", "default"];
-      for (const roleId of requiredRoles) {
-        const def = getRoleDefinition(roleId as any);
-        assert.ok(def, `Role definition for ${roleId} must exist`);
-        assert.ok(def.description.length > 0, `${roleId} must have non-empty description`);
-        assert.ok(def.responsibilities.length >= 1, `${roleId} must have at least 1 responsibility`);
-        assert.ok(typeof def.instructions === "string" && def.instructions.length > 0, `${roleId} must have non-empty instructions`);
+      const defaultRoleKeys = Object.keys(DEFAULT_ROLES_V2).sort();
+      assert.deepEqual(
+        defaultRoleKeys,
+        ["coordinator", "default", "developer", "researcher", "verifier"].sort(),
+        "DEFAULT_ROLES_V2 must only contain coordinator, developer, verifier, researcher, and default",
+      );
+
+      const definitions = getAllRoleDefinitions();
+      const defIds = definitions.map((d) => d.id).sort();
+      assert.deepEqual(
+        defIds,
+        ["coordinator", "default", "developer", "researcher", "verifier"].sort(),
+        "Built-in role definitions must only be coordinator, developer, verifier, researcher, and default",
+      );
+
+      for (const def of definitions) {
+        assert.ok(def.description.length > 0, `${def.id} must have non-empty description`);
+        assert.ok(def.responsibilities.length >= 1, `${def.id} must have at least 1 responsibility`);
+        assert.ok(typeof def.instructions === "string" && def.instructions.length > 0, `${def.id} must have non-empty instructions`);
       }
-
-      const defaultRole = getRoleDefinition("default");
-      assert.ok(defaultRole.instructions?.includes("You are the primary software engineering agent in Pi Standard Mode"));
-      assert.ok(defaultRole.instructions?.includes("Baseline"));
-
-      const fe = getRoleDefinition("junior_fe");
-      assert.equal(fe.name, "前端开发 (Frontend Engineer)");
-      assert.equal(fe.requiresWorktree, true, "Write role junior_fe must default to requiresWorktree: true");
-      assert.ok(fe.instructions?.includes("Baseline"));
-
-      const be = getRoleDefinition("junior_be");
-      assert.equal(be.name, "后端开发 (Backend Engineer)");
-      assert.equal(be.requiresWorktree, true, "Write role junior_be must default to requiresWorktree: true");
-      assert.ok(be.instructions?.includes("Baseline"));
-
-      const fullstack = getRoleDefinition("fullstack");
-      assert.ok(fullstack.instructions?.includes("Baseline"));
-
-      const coordinator = getRoleDefinition("coordinator");
-      assert.ok(coordinator.instructions?.includes("DISCOVER → DELEGATE → VERIFY → COMPLETE"));
-      assert.ok(coordinator.instructions?.includes("Baseline"));
-      assert.ok(coordinator.instructions?.includes("任务粒度与拆分原则"));
-      assert.ok(coordinator.instructions?.includes("Working Memory 不跨 Task 继承"));
-      assert.ok(!coordinator.instructions?.includes("200k"));
-      assert.ok(!coordinator.instructions?.includes("200+"));
-      assert.ok(coordinator.responsibilities.some((r) => r.includes("任务粒度原则")));
-      assert.ok(coordinator.responsibilities.some((r) => r.includes("跨 Task 则通过 ReusableSubagent Knowledge")));
-      assert.ok(coordinator.strictProhibitions.some((p) => p.includes("禁止直接编写")));
-      assert.ok(coordinator.strictProhibitions.some((p) => p.includes("无法复现")));
-      assert.ok(coordinator.strictProhibitions.some((p) => p.includes("禁止将多个可以独立调查验证交付的异构子系统")));
-      assert.equal(coordinator.requiresWorktree, false, "Coordinator must not require worktree");
-
-      const reviewer = getRoleDefinition("reviewer");
-      assert.ok(reviewer.instructions?.includes("APPROVE"));
-      assert.ok(reviewer.instructions?.includes("baseline"));
-      assert.ok(reviewer.instructions?.includes("行号仅为定位辅助"));
-      assert.ok(reviewer.strictProhibitions.some((p) => p.includes("禁止因报告缺少固定 Baseline 模板")));
-      assert.ok(reviewer.strictProhibitions.some((p) => p.includes("禁止因非关键源码行号轻微偏差")));
-      assert.equal(reviewer.requiresWorktree, false, "Reviewer must not require worktree");
-
-      const tester = getRoleDefinition("tester");
-      assert.ok(tester.instructions?.includes("Before / After"));
-      assert.ok(tester.instructions?.includes("源码证据与符号锚定"));
-      assert.ok(tester.responsibilities.some((r) => r.includes("Before / After")));
-      assert.ok(tester.strictProhibitions.some((p) => p.includes("禁止在源码未变化时，为了反复核对微小行号差异重复读取源码")));
     });
 
-    it("should normalize legacy V1 config without destructive heuristic loss", () => {
-      const legacyV1: RoleConfigV1 = {
-        id: "junior_fe",
-        name: "自定义前端",
-        description: "自定义描述",
-        systemPrompt: "legacy prompt text",
-        allowedTools: ["read", "bash"],
-        requiresWorktree: true,
-      };
-
-      const normalized = normalizeRoleToV2(legacyV1);
-      assert.equal(normalized.id, "junior_fe");
-      assert.equal(normalized.name, "自定义前端");
-      assert.equal(normalized.isLegacy, true);
-      assert.equal(normalized.requiresWorktree, true);
-      assert.ok(normalized.responsibilities.length > 0);
-    });
-
-    it("should generate migration candidate file without overwriting existing files", () => {
-      const v1List: RoleConfigV1[] = [
-        {
-          id: "reviewer",
-          name: "Old Reviewer",
-          description: "Old Desc",
-          systemPrompt: "old",
-          requiresWorktree: false,
-        },
+    it("2. should reject legacy role IDs as invalid and refuse execution (fail-closed)", () => {
+      const legacyIds = [
+        "junior_fe",
+        "junior_be",
+        "fullstack",
+        "deployer",
+        "frontend_developer",
+        "backend_developer",
+        "implementer",
+        "debugger",
+        "reviewer",
+        "tester",
+        "acceptance",
+        "acceptance_reviewer",
       ];
-      const result = generateV2MigrationCandidate(v1List);
-      assert.ok(result.candidatePath.includes("roles.v2.generated.json"));
-      assert.equal(result.v2Roles.length, 1);
-      assert.equal(result.v2Roles[0].schemaVersion, 2);
-      assert.equal(result.v2Roles[0].definition.id, "reviewer");
+
+      for (const id of legacyIds) {
+        assert.equal(isCanonicalRole(id), false, `${id} must not be a canonical role`);
+        assert.throws(
+          () => getRoleDefinition(id as any),
+          /Unknown or invalid role/,
+          `getRoleDefinition(${id}) must throw`,
+        );
+        assert.throws(
+          () => getRoleConfig(id as any),
+          /Unknown or invalid role/,
+          `getRoleConfig(${id}) must throw`,
+        );
+      }
+    });
+
+    it("4 & 5. Coordinator role instructions explicitly state delegation is optional and prioritize doing it themselves when small/localized", () => {
+      const coordinator = getRoleDefinition("coordinator");
+      const coordinatorCfg = getRoleConfig("coordinator");
+      assert.ok(
+        coordinator.instructions?.includes("Delegation is optional, not a goal"),
+        "Coordinator instructions must explicitly declare 'Delegation is optional, not a goal'",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("优先自己完成"),
+        "Coordinator instructions must detail when to finish tasks themselves without subagents",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Behavior-Complete Outcome"),
+        "Coordinator instructions must emphasize behavior-complete task decomposition",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Risk-Based Verification"),
+        "Coordinator instructions must define risk-based verification rather than mandatory verifier",
+      );
+      assert.ok(
+        coordinator.responsibilities.some((r) => r.includes("Delegation is optional")),
+        "Coordinator responsibilities must include 'Delegation is optional'",
+      );
+      assert.ok(
+        coordinator.strictProhibitions.some((p) => p.includes("禁止默认将所有工作拆分并委派给 Subagent")),
+        "Coordinator must prohibit defaulting to subagent delegation",
+      );
+      assert.ok(
+        coordinator.strictProhibitions.some((p) => p.includes("禁止拆分缺乏独立验证与验收闭环的微任务")),
+        "Coordinator must prohibit decomposing micro-tasks without independent closure",
+      );
+      assert.equal(coordinator.requiresWorktree, false, "Coordinator must not require worktree");
+      assert.equal((coordinator as any).allowedTools, undefined);
+      assert.ok(coordinatorCfg.allowedTools?.includes("spawn_subagent"));
+    });
+
+    it("6. Developer Role handles frontend, backend, and debug tasks with root cause and baseline evidence", () => {
+      const developer = getRoleDefinition("developer");
+      const developerCfg = getRoleConfig("developer");
+      assert.equal(developer.id, "developer");
+      assert.equal(developer.name, "开发工程师 (Developer)");
+      assert.equal(developer.requiresWorktree, true, "Developer requires isolated worktree");
+      assert.equal((developer as any).allowedTools, undefined);
+      assert.deepEqual(developerCfg.allowedTools, ["read", "bash", "edit", "write", "report_blocker"]);
+      assert.ok(developer.responsibilities.some((r) => r.includes("前端、后端或全栈")));
+      assert.ok(developer.responsibilities.some((r) => r.includes("Baseline")));
+      assert.ok(developer.instructions?.includes("Contract → Root Cause → Minimal Change → Verification → Evidence"));
+      assert.ok(developer.instructions?.includes("Baseline"));
+      assert.ok(developer.strictProhibitions.some((p) => p.includes("禁止在没有复现或代码证据的情况下盲目猜测修改")));
+    });
+
+    it("7. Verifier Role only performs verification without implementing code", () => {
+      const verifier = getRoleDefinition("verifier");
+      const verifierCfg = getRoleConfig("verifier");
+      assert.equal(verifier.id, "verifier");
+      assert.equal(verifier.name, "验证者 (Verifier)");
+      assert.equal(verifier.requiresWorktree, false, "Verifier does not require separate task worktree");
+      assert.equal((verifier as any).allowedTools, undefined);
+      assert.deepEqual(verifierCfg.allowedTools, ["read", "bash", "report_blocker"]);
+      assert.ok(verifier.strictProhibitions.some((p) => p.includes("默认禁止直接修改业务代码或替 Developer 修复问题")));
+      assert.ok(verifier.instructions?.includes("PASS"));
+      assert.ok(verifier.instructions?.includes("REWORK"));
+      assert.ok(verifier.instructions?.includes("verdict"));
+    });
+
+    it("8. Researcher Role performs technical research without implementation", () => {
+      const researcher = getRoleDefinition("researcher");
+      const researcherCfg = getRoleConfig("researcher");
+      assert.equal(researcher.id, "researcher");
+      assert.equal(researcher.name, "调研员 (Researcher)");
+      assert.equal(researcher.requiresWorktree, false, "Researcher does not require worktree");
+      assert.equal((researcher as any).allowedTools, undefined);
+      assert.deepEqual(researcherCfg.allowedTools, ["read", "bash", "report_blocker"]);
+      assert.ok(researcher.strictProhibitions.some((p) => p.includes("默认禁止编写业务生产代码或承担主实现工作")));
+      assert.ok(researcher.instructions?.includes("Findings"));
+      assert.ok(researcher.instructions?.includes("Evidence"));
+      assert.ok(researcher.instructions?.includes("Recommendation"));
+      assert.ok(researcher.instructions?.includes("Uncertainties"));
     });
   });
 
@@ -167,7 +214,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       const contract: TaskContract = {
         taskId: "task-001",
         parentSessionId: "session-001",
-        role: "reviewer",
+        role: "verifier",
         goal: "重构登录模块",
         constraints: [
           "禁止使用外部依赖",
@@ -178,12 +225,12 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       };
 
       const context = ConstraintResolver.resolve({
-        role: "reviewer",
+        role: "verifier",
         cwd: "/tmp/project",
         taskContract: contract,
       });
 
-      assert.equal(context.role.id, "reviewer");
+      assert.equal(context.role.id, "verifier");
       assert.deepEqual(context.runtime.activeTools, ["read", "bash", "report_blocker"]);
       assert.equal(context.runtime.requiresWorktree, false);
       assert.deepEqual(context.taskContract?.constraints, contract.constraints);
@@ -191,20 +238,19 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
 
     it("should keep activeTools as empty array when allowedTools is explicitly [] without falling back to full tools", () => {
       const registry = RoleRegistry.getInstance();
-      const reviewer = registry.getRole("reviewer");
+      const verifier = registry.getRole("verifier");
       const emptyToolsRole: RoleConfigV2 = {
-        ...reviewer,
+        ...verifier,
         allowedTools: [],
         definition: {
-          ...reviewer.definition,
-          allowedTools: [],
+          ...verifier.definition,
         },
       };
 
       saveRolesConfig([emptyToolsRole]);
       RoleRegistry.getInstance().reload();
       const context = ConstraintResolver.resolve({
-        role: "reviewer",
+        role: "verifier",
         cwd: "/tmp/project",
       });
 
@@ -212,8 +258,89 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.equal(context.runtime.activeTools.length, 0);
 
       // 恢复正常 roles
-      saveRolesConfig(Object.values(DEFAULT_ROLES_V2));
+      saveRolesConfig(Object.values(DEFAULT_ROLES_V2).map((d) => convertDefinitionToConfig(d)));
       RoleRegistry.getInstance().reload();
+    });
+
+    it("should refuse to overwrite canonical Role Definition when disk roles.json has outdated definitionVersion", () => {
+      const registry = RoleRegistry.getInstance();
+      const rolesFile = rolesPath();
+      const outdatedDiskPayload = [
+        {
+          schemaVersion: 2,
+          roleDefinitionVersion: 1, // 旧版本号
+          id: "coordinator",
+          name: "Old Coordinator Name",
+          definition: {
+            id: "coordinator",
+            definitionVersion: 1,
+            name: "Old Coordinator",
+            description: "Old description",
+            responsibilities: ["根据 Reviewer / Tester 的结果组织返工与协调。"],
+            strictProhibitions: ["禁止让 Reviewer / Tester 演变成负责修复问题的第二个 Fullstack Agent。"],
+            instructions: "根据任务专业领域选择最合适的角色：Frontend (junior_fe), Backend (junior_be), Fullstack, Reviewer, Tester, Deployer",
+          },
+        },
+      ];
+
+      writeFileSync(rolesFile, JSON.stringify(outdatedDiskPayload, null, 2), "utf8");
+      registry.reload();
+
+      const coordinatorDef = registry.getDefinition("coordinator");
+      assert.equal(coordinatorDef.definitionVersion, CURRENT_ROLE_DEFINITION_VERSION);
+      // 验证旧角色体系被彻底拒绝，未覆盖 canonical
+      assert.ok(!coordinatorDef.instructions?.includes("junior_fe"));
+      assert.ok(!coordinatorDef.instructions?.includes("junior_be"));
+      assert.ok(!coordinatorDef.instructions?.includes("Deployer"));
+      assert.ok(coordinatorDef.instructions?.includes("Developer"));
+      assert.ok(coordinatorDef.instructions?.includes("Verifier"));
+      assert.ok(coordinatorDef.instructions?.includes("Researcher"));
+      assert.ok(!coordinatorDef.responsibilities.some((r) => r.includes("Reviewer")));
+
+      // 恢复正常 roles
+      saveRolesConfig(Object.values(DEFAULT_ROLES_V2).map((d) => convertDefinitionToConfig(d)));
+      registry.reload();
+    });
+
+    it("should parse Verifier PASS as canonical APPROVE and REWORK as canonical REQUEST_CHANGES", () => {
+      const passOutput = `\`\`\`json
+{
+  "verdict": "PASS",
+  "findings": []
+}
+\`\`\``;
+      const passResult = tryParseReviewResult(passOutput);
+      assert.ok(passResult);
+      assert.equal(passResult.verdict, "APPROVE");
+      assert.equal(passResult.onlyMinorFindings, true);
+
+      const reworkOutput = `\`\`\`json
+{
+  "verdict": "REWORK",
+  "findings": [
+    {
+      "id": "finding-1",
+      "severity": "blocker",
+      "file": "server/index.ts",
+      "problem": "Uncaught null pointer",
+      "evidence": "index.ts:42",
+      "suggestedFix": "Add null check"
+    }
+  ]
+}
+\`\`\``;
+      const reworkResult = tryParseReviewResult(reworkOutput);
+      assert.ok(reworkResult);
+      assert.equal(reworkResult.verdict, "REQUEST_CHANGES");
+      assert.equal(reworkResult.findings[0]?.suggestedFix, "Add null check");
+      assert.equal(reworkResult.onlyMinorFindings, false);
+
+      // 文本 fallback
+      const passFallback = tryParseReviewResult("经过仔细测试验证，所有检查全部 PASS！");
+      assert.equal(passFallback?.verdict, "APPROVE");
+
+      const reworkFallback = tryParseReviewResult("测试失败，需要 REWORK 并修复！");
+      assert.equal(reworkFallback?.verdict, "REQUEST_CHANGES");
     });
 
     it("should verify Standard Mode default role has no report_blocker tool", () => {
@@ -253,13 +380,13 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       const contract: TaskContract = {
         taskId: "task-003",
         parentSessionId: "session-001",
-        role: "fullstack",
+        role: "developer",
         goal: "全栈特性",
         acceptanceCriteria: ["通过联调"],
       };
 
       const context = ConstraintResolver.resolve({
-        role: "fullstack",
+        role: "developer",
         cwd: "/tmp/project",
         taskContract: contract,
       });
@@ -282,7 +409,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
     it("should guarantee System Prompt prefix stability across consecutive tasks with different worktrees, branches, and taskIds", () => {
       // Task A
       const contextA = ConstraintResolver.resolve({
-        role: "tester",
+        role: "verifier",
         cwd: "/Users/dev/project/.pi/agent/worktrees/task-A",
         projectRoot: "/Users/dev/project",
         branchName: "pi-subagent-task-A",
@@ -290,14 +417,14 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         taskContract: {
           taskId: "task-A",
           parentSessionId: "session-1",
-          role: "tester",
+          role: "verifier",
           goal: "Verify subagent CK isolation",
         },
       });
 
       // Task B
       const contextB = ConstraintResolver.resolve({
-        role: "tester",
+        role: "verifier",
         cwd: "/Users/dev/project/.pi/agent/worktrees/task-B",
         projectRoot: "/Users/dev/project",
         branchName: "pi-subagent-task-B",
@@ -305,14 +432,14 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         taskContract: {
           taskId: "task-B",
           parentSessionId: "session-1",
-          role: "tester",
+          role: "verifier",
           goal: "Verify subagent MinIO backup",
         },
       });
 
       // Task C
       const contextC = ConstraintResolver.resolve({
-        role: "tester",
+        role: "verifier",
         cwd: "/Users/dev/project/.pi/agent/worktrees/task-C",
         projectRoot: "/Users/dev/project",
         branchName: "pi-subagent-task-C",
@@ -320,7 +447,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         taskContract: {
           taskId: "task-C",
           parentSessionId: "session-1",
-          role: "tester",
+          role: "verifier",
           goal: "Verify subagent log allowlist",
         },
       });

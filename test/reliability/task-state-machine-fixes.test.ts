@@ -38,7 +38,8 @@ import {
   buildBoundedCompletionReport,
 } from "../../server/subagent-report.ts";
 import { subagentTasks, SubagentManager } from "../../server/subagent-manager.ts";
-import { isTaskExecutionSatisfied, isTaskLineageSatisfied } from "../../server/task-graph.ts";
+import { bindSessionEvents } from "../../server/ws/session-binding.ts";
+import { SessionRegistry } from "../../server/session/session-registry.ts";
 import {
   captureWorkingTreePathSnapshots,
   cleanupRunResources,
@@ -72,7 +73,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -104,7 +105,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -137,7 +138,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
         () =>
           manager.spawn({
             parentSessionId: sessionId,
-            role: "junior_fe",
+            role: "developer",
             taskTitle: "Task B",
             taskPrompt: "Fix non-existent",
             parentCwd: gitRepoDir,
@@ -156,7 +157,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: session1,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -168,7 +169,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
         () =>
           manager.spawn({
             parentSessionId: session2,
-            role: "junior_fe",
+            role: "developer",
             taskTitle: "Task B",
             taskPrompt: "Fix A in other session",
             parentCwd: gitRepoDir,
@@ -186,7 +187,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -198,7 +199,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
         () =>
           manager.spawn({
             parentSessionId: sessionId,
-            role: "junior_fe",
+            role: "developer",
             taskTitle: "Task B",
             taskPrompt: "Fix running A",
             parentCwd: gitRepoDir,
@@ -218,7 +219,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
         () =>
           manager.spawn({
             parentSessionId: sessionId,
-            role: "junior_fe",
+            role: "developer",
             taskTitle: "Task Self",
             taskPrompt: "Self",
             parentCwd: gitRepoDir,
@@ -226,7 +227,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
             taskContract: {
               taskId: "task-self-cycle",
               parentSessionId: sessionId,
-              role: "junior_fe",
+              role: "developer",
               goal: "Self",
               reworkOfTaskId: "task-self-cycle",
             },
@@ -242,7 +243,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -252,7 +253,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B (Rework A)",
         taskPrompt: "Fix A",
         parentCwd: gitRepoDir,
@@ -267,7 +268,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
         () =>
           manager.spawn({
             parentSessionId: sessionId,
-            role: "junior_fe",
+            role: "developer",
             taskTitle: "Task C (Fork Rework A)",
             taskPrompt: "Fork A",
             parentCwd: gitRepoDir,
@@ -285,7 +286,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -299,7 +300,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
       // Create rework B which is running
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Rework A",
         parentCwd: gitRepoDir,
@@ -319,7 +320,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -330,7 +331,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Rework A",
         parentCwd: gitRepoDir,
@@ -350,7 +351,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -361,7 +362,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Rework A",
         parentCwd: gitRepoDir,
@@ -381,7 +382,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -392,7 +393,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskB = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task B",
         taskPrompt: "Rework A",
         parentCwd: gitRepoDir,
@@ -404,7 +405,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
 
       const taskC = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task C",
         taskPrompt: "Rework B",
         parentCwd: gitRepoDir,
@@ -422,7 +423,21 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
     // 12. 真实自动 Finalize: 不需要手工调用 tryAutoFinalizeRun, 模拟 Coordinator lifecycle 自动触发
     it("Scenario 12: Real lifecycle auto-finalizes at coordinator safe boundary without explicit finalize calls", async () => {
       const sessionId = `session-scen12-${Date.now()}`;
+      const registry = new SessionRegistry();
       const manager = new SubagentManager(mockModelRuntime);
+      const entry = {
+        id: sessionId,
+        runtime: { session: createMockSession(), dispose: async () => {}, switchSession: async () => {} } as any,
+        clients: new Set(),
+        lastActive: Date.now(),
+        published: true,
+        activeRole: "coordinator",
+        cwd: gitRepoDir,
+        isGitRepo: true,
+        queuedMessages: [],
+      };
+      registry.set(sessionId, entry as any);
+      bindSessionEvents(entry as any, manager);
 
       // Coordinator starts initial orchestration
       manager.notifyCoordinatorTurnStart(sessionId);
@@ -430,7 +445,7 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
       // Spawn task
       const task = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task E2E",
         taskPrompt: "Do E2E",
         parentCwd: gitRepoDir,
@@ -445,25 +460,37 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
       // Subagent completion: report generated, but Coordinator has not finished turn
       assert.equal(manager.isRunFinalized(sessionId), false);
 
-      // Coordinator consumes report and turn ends with no new tasks (Safe Boundary)
-      const finRes = await manager.notifyCoordinatorTurnEnd(sessionId, { hasPendingReports: false });
+      // Coordinator turn ends with empty message queue
+      await entry.runtime.session.emit({ type: "agent_end" });
 
-      // Verified: Automatically finalized without calling tryAutoFinalizeRun or finalize tool!
-      assert.ok(finRes);
-      assert.equal(finRes.success, true);
+      // Verified: Automatically finalized on agent_end without calling tryAutoFinalizeRun or finalize tool!
       assert.equal(manager.isRunFinalized(sessionId), true);
     });
 
-    // 13. Coordinator 尚未消费结果时不能提前 Finalize: 最后一个 Task PASS -> report 尚未交付 -> User Workspace 尚未 finalize
+    // 13. Coordinator 尚未消费结果时不能提前 Finalize: 消息队列有未消费内容 -> User Workspace 尚未 finalize
     it("Scenario 13: Cannot finalize early when coordinator has not consumed completion report", async () => {
       const sessionId = `session-scen13-${Date.now()}`;
+      const registry = new SessionRegistry();
       const manager = new SubagentManager(mockModelRuntime);
+      const entry = {
+        id: sessionId,
+        runtime: { session: createMockSession(), dispose: async () => {}, switchSession: async () => {} } as any,
+        clients: new Set(),
+        lastActive: Date.now(),
+        published: true,
+        activeRole: "coordinator",
+        cwd: gitRepoDir,
+        isGitRepo: true,
+        queuedMessages: [],
+      };
+      registry.set(sessionId, entry as any);
+      bindSessionEvents(entry as any, manager);
 
       manager.notifyCoordinatorTurnStart(sessionId);
 
       const task = await manager.spawn({
         parentSessionId: sessionId,
-        role: "tester",
+        role: "verifier",
         taskTitle: "Task 1",
         taskPrompt: "Do 1",
         parentCwd: gitRepoDir,
@@ -474,27 +501,40 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
       task.status = "completed";
       task.verification = { diff: { name: "diff", status: "pass" }, scope: { name: "scope", status: "pass" }, commands: [], overall: "pass" };
 
-      // Pending report queued for coordinator
-      manager.notifyCoordinatorReportPending(sessionId, 1);
+      // Report is in message queue
+      entry.queuedMessages = [{ id: "q1", text: "Report pending", mode: "followUp" }];
 
-      // Coordinator turn ends temporarily, but pending reports remain!
-      const finRes = await manager.notifyCoordinatorTurnEnd(sessionId, { hasPendingReports: true });
+      // Coordinator turn ends, but pending report remains in message queue!
+      await entry.runtime.session.emit({ type: "agent_end" });
 
-      // Must NOT finalize because report is not consumed yet
-      assert.equal(finRes, null);
+      // Must NOT finalize because message queue is not empty
       assert.equal(manager.isRunFinalized(sessionId), false);
     });
 
     // 14. Coordinator 消费结果后创建 Rework: continue_subagent 创建 B -> 不能在 B 创建前抢先 finalize
     it("Scenario 14: When coordinator consumes result and creates rework, runtime must not finalize before rework", async () => {
       const sessionId = `session-scen14-${Date.now()}`;
+      const registry = new SessionRegistry();
       const manager = new SubagentManager(mockModelRuntime);
+      const entry = {
+        id: sessionId,
+        runtime: { session: createMockSession(), dispose: async () => {}, switchSession: async () => {} } as any,
+        clients: new Set(),
+        lastActive: Date.now(),
+        published: true,
+        activeRole: "coordinator",
+        cwd: gitRepoDir,
+        isGitRepo: true,
+        queuedMessages: [],
+      };
+      registry.set(sessionId, entry as any);
+      bindSessionEvents(entry as any, manager);
 
       manager.notifyCoordinatorTurnStart(sessionId);
 
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -523,24 +563,37 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
       assert.equal(taskB.status, "running");
 
       // Coordinator turn ends
-      const finRes = await manager.notifyCoordinatorTurnEnd(sessionId, { hasPendingReports: false });
+      await entry.runtime.session.emit({ type: "agent_end" });
 
       // Must NOT finalize because task B is running!
-      assert.equal(finRes, null);
       assert.equal(manager.isRunFinalized(sessionId), false);
     });
 
     // 15. Coordinator 完成且没有后续工作: 所有 lineage leaf PASS -> Runtime 自动 finalize
     it("Scenario 15: When all lineage leaves PASS and coordinator has no further work, runtime auto finalizes", async () => {
       const sessionId = `session-scen15-${Date.now()}`;
+      const registry = new SessionRegistry();
       const manager = new SubagentManager(mockModelRuntime);
+      const entry = {
+        id: sessionId,
+        runtime: { session: createMockSession(), dispose: async () => {}, switchSession: async () => {} } as any,
+        clients: new Set(),
+        lastActive: Date.now(),
+        published: true,
+        activeRole: "coordinator",
+        cwd: gitRepoDir,
+        isGitRepo: true,
+        queuedMessages: [],
+      };
+      registry.set(sessionId, entry as any);
+      bindSessionEvents(entry as any, manager);
 
       manager.notifyCoordinatorTurnStart(sessionId);
 
       // Task A failed, Task B reworked A and passed
       const taskA = await manager.spawn({
         parentSessionId: sessionId,
-        role: "junior_fe",
+        role: "developer",
         taskTitle: "Task A",
         taskPrompt: "Do A",
         parentCwd: gitRepoDir,
@@ -565,10 +618,8 @@ export function registerTaskStateMachineFixesTests(getGitRepoDir: () => string) 
       taskB.verification = { diff: { name: "diff", status: "pass" }, scope: { name: "scope", status: "pass" }, commands: [], overall: "pass" };
 
       // Coordinator turn finishes, all lineage leaves PASS, no remaining tasks
-      const finRes = await manager.notifyCoordinatorTurnEnd(sessionId, { hasPendingReports: false });
+      await entry.runtime.session.emit({ type: "agent_end" });
 
-      assert.ok(finRes);
-      assert.equal(finRes.success, true);
       assert.equal(manager.isRunFinalized(sessionId), true);
     });
   });

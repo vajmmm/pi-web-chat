@@ -6,6 +6,7 @@ import type { UIProjectFolder, UIProjectItem, UISessionInfo } from "../shared/pr
 import {
   getCurrentGitBranch,
   listWorktreeFolders,
+  recoverRuntimeResources,
   resolveGitRepoRoot,
   resolveProjectRoot,
 } from "./worktree.ts";
@@ -61,7 +62,13 @@ const knownFolderPaths = new Set<string>();
 
 export function registerKnownProjectPath(p: string) {
   if (p && existsSync(p)) {
-    knownFolderPaths.add(resolve(p));
+    const resolved = resolve(p);
+    knownFolderPaths.add(resolved);
+    void resolveGitRepoRoot(resolved)
+      .then((root) => {
+        if (root) void recoverRuntimeResources(root).catch(() => {});
+      })
+      .catch(() => {});
   }
 }
 
@@ -77,10 +84,20 @@ export function removeKnownProjectPath(p: string) {
   }
 }
 
+export interface DeleteSessionFileResult {
+  ok: boolean;
+  deleted: boolean;
+  path?: string;
+  error?: string;
+}
+
 /**
  * 删除单个会话文件
  */
-export async function deleteSessionFile(sessionId: string, cwd?: string): Promise<{ ok: boolean; path?: string }> {
+export async function deleteSessionFile(
+  sessionId: string,
+  cwd?: string,
+): Promise<DeleteSessionFileResult> {
   const sessionsDir = join(getAgentDir(), "sessions");
   const suffix = `_${sessionId}.jsonl`;
 
@@ -89,8 +106,13 @@ export async function deleteSessionFile(sessionId: string, cwd?: string): Promis
       const list = await SessionManager.list(cwd);
       const target = list.find((s) => sessionIdOf(s.path) === sessionId);
       if (target?.path && existsSync(target.path)) {
-        unlinkSync(target.path);
-        return { ok: true, path: target.path };
+        try {
+          unlinkSync(target.path);
+          return { ok: true, deleted: true, path: target.path };
+        } catch (unlinkErr) {
+          const msg = `Failed to unlink session file at ${target.path}: ${String(unlinkErr instanceof Error ? unlinkErr.message : unlinkErr)}`;
+          return { ok: false, deleted: false, path: target.path, error: msg };
+        }
       }
     } catch {
       /* fallback to full scan */
@@ -98,17 +120,28 @@ export async function deleteSessionFile(sessionId: string, cwd?: string): Promis
   }
 
   if (existsSync(sessionsDir)) {
-    const dirs = readdirSync(sessionsDir, { withFileTypes: true });
+    let dirs: import("node:fs").Dirent[] = [];
+    try {
+      dirs = readdirSync(sessionsDir, { withFileTypes: true });
+    } catch (scanErr) {
+      return { ok: false, deleted: false, error: `Failed to read sessions directory: ${String(scanErr instanceof Error ? scanErr.message : scanErr)}` };
+    }
+
     for (const dir of dirs) {
       if (!dir.isDirectory()) continue;
       const projectPath = join(sessionsDir, dir.name);
       try {
         const files = readdirSync(projectPath);
         for (const file of files) {
-          if (file.endsWith(suffix) || file.replace(/\.jsonl$/, "").endsWith(sessionId)) {
+          if (sessionIdOf(file) === sessionId) {
             const fullPath = join(projectPath, file);
-            unlinkSync(fullPath);
-            return { ok: true, path: fullPath };
+            try {
+              unlinkSync(fullPath);
+              return { ok: true, deleted: true, path: fullPath };
+            } catch (unlinkErr) {
+              const msg = `Failed to unlink session file at ${fullPath}: ${String(unlinkErr instanceof Error ? unlinkErr.message : unlinkErr)}`;
+              return { ok: false, deleted: false, path: fullPath, error: msg };
+            }
           }
         }
       } catch {
@@ -117,17 +150,16 @@ export async function deleteSessionFile(sessionId: string, cwd?: string): Promis
     }
   }
 
-  return { ok: false };
+  // Idempotent: file did not exist on disk
+  return { ok: true, deleted: false };
 }
 
 /**
- * 删除单个文件夹/工作区下的所有会话记录
+ * 获取属于某 folderPath 的所有磁盘会话 ID
  */
-export async function deleteFolderSessions(folderPath: string): Promise<{ ok: boolean; deletedCount: number }> {
+export function findFolderSessionIds(folderPath: string): string[] {
   const resolved = resolve(folderPath);
-  removeKnownProjectPath(resolved);
-
-  let deletedCount = 0;
+  const sessionIds: string[] = [];
   const sessionsDir = join(getAgentDir(), "sessions");
 
   if (existsSync(sessionsDir)) {
@@ -141,14 +173,12 @@ export async function deleteFolderSessions(folderPath: string): Promise<{ ok: bo
           const headerCwd = readHeaderCwd(join(projectPath, files[0]));
           if (headerCwd && resolve(headerCwd) === resolved) {
             for (const file of files) {
-              unlinkSync(join(projectPath, file));
-              deletedCount++;
+              const sid = sessionIdOf(file);
+              if (sid && !sessionIds.includes(sid)) {
+                sessionIds.push(sid);
+              }
             }
-            rmSync(projectPath, { recursive: true, force: true });
           }
-        } else {
-          // 清理空会话文件夹
-          rmSync(projectPath, { recursive: true, force: true });
         }
       } catch {
         /* continue */
@@ -156,29 +186,26 @@ export async function deleteFolderSessions(folderPath: string): Promise<{ ok: bo
     }
   }
 
-  return { ok: true, deletedCount };
+  return sessionIds;
 }
 
 /**
- * 删除整个项目（包括该项目下属所有文件夹及 Worktrees）的会话记录
+ * 获取属于某 targetPath (包括关联 worktrees) 的所有磁盘会话 ID
  */
-export async function deleteProjectSessions(targetPath: string): Promise<{ ok: boolean; deletedCount: number }> {
+export async function findProjectSessionIds(targetPath: string): Promise<string[]> {
   const resolvedTarget = resolve(targetPath);
   const { projectRoot } = await resolveProjectRoot(targetPath);
-  removeKnownProjectPath(projectRoot);
-  removeKnownProjectPath(resolvedTarget);
-  let totalDeleted = 0;
+  const sessionIds = new Set<string>();
 
-  // 寻找所有属于该 projectRoot 的已记录文件夹
   for (const p of Array.from(knownFolderPaths)) {
     const info = await resolveProjectRoot(p);
     if (info.projectRoot === projectRoot || resolve(p) === resolvedTarget) {
-      const res = await deleteFolderSessions(p);
-      totalDeleted += res.deletedCount;
+      for (const sid of findFolderSessionIds(p)) {
+        sessionIds.add(sid);
+      }
     }
   }
 
-  // 扫描 ~/.pi/agent/sessions 兜底清理
   const sessionsDir = join(getAgentDir(), "sessions");
   if (existsSync(sessionsDir)) {
     const dirs = readdirSync(sessionsDir, { withFileTypes: true });
@@ -193,14 +220,11 @@ export async function deleteProjectSessions(targetPath: string): Promise<{ ok: b
             const info = await resolveProjectRoot(headerCwd);
             if (info.projectRoot === projectRoot || resolve(headerCwd) === resolvedTarget) {
               for (const file of files) {
-                unlinkSync(join(projectPath, file));
-                totalDeleted++;
+                const sid = sessionIdOf(file);
+                if (sid) sessionIds.add(sid);
               }
-              rmSync(projectPath, { recursive: true, force: true });
             }
           }
-        } else {
-          rmSync(projectPath, { recursive: true, force: true });
         }
       } catch {
         /* continue */
@@ -208,8 +232,32 @@ export async function deleteProjectSessions(targetPath: string): Promise<{ ok: b
     }
   }
 
-  return { ok: true, deletedCount: totalDeleted };
+  return Array.from(sessionIds);
 }
+
+/**
+ * 清理已经没有 session 文件的空 project 文件夹
+ */
+export function cleanupEmptyProjectDirs(): void {
+  const sessionsDir = join(getAgentDir(), "sessions");
+  if (existsSync(sessionsDir)) {
+    const dirs = readdirSync(sessionsDir, { withFileTypes: true });
+    for (const dir of dirs) {
+      if (!dir.isDirectory()) continue;
+      const projectPath = join(sessionsDir, dir.name);
+      try {
+        const files = readdirSync(projectPath).filter((f) => f.endsWith(".jsonl"));
+        if (files.length === 0) {
+          rmSync(projectPath, { recursive: true, force: true });
+        }
+      } catch {
+        /* continue */
+      }
+    }
+  }
+}
+
+
 
 /**
  * 扫描并获取所有项目及其下属多文件夹/Worktrees与会话列表

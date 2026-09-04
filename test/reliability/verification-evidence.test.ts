@@ -69,7 +69,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-analysis-1",
         parentSessionId: "s-1",
-        role: "reviewer",
+        role: "verifier",
         goal: "Analyze architecture",
         expectedEffects: ["analysis"],
       };
@@ -83,7 +83,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-code-1",
         parentSessionId: "s-1",
-        role: "junior_fe",
+        role: "developer",
         goal: "Implement feature",
         expectedEffects: ["code_change"],
       };
@@ -119,7 +119,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-grep-1",
         parentSessionId: "s-1",
-        role: "junior_fe",
+        role: "developer",
         goal: "Search and update",
         expectedEffects: ["code_change"],
       };
@@ -156,7 +156,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-test-fail-1",
         parentSessionId: "s-1",
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite",
         expectedEffects: ["test_execution"],
       };
@@ -179,7 +179,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-tester-pass-1",
         parentSessionId: "session-1",
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite",
         expectedEffects: ["test_execution"],
       };
@@ -212,7 +212,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-tester-empty-1",
         parentSessionId: "session-1",
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite",
         expectedEffects: ["test_execution"],
       };
@@ -227,7 +227,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-tester-explor-1",
         parentSessionId: "session-1",
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite",
         expectedEffects: ["test_execution"],
       };
@@ -253,7 +253,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-tester-fail-cmd-1",
         parentSessionId: "session-1",
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite",
         expectedEffects: ["test_execution"],
       };
@@ -275,7 +275,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-tester-unknown-exit-1",
         parentSessionId: "session-1",
-        role: "tester",
+        role: "verifier",
         goal: "Run test suite",
         expectedEffects: ["test_execution"],
       };
@@ -298,7 +298,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const contract: TaskContract = {
         taskId: "task-dual-effects-1",
         parentSessionId: "session-1",
-        role: "tester",
+        role: "verifier",
         goal: "Modify and test",
         expectedEffects: ["code_change", "test_execution"],
       };
@@ -409,7 +409,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
         const task = await manager.spawn({
           parentSessionId: `parent-${Date.now()}-${Math.random()}`,
           parentCwd: gitRepoDir,
-          role: "reviewer",
+          role: "verifier",
           taskTitle: "Finish reason test",
           taskPrompt: "Test finish reason routing",
           customSession: mockSession,
@@ -492,14 +492,14 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
         const task = await manager.spawn({
           parentSessionId: `parent-premature-${Date.now()}`,
           parentCwd: gitRepoDir,
-          role: "tester",
+          role: "verifier",
           taskTitle: "premature mkdir stop",
           taskPrompt: "write four docs",
           customSession: mockSession,
           taskContract: {
             taskId: `task-premature-${Date.now()}`,
             parentSessionId: `parent-premature-${Date.now()}`,
-            role: "tester",
+            role: "verifier",
             goal: "write four docs",
             expectedEffects: ["artifact"],
             acceptanceCriteria: ["four docs exist"],
@@ -554,14 +554,14 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const task = await manager.spawn({
         parentSessionId: `parent-err-ok-${Date.now()}`,
         parentCwd: gitRepoDir,
-        role: "tester",
+        role: "verifier",
         taskTitle: "write then error",
         taskPrompt: "write file",
         customSession: mockSession,
         taskContract: {
           taskId: `task-err-ok-${Date.now()}`,
           parentSessionId: `parent-err-ok-${Date.now()}`,
-          role: "tester",
+          role: "verifier",
           goal: "write file",
           expectedEffects: ["artifact"],
         },
@@ -593,14 +593,14 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       const task = await manager.spawn({
         parentSessionId: `parent-verfail-${Date.now()}`,
         parentCwd: gitRepoDir,
-        role: "tester",
+        role: "verifier",
         taskTitle: "no tests run",
         taskPrompt: "expected tests",
         customSession: mockSession,
         taskContract: {
           taskId: `task-verfail-${Date.now()}`,
           parentSessionId: `parent-verfail-${Date.now()}`,
-          role: "tester",
+          role: "verifier",
           goal: "run tests",
           expectedEffects: ["test_execution"],
         },

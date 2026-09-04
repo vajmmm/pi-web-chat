@@ -166,8 +166,19 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
     }),
   );
 
-  const runtime = customSession
-    ? { session: customSession }
+  const resolvedCustomSession =
+    typeof customSession === "function" ? await customSession() : customSession;
+  const runtime = resolvedCustomSession
+    ? {
+        session: resolvedCustomSession.session || resolvedCustomSession,
+        dispose: async () => {
+          if (typeof resolvedCustomSession.dispose === "function") {
+            await resolvedCustomSession.dispose();
+          } else if (typeof resolvedCustomSession.session?.dispose === "function") {
+            await resolvedCustomSession.session.dispose();
+          }
+        },
+      }
     : await createAgentSessionRuntime(
         async ({ cwd, sessionManager, sessionStartEvent }) => {
           const services = await createAgentSessionServices({

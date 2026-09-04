@@ -29,6 +29,7 @@ export type Messages = {
   attachImage: string;
   removeImage: string;
   send: string;
+  queueSend: string;
   abort: string;
 
   // model
@@ -117,10 +118,11 @@ export const en: Messages = {
   closeSidebar: "Close sidebar",
 
   sendMessage: "Send a message",
-  streamingPlaceholder: "Streaming… (send to steer)",
+  streamingPlaceholder: "Streaming… (send to queue follow-up)",
   attachImage: "Attach image",
   removeImage: "Remove image",
   send: "Send",
+  queueSend: "Queue message",
   abort: "Stop",
 
   selectModel: "Select model",
