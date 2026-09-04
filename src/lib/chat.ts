@@ -41,12 +41,18 @@ class ChatClient {
   private everConnected = false;
   private target: string | null = null;
   private currentCwd: string | null = null;
+  private haltReconnect = false;
   private pendingText = "";
   private pendingThinking = "";
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   state: ChatState = initialState;
 
+  getCwd(): string | null {
+    return this.currentCwd;
+  }
+
   connect(sessionId: string | null = null, opts?: { force?: boolean; cwd?: string }) {
+    if (opts?.force) this.haltReconnect = false;
     if (opts?.cwd) {
       this.currentCwd = opts.cwd;
     }
@@ -94,7 +100,7 @@ class ChatClient {
     };
     ws.onclose = () => {
       this.ws = null;
-      if (this.intentionalClose) return;
+      if (this.intentionalClose || this.haltReconnect) return;
 
       // Soft state while retrying — don't flash red on first paint / brief blips.
       if (this.state.connection === "connected") {
@@ -102,9 +108,11 @@ class ChatClient {
       }
       this.scheduleDisconnected();
       const retryTarget = this.state.sessionId ?? this.target;
+      const retryCwd = this.currentCwd;
       setTimeout(() => {
+        if (this.haltReconnect) return;
         this.target = retryTarget;
-        this.connect(retryTarget);
+        this.connect(retryTarget, retryCwd ? { cwd: retryCwd } : undefined);
       }, this.reconnectDelay);
       this.reconnectDelay = Math.min(Math.round(this.reconnectDelay * 1.6), 8_000);
     };
@@ -233,6 +241,9 @@ class ChatClient {
         break;
       case "error":
         console.error("[pi-web-chat]", event.message);
+        if (event.message.startsWith("Session not found:")) {
+          this.haltReconnect = true;
+        }
         break;
     }
   }

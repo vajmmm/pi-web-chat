@@ -15,6 +15,20 @@ process.env.PI_CODING_AGENT_DIR = testAgentDir;
 
 export const mockModelRuntime = { getModel: () => null } as any;
 
+export async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 2000,
+  intervalMs = 20,
+): Promise<void> {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started >= timeoutMs) {
+      throw new Error(`waitUntil timed out after ${timeoutMs}ms`);
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 export function createMockSession(messages: any[] = [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] }]) {
   const subscribers: ((event: any) => void)[] = [];
   const normalizedMessages = messages.length > 0 ? messages.map((m) => {
@@ -24,12 +38,17 @@ export function createMockSession(messages: any[] = [{ role: "assistant", stopRe
     return m;
   }) : [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] }];
 
-  return {
+  const session: any = {
     messages: normalizedMessages,
+    isStreaming: false,
     subscribe: (fn: (event: any) => void) => {
       subscribers.push(fn);
     },
     prompt: async () => {},
+    /** Used by SubagentManager.cleanupRuntime on every terminal path. */
+    abort: async () => {
+      session.isStreaming = false;
+    },
     setModel: async () => {},
     setThinkingLevel: () => {},
     setActiveToolsByName: () => {},
@@ -42,6 +61,7 @@ export function createMockSession(messages: any[] = [{ role: "assistant", stopRe
       return Promise.all(promises);
     },
   };
+  return session;
 }
 
 export function setupTestGitRepo(): { gitRepoDir: string; cleanup: () => void } {

@@ -955,7 +955,9 @@ describe("In-Flight Quiescence, Legacy Role Hardening & Mutation Guard Regressio
     const res = await manager.deleteTask(taskId);
     assert.equal(res, false, "deleteTask must return false when runtime.dispose fails");
     assert.equal(abortCalled, 1, "abort must have been called");
-    assert.equal(disposeCalled, 1, "dispose must have been attempted");
+    // abort() now disposes as part of terminal close; deleteTask retries dispose
+    // if the handle remains. Either attempt failing is enough to fail-closed.
+    assert.ok(disposeCalled >= 1, "dispose must have been attempted");
 
     // Must preserve instance in subagentTasks
     assert.equal(subagentTasks.has(taskId), true, "Task instance must remain in subagentTasks");

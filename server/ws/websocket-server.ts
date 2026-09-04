@@ -6,15 +6,31 @@ import type { SubagentManager } from "../subagent-manager.ts";
 
 export function sendTo(ws: WebSocket, event: ServerEvent): void {
   if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(event));
+    try {
+      ws.send(JSON.stringify(event));
+    } catch (err) {
+      // WebSocket delivery is best-effort and must not abort the Agent Core
+      // event pipeline when a client is closing or has already failed.
+      console.warn("[WebSocket] Failed to send event:", err);
+    }
   }
 }
 
 export function broadcastTo(entry: SessionEntry, event: ServerEvent): void {
-  const data = JSON.stringify(event);
+  let data: string;
+  try {
+    data = JSON.stringify(event);
+  } catch (err) {
+    console.warn("[WebSocket] Failed to serialize broadcast event:", err);
+    return;
+  }
   for (const ws of entry.clients) {
     if (ws.readyState === ws.OPEN) {
-      ws.send(data);
+      try {
+        ws.send(data);
+      } catch (err) {
+        console.warn("[WebSocket] Failed to broadcast event:", err);
+      }
     }
   }
 }

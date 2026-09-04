@@ -56,6 +56,9 @@ State files: `~/.pi/web-chat/pi-web-chat.pid`, `pi-web-chat.port`, `pi-web-chat.
 
 ## Development
 
+> **Package Manager Constraint:** Strictly use **npm** (`npm install` / `npm run ...` / `npx ...`).
+> Do **NOT** use `pnpm`, `yarn`, or `bun`. Running `pnpm` (including `pnpm exec`) restructures `node_modules` into a symlinked layout that moves `@earendil-works/*` packages and breaks dynamic runtime imports (such as `openai-responses.lazy.js`).
+
 ```bash
 npm install
 

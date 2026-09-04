@@ -67,7 +67,40 @@ export interface SubagentInstance {
   autoContinuationCount?: number;
   reported?: boolean;
   aborting?: boolean;
+  /** True while a terminal finalize path is settling runtime/tools. */
+  terminalizing?: boolean;
   initializationCleanupError?: string;
+  /**
+   * In-flight tool executions (tool_execution_start → tool_execution_end).
+   * Used as a finalize gate so harness status cannot race ahead of tools.
+   */
+  activeTools?: Map<
+    string,
+    {
+      toolCallId: string;
+      toolName: string;
+      startedAt: number;
+      args?: unknown;
+    }
+  >;
+  /**
+   * tool_execution_end is emitted before Agent Core appends the corresponding
+   * toolResult message. Keep the finalized result here so an interruption in
+   * that small window can still produce a structurally complete transcript.
+   */
+  pendingToolResults?: Map<
+    string,
+    {
+      role: "toolResult";
+      toolCallId: string;
+      toolName: string;
+      content: unknown[];
+      details?: unknown;
+      usage?: unknown;
+      isError?: boolean;
+      timestamp: number;
+    }
+  >;
   pendingTerminal?: {
     type: "completed" | "failed";
     error?: string;

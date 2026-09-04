@@ -12,6 +12,7 @@ import { registerFinalizeRollbackTests } from "./reliability/finalize-rollback.t
 import { registerRuntimeResourcesTests } from "./reliability/runtime-resources.test.ts";
 import { registerTaskLineageFinalizeTests } from "./reliability/task-lineage-finalize.test.ts";
 import { registerTaskStateMachineFixesTests } from "./reliability/task-state-machine-fixes.test.ts";
+import "./reliability/subagent-event-lifecycle.test.ts";
 
 describe("Multi-Agent Orchestration Reliability Tests", () => {
   let repo: { gitRepoDir: string; cleanup: () => void };

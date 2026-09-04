@@ -1,7 +1,8 @@
-import { basename } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import type { WebSocket } from "ws";
 import type { createAgentSessionRuntime } from "@earendil-works/pi-coding-agent";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentRole, UIQueuedMessage } from "../../shared/protocol.ts";
 import { isPendingDeletion, updatePendingDeletionStage } from "./deletion-tombstone.ts";
 
@@ -28,15 +29,106 @@ export function sessionIdOf(file?: string): string {
   return i >= 0 ? base.slice(i + 1) : base;
 }
 
-export async function resolveSessionPath(id: string, cwd?: string, fallbackCwd?: string): Promise<string | undefined> {
-  const targetCwd = cwd || fallbackCwd;
-  if (!targetCwd) return undefined;
-  const sessions = await SessionManager.list(targetCwd);
-  const found = sessions.find((s) => sessionIdOf(s.path) === id);
-  if (found) return found.path;
-  if (fallbackCwd && targetCwd !== fallbackCwd) {
-    const fallback = await SessionManager.list(fallbackCwd);
-    return fallback.find((s) => sessionIdOf(s.path) === id)?.path;
+export class SessionNotFoundError extends Error {
+  readonly sessionId: string;
+  readonly cwd?: string;
+
+  constructor(sessionId: string, cwd?: string) {
+    super(
+      cwd
+        ? `Session not found: ${sessionId} (cwd ${cwd})`
+        : `Session not found: ${sessionId}`,
+    );
+    this.name = "SessionNotFoundError";
+    this.sessionId = sessionId;
+    this.cwd = cwd;
+  }
+}
+
+function readSessionHeaderCwd(filePath: string): string | null {
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    const firstNewline = raw.indexOf("\n");
+    const firstLine = firstNewline >= 0 ? raw.slice(0, firstNewline) : raw;
+    const parsed = JSON.parse(firstLine) as { type?: string; cwd?: string };
+    return parsed?.type === "session" && typeof parsed.cwd === "string" ? parsed.cwd : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function findSessionById(id: string): Promise<{ path: string; cwd: string } | undefined> {
+  const sessionsDir = join(getAgentDir(), "sessions");
+  if (!existsSync(sessionsDir)) return undefined;
+  let dirs: import("node:fs").Dirent[] = [];
+  try {
+    dirs = readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  for (const dir of dirs) {
+    if (!dir.isDirectory()) continue;
+    const projectPath = join(sessionsDir, dir.name);
+    let files: string[] = [];
+    try {
+      files = readdirSync(projectPath).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (sessionIdOf(file) !== id) continue;
+      const fullPath = join(projectPath, file);
+      const headerCwd = readSessionHeaderCwd(fullPath);
+      return { path: fullPath, cwd: headerCwd || projectPath };
+    }
+  }
+  return undefined;
+}
+
+export async function locateSession(
+  id: string,
+  cwd?: string,
+): Promise<{ path: string; cwd: string } | undefined> {
+  if (cwd) {
+    const sessions = await SessionManager.list(cwd);
+    const found = sessions.find((s) => s.id === id || sessionIdOf(s.path) === id);
+    if (!found) return undefined;
+    return { path: found.path, cwd: found.cwd || cwd };
+  }
+  return findSessionById(id);
+}
+
+/**
+ * Resolve an existing session for WS bind.
+ * Never falls back to defaultCwd to open or invent a different session.
+ */
+export async function bindExistingSession(
+  id: string,
+  requestedCwd: string | undefined,
+  defaultCwd: string,
+): Promise<{ path: string; cwd: string }> {
+  const scoped =
+    requestedCwd && existsSync(requestedCwd) ? resolve(requestedCwd) : undefined;
+  const located = await locateSession(id, scoped);
+  if (!located) {
+    throw new SessionNotFoundError(id, scoped ?? requestedCwd);
+  }
+  const bindCwd =
+    located.cwd && existsSync(located.cwd) ? resolve(located.cwd) : scoped ?? defaultCwd;
+  return { path: located.path, cwd: bindCwd };
+}
+
+export async function resolveSessionPath(
+  id: string,
+  cwd?: string,
+  fallbackCwd?: string,
+): Promise<string | undefined> {
+  const located = await locateSession(id, cwd);
+  if (located) return located.path;
+  // Only search fallback when the caller did not pin a cwd.
+  if (!cwd && fallbackCwd) {
+    const fallback = await locateSession(id, fallbackCwd);
+    return fallback?.path;
   }
   return undefined;
 }

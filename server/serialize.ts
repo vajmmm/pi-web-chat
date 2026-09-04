@@ -1,4 +1,10 @@
 import type { UIContentBlock, UIMessage } from "../shared/protocol.ts";
+import {
+  looksLikeHtmlErrorPage,
+  sanitizeProviderErrorMessage,
+} from "../shared/provider-error.ts";
+
+export { sanitizeProviderErrorMessage } from "../shared/provider-error.ts";
 
 type AnyMessage = {
   role: string;
@@ -59,9 +65,14 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
 
     if (m.role === "assistant") {
       const blocks: UIContentBlock[] = [];
+      let contentHtmlError: string | undefined;
       if (Array.isArray(m.content)) {
         for (const b of m.content as Record<string, unknown>[]) {
           if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
+            if (looksLikeHtmlErrorPage(b.text)) {
+              contentHtmlError = sanitizeProviderErrorMessage(b.text);
+              continue;
+            }
             blocks.push({ type: "text", text: b.text });
           } else if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking.length > 0) {
             blocks.push({ type: "thinking", text: b.thinking });
@@ -77,7 +88,11 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
           }
         }
       }
-      if (blocks.length > 0 || m.errorMessage) {
+      const rawError =
+        typeof m.errorMessage === "string" && m.errorMessage.trim().length > 0
+          ? sanitizeProviderErrorMessage(m.errorMessage)
+          : contentHtmlError;
+      if (blocks.length > 0 || rawError) {
         const u = m.usage as {
           input?: number;
           output?: number;
@@ -98,7 +113,7 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
         out.push({
           role: "assistant",
           content: blocks,
-          errorMessage: typeof m.errorMessage === "string" ? m.errorMessage : undefined,
+          errorMessage: rawError,
           usage,
         });
       }

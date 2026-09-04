@@ -26,8 +26,8 @@ import { getCurrentGitBranch, recoverRuntimeResources, resolveGitRepoRoot } from
 import { registerKnownProjectPath } from "./projects.ts";
 import {
   applyRoleToSession,
+  bindExistingSession,
   isPendingDeletion,
-  resolveSessionPath,
   sessionIdOf,
   SessionRegistry,
   type SessionEntry,
@@ -197,9 +197,16 @@ function broadcastSnapshot(entry: SessionEntry) {
 }
 
 async function createEntry(id: string | null, customCwd?: string): Promise<SessionEntry> {
-  const effectiveCwd = customCwd && existsSync(customCwd) ? resolve(customCwd) : AGENT_CWD;
+  let effectiveCwd: string;
+  let path: string | undefined;
+  if (id) {
+    const bound = await bindExistingSession(id, customCwd, AGENT_CWD);
+    path = bound.path;
+    effectiveCwd = bound.cwd;
+  } else {
+    effectiveCwd = customCwd && existsSync(customCwd) ? resolve(customCwd) : AGENT_CWD;
+  }
   registerKnownProjectPath(effectiveCwd);
-  const path = id ? await resolveSessionPath(id, effectiveCwd, AGENT_CWD) : undefined;
   const repoRoot = await resolveGitRepoRoot(effectiveCwd);
   const gitBranch = repoRoot ? (await getCurrentGitBranch(effectiveCwd)) ?? undefined : undefined;
 

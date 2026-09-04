@@ -66,7 +66,8 @@ export function ChatPage() {
   const runningSubagents = subagents.filter((s) => s.status === "running").length;
 
   useEffect(() => {
-    chatClient.connect(routeSessionId ?? null);
+    const cwd = chatClient.getCwd() ?? snapshot?.cwd;
+    chatClient.connect(routeSessionId ?? null, cwd ? { cwd } : undefined);
   }, [routeSessionId]);
 
   useEffect(() => {

@@ -12,6 +12,7 @@ Please generate a structured, concise Markdown summary covering:
 Keep the summary clear, accurate, and concise. Preserve exact file paths, function/class names, and error details.`;
 
 import { injectMemoryIntoCompactionSummary } from "./task-memory.ts";
+import { sanitizeProviderErrorMessage } from "./serialize.ts";
 
 export async function performSessionCompaction(
   session: AgentSession,
@@ -145,7 +146,9 @@ export async function performSessionCompaction(
   const response = await stream.result();
 
   if (response.stopReason === "error") {
-    throw new Error(`压缩模型返回错误: ${response.errorMessage || "未知错误"}`);
+    throw new Error(
+      `压缩模型返回错误: ${sanitizeProviderErrorMessage(response.errorMessage || "未知错误")}`,
+    );
   }
 
   let summary = (response.content || [])

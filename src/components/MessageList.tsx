@@ -2,6 +2,10 @@ import { useEffect, useRef, type TouchEvent, type WheelEvent } from "react";
 
 const BOTTOM_TOLERANCE = 8;
 import type { UIContentBlock, UIMessage } from "../../shared/protocol";
+import {
+  looksLikeHtmlErrorPage,
+  sanitizeProviderErrorMessage,
+} from "../../shared/provider-error";
 import type { ActiveTool } from "../lib/chat";
 import { useT } from "../lib/i18n";
 import { Markdown } from "./Markdown";
@@ -69,6 +73,16 @@ export function Blocks({ blocks, markdown }: { blocks: UIContentBlock[]; markdow
       {blocks.map((b, i) => {
         switch (b.type) {
           case "text":
+            if (looksLikeHtmlErrorPage(b.text)) {
+              return (
+                <div
+                  key={i}
+                  className="mt-2 border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 break-words [overflow-wrap:anywhere]"
+                >
+                  {sanitizeProviderErrorMessage(b.text)}
+                </div>
+              );
+            }
             return markdown ? (
               <Markdown key={i} text={b.text} />
             ) : (
@@ -114,7 +128,7 @@ export function Message({ message }: { message: UIMessage }) {
       <Blocks blocks={message.content} markdown />
       {message.errorMessage && (
         <div className="mt-2 border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 break-words [overflow-wrap:anywhere]">
-          {message.errorMessage}
+          {sanitizeProviderErrorMessage(message.errorMessage)}
         </div>
       )}
       {message.usage && (
@@ -215,7 +229,12 @@ export function MessageList({
           <Message key={i} message={m} />
         ))}
         {streamThinking && <Thinking text={streamThinking} />}
-        {streamText && (
+        {streamText && looksLikeHtmlErrorPage(streamText) && (
+          <div className="border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 break-words [overflow-wrap:anywhere]">
+            {sanitizeProviderErrorMessage(streamText)}
+          </div>
+        )}
+        {streamText && !looksLikeHtmlErrorPage(streamText) && (
           <div className="text-[15px]">
             <Markdown text={streamText} />
           </div>
