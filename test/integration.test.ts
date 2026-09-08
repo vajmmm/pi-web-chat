@@ -12,6 +12,7 @@ import {
   ConstraintResolver,
   getRoleDefinition,
   isPathContained,
+  PromptAssembler,
   RoleRegistry,
   type RoleConfigV2,
   type TaskContract,
@@ -46,7 +47,9 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         mockSession.setActiveToolsByName(resolved.runtime.activeTools);
       }
 
-      assert.deepEqual(activeTools, ["read", "bash", "report_blocker"]);
+      assert.ok(activeTools.includes("read"));
+      assert.ok(activeTools.includes("bash"));
+      assert.ok(activeTools.includes("report_blocker"));
     });
 
     it("should dynamically transition active toolsets when roles switch", async () => {
@@ -57,7 +60,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         },
       };
 
-      // 1. 切换至 Coordinator (具备调度与只读工具)
+      // 1. 切换至 Coordinator (具备调度与 Direct Path 修改工具)
       const coordTools = ConstraintResolver.resolve({
         role: "coordinator",
         cwd: "/tmp/project",
@@ -185,8 +188,8 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
     });
   });
 
-  describe("4. Subagent User Message Assembly (Goal + Task + Scope)", () => {
-    it("should assemble structured single User Message containing both Goal and Task", () => {
+  describe("4. Subagent Task Stable Prefix + Kickoff Assembly", () => {
+    it("keeps contract fields out of the ordinary kickoff history", () => {
       const contract: TaskContract = {
         taskId: "task-123",
         parentSessionId: "session-abc",
@@ -202,13 +205,19 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       };
 
       const userPrompt = buildSubagentUserPrompt("请实现用户登录组件具体UI逻辑 (Task)", contract);
-      assert.ok(userPrompt.includes("## Goal\n重构登录体系保障安全性 (Goal)"));
-      assert.ok(userPrompt.includes("## Task\n请实现用户登录组件具体UI逻辑 (Task)"));
-      assert.ok(userPrompt.includes("## Scope\n- Allowed paths / include: src/components/Login.tsx"));
-      assert.ok(userPrompt.includes("- Excluded paths / do not touch: src/legacy/**"));
-      assert.ok(userPrompt.includes("## Acceptance Criteria\n- 通过单元测试\n- 支持密码遮罩"));
-      assert.ok(userPrompt.includes("## Context Files\n- src/types/auth.ts"));
-      assert.ok(userPrompt.includes("## Constraints\n- 不得引入外部新状态库"));
+      assert.ok(userPrompt.includes("## Task Kickoff"));
+      assert.ok(userPrompt.includes("assigned immutable Task Contract"));
+      assert.equal(userPrompt.includes("请实现用户登录组件具体UI逻辑 (Task)"), false);
+      assert.equal(userPrompt.includes("Initial instruction:"), false);
+      assert.equal(userPrompt.includes("## Goal"), false);
+      assert.equal(userPrompt.includes("## Scope"), false);
+      const assembled = PromptAssembler.assemble(ConstraintResolver.resolve({
+        role: "developer",
+        cwd: process.cwd(),
+        taskContract: contract,
+      }));
+      assert.ok(assembled.taskSystemPrompt.includes("重构登录体系保障安全性 (Goal)"));
+      assert.ok(assembled.taskSystemPrompt.includes("src/components/Login.tsx"));
     });
   });
 
@@ -274,7 +283,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const parsed = JSON.parse(resCoordinator.systemPrompt);
       assert.equal(parsed.role, "coordinator");
       assert.ok(parsed.role_constraint.responsibilities.length > 0);
-      assert.ok(parsed.role_constraint.instructions.includes("DISCOVER"));
+      assert.ok(parsed.role_constraint.instructions.includes("Delegation is optional"));
 
       // 2. Switch to developer role
       capturedRole = "developer";

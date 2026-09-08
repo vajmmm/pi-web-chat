@@ -38,7 +38,8 @@ import {
   removePendingDeletion,
 } from "../../server/session/deletion-tombstone.ts";
 import { deleteSessionTurns } from "../../server/turn-recorder.ts";
-import { getTaskMemoryDir, removeTaskMemory } from "../../server/task-memory.ts";
+import { getTaskMemoryDir, removeTaskMemory } from "../../server/legacy-task-memory-cleanup.ts";
+import { getTaskRuntimeDir } from "../../server/runtime-artifacts.ts";
 import { handleCommand } from "../../server/ws/command-handler.ts";
 import { handleRolesRoutes } from "../../server/http/routes-roles.ts";
 import { getAllRoleConfigs } from "../../server/roles.ts";
@@ -467,9 +468,9 @@ describe("Session Deletion Transaction & Fail-Closed Matrix (22 Scenarios)", () 
   });
 
   // =========================================================================
-  // M14: Phase C: Task memory removal fails -> Fail-closed, keep task file retry anchor
+  // M14: Legacy data remains part of explicit user deletion and must be retriable.
   // =========================================================================
-  it("M14: removeTaskMemory fails closed on unremovable directory and keeps task file", async () => {
+  it("M14: legacy task-memory cleanup failure preserves deletion retry metadata", async () => {
     const sessionId = "m14-parent";
     createMockParentEntry(sessionId);
     createMockTask(sessionId, "t-m14");
@@ -482,13 +483,36 @@ describe("Session Deletion Transaction & Fail-Closed Matrix (22 Scenarios)", () 
       const res = await cleanupDeletedSessionResources(sessionId, cleanupCtx(), repoRoot, { deleteFile: false });
       assert.equal(res.success, false);
       assert.equal(isPendingDeletion(sessionId), true);
-      assert.equal(loadPendingDeletions().get(sessionId)?.stage, "metadata_cleanup");
-      assert.ok(subagentTasks.has("t-m14"), "in-memory instance must remain");
-      assert.equal(existsSync(taskFilePath("t-m14")), true, "persistent task file is the restart retry anchor");
+      assert.equal(subagentTasks.has("t-m14"), true);
+      assert.equal(existsSync(taskFilePath("t-m14")), true);
       assert.equal(existsSync(memDir), true);
     } finally {
       chmodSync(memoriesRoot, 0o755);
     }
+  });
+
+  it("artifact cleanup failure retains task metadata and retry removes task and coordinator evidence", async () => {
+    const sessionId = "artifacts-parent";
+    createMockParentEntry(sessionId);
+    createMockTask(sessionId, "artifacts-task");
+    const artifactDir = getTaskRuntimeDir(sessionId, "artifacts-task");
+    const coordinatorDir = getTaskRuntimeDir(sessionId, "coordinator");
+    writeFileSync(join(artifactDir, "transcript.jsonl"), "private evidence");
+    writeFileSync(join(coordinatorDir, "raw.log"), "coordinator evidence");
+    const tasksDir = join(artifactDir, "..");
+    chmodSync(tasksDir, 0o555);
+    try {
+      const failed = await cleanupDeletedSessionResources(sessionId, cleanupCtx(), repoRoot, { deleteFile: false });
+      assert.equal(failed.success, false);
+      assert.equal(existsSync(taskFilePath("artifacts-task")), true);
+      assert.equal(subagentTasks.has("artifacts-task"), true);
+      assert.equal(isPendingDeletion(sessionId), true);
+    } finally { chmodSync(tasksDir, 0o755); }
+    const retried = await cleanupDeletedSessionResources(sessionId, cleanupCtx(), repoRoot, { deleteFile: false });
+    assert.equal(retried.success, true);
+    assert.equal(existsSync(artifactDir), false);
+    assert.equal(existsSync(coordinatorDir), false);
+    assert.equal(existsSync(taskFilePath("artifacts-task")), false);
   });
 
   // =========================================================================

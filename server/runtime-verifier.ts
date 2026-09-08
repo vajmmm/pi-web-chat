@@ -315,10 +315,22 @@ interface MessageItem {
   details?: Record<string, unknown>;
 }
 
-function truncateSummary(text: string, maxLen = 300): string {
+export const VERIFICATION_SUCCESS_SUMMARY_MAX_CHARS = 400;
+export const VERIFICATION_FAILURE_SUMMARY_MAX_CHARS = 1200;
+
+function truncateSummary(text: string, maxLen: number, preserveTail = false): string {
   const trimmed = text.trim();
   if (trimmed.length <= maxLen) return trimmed;
-  return trimmed.slice(0, maxLen) + "...";
+  if (!preserveTail) {
+    const marker = "...";
+    return trimmed.slice(0, Math.max(0, maxLen - marker.length)) + marker;
+  }
+
+  const marker = "\n... [middle omitted] ...\n";
+  const contentLength = Math.max(0, maxLen - marker.length);
+  const headLength = Math.ceil(contentLength / 2);
+  const tailLength = contentLength - headLength;
+  return trimmed.slice(0, headLength) + marker + trimmed.slice(trimmed.length - tailLength);
 }
 
 /**
@@ -383,14 +395,23 @@ export function extractCommandRecords(
           const exitCode = hasRealExitCode ? result.exitCode! : null;
           const exitCodeSource = hasRealExitCode ? "runtime" : "unknown";
           const passed = !result.isError && (hasRealExitCode ? exitCode === 0 : true);
+          const summary = result.text
+            ? truncateSummary(
+                result.text,
+                passed
+                  ? VERIFICATION_SUCCESS_SUMMARY_MAX_CHARS
+                  : VERIFICATION_FAILURE_SUMMARY_MAX_CHARS,
+                !passed,
+              )
+            : undefined;
           records.push({
             command,
             exitCode,
             exitCodeSource,
             passed,
             purpose,
-            stdoutSummary: !result.isError && result.text ? truncateSummary(result.text) : undefined,
-            stderrSummary: result.isError && result.text ? truncateSummary(result.text) : undefined,
+            stdoutSummary: passed ? summary : undefined,
+            stderrSummary: !passed ? summary : undefined,
           });
         } else {
           // Tool call recorded but result not found

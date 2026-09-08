@@ -22,6 +22,9 @@ const DEFAULT_ROLE_PRESET_TOOLS: Record<string, string[]> = {
   coordinator: [
     "read",
     "bash",
+    "edit",
+    "write",
+    "get_task_summary",
     "list_available_roles",
     "spawn_subagent",
     "continue_subagent",

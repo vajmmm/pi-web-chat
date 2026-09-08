@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { UILLMToolDefinition, UILLMTurnRecord } from "../shared/protocol.ts";
 
@@ -111,8 +112,21 @@ export function updateSessionTurnVendorPayload(
     } catch {
       target.vendorPayload = vendorPayload;
     }
+    target.requestPrefixHash = hashRequestPrefix(vendorPayload);
     persistTurns(sessionId, list);
   }
+}
+
+/** Fingerprint the provider's instruction and tool blocks, not a claim of cache hits. */
+export function hashRequestPrefix(payload: Record<string, unknown>): string | undefined {
+  const messages = [payload.messages, payload.input].flatMap((value) => Array.isArray(value) ? value : [])
+    .filter((message: any) => message?.role === "system" || message?.role === "developer");
+  const system = payload.system ?? payload.instructions ?? payload.systemInstruction ?? payload.system_instruction;
+  if (system === undefined && messages.length === 0 && payload.tools === undefined) return undefined;
+  return createHash("sha256").update(JSON.stringify({
+    system, messages, tools: payload.tools,
+    toolChoice: payload.tool_choice ?? payload.toolConfig,
+  })).digest("hex");
 }
 
 export function clearSessionTurns(sessionId: string): void {

@@ -15,7 +15,7 @@ const testAgentDir = mkdtempSync(join(tmpdir(), "pi-cleanup-agent-"));
 process.env.PI_CODING_AGENT_DIR = testAgentDir;
 
 import { SubagentManager, subagentTasks } from "../server/subagent-manager.ts";
-import { initTaskMemory, getTaskMemoriesRoot } from "../server/task-memory.ts";
+import { initTaskMemory, getTaskMemoriesRoot } from "../server/legacy-task-memory-cleanup.ts";
 import { SessionRegistry, type SessionEntry } from "../server/session/session-registry.ts";
 import { handleSessionsRoutes } from "../server/http/routes-sessions.ts";
 import { handleProjectsRoutes } from "../server/http/routes-projects.ts";

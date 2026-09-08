@@ -7,6 +7,7 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgentRole } from "../../shared/protocol.ts";
 import {
@@ -15,13 +16,13 @@ import {
 } from "../contracts/index.ts";
 import { installTurnRecorderOnSession } from "../turn-recorder.ts";
 import {
-  createTaskMemoryExtension,
-  writeWorkingMemory,
-  appendProcessJournal,
-} from "../task-memory.ts";
+  createTaskContextExtension,
+  type TaskContextRuntimeState,
+} from "./compaction-evidence-index.ts";
 
 export interface CreateSubagentRuntimeOptions {
   taskId: string;
+  runId?: string;
   role: AgentRole;
   effectiveCwd: string;
   effectiveContext: EffectiveContext;
@@ -29,6 +30,30 @@ export interface CreateSubagentRuntimeOptions {
   parentModel?: { provider: string; id: string } | null;
   customSession?: any;
   onReportBlocker?: (message: string, severity?: string, context?: string) => void;
+  onCompaction?: (count: number) => void;
+}
+
+function createAuthoritativePromptExtension(options: {
+  taskId: string;
+  effectiveContext: EffectiveContext;
+  runtimeModelRef: { current?: { provider: string; id: string } };
+}): InlineExtension {
+  return {
+    name: `subagent-prompt-${options.taskId}`,
+    factory: (pi) => {
+      pi.on("before_agent_start", async () => {
+        const runtimeModel = options.runtimeModelRef.current;
+        if (!runtimeModel) {
+          throw new Error("Subagent runtime model identity is unavailable before first agent turn");
+        }
+
+        const assembled = PromptAssembler.assemble(options.effectiveContext, {
+          runtimeModel,
+        });
+        return { systemPrompt: assembled.taskSystemPrompt };
+      });
+    },
+  };
 }
 
 export async function createSubagentSessionRuntime(options: CreateSubagentRuntimeOptions): Promise<{
@@ -38,6 +63,7 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
 }> {
   const {
     taskId,
+    runId,
     role,
     effectiveCwd,
     effectiveContext,
@@ -45,7 +71,11 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
     parentModel,
     customSession,
     onReportBlocker,
+    onCompaction,
   } = options;
+  const effectiveRunId = runId || taskId;
+
+  const taskContextState: TaskContextRuntimeState = { compactionCount: 0 };
 
   const customTools: any[] = [];
   if (effectiveContext.runtime.activeTools.includes("report_blocker")) {
@@ -83,88 +113,7 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
     );
   }
 
-  customTools.push(
-    defineTool({
-      name: "update_working_memory",
-      label: "更新工作记忆",
-      description:
-        "滚动更新当前任务的工作记忆状态快照 (working-memory.md)。用于保存当前阶段、已验证事实、重要文件、排除路线与下一步计划。该状态在 context compaction 后会自动重新注入，请保持短小精炼（建议 5000 tokens 以内），区分已验证事实与待验证假设。",
-      promptSnippet: "滚动更新任务工作记忆快照 (working-memory.md)",
-      parameters: Type.Object({
-        content: Type.String({
-          description: "完整的 Markdown 格式工作记忆快照（覆盖更新当前最小充分状态）",
-        }),
-      }),
-      async execute(_toolCallId, params) {
-        const res = writeWorkingMemory(taskId, params.content);
-        if (!res.success) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: `[update_working_memory] 更新失败: ${res.error}`,
-              },
-            ],
-            details: { taskId, characterCount: 0 },
-          };
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: `[update_working_memory] 成功更新 Working Memory (${res.characterCount} 字符)。在 context compaction 后将自动注入此最新快照。`,
-            },
-          ],
-          details: { taskId, characterCount: res.characterCount },
-        };
-      },
-    }),
-  );
-
-  customTools.push(
-    defineTool({
-      name: "append_process_journal",
-      label: "追加过程日志",
-      description:
-        "向当前任务的过程日志 (process-journal.md) 追加重要调查历史、验证证据或被推翻的假设。请仅在重要阶段结束、关键结论产生或方案被证伪时记录，不要频繁记录每个小操作。",
-      promptSnippet: "向任务过程日志 (process-journal.md) 追加重要历史记录",
-      parameters: Type.Object({
-        entry: Type.String({
-          description: "要追加的过程日志内容（调查过程、证据、假设、结论）",
-        }),
-        title: Type.Optional(
-          Type.String({
-            description: "简短标题（例如 'Investigate premature completion'）",
-          }),
-        ),
-      }),
-      async execute(_toolCallId, params) {
-        const res = appendProcessJournal(taskId, params.entry, params.title);
-        if (!res.success) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: `[append_process_journal] 追加失败: ${res.error}`,
-              },
-            ],
-            details: { taskId },
-          };
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: `[append_process_journal] 成功追加到 process-journal.md。此文件保存在磁盘供后续按需检索，不会在 compaction 后全量注入。`,
-            },
-          ],
-          details: { taskId },
-        };
-      },
-    }),
-  );
+  const runtimeModelRef: { current?: { provider: string; id: string } } = {};
 
   const resolvedCustomSession =
     typeof customSession === "function" ? await customSession() : customSession;
@@ -183,13 +132,33 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
         async ({ cwd, sessionManager, sessionStartEvent }) => {
           const services = await createAgentSessionServices({
             cwd,
+            modelRuntime,
             resourceLoaderOptions: {
+              noContextFiles: true,
+              noSkills: true,
+              // Bootstrap only. ResourceLoader caches this before final model resolution;
+              // before_agent_start is the authoritative provider prompt boundary below.
               systemPromptOverride: () => {
-                const assembled = PromptAssembler.assemble(effectiveContext);
-                return assembled.systemPrompt;
+                const assembled = PromptAssembler.assemble(effectiveContext, {
+                  runtimeModel: runtimeModelRef.current,
+                });
+                return assembled.taskSystemPrompt;
               },
               appendSystemPromptOverride: () => [],
-              extensionFactories: [createTaskMemoryExtension(taskId, () => session)],
+              extensionFactories: [
+                createTaskContextExtension({
+                  runId: effectiveRunId,
+                  taskId,
+                  role,
+                  state: taskContextState,
+                  onCompaction,
+                }),
+                createAuthoritativePromptExtension({
+                  taskId,
+                  effectiveContext,
+                  runtimeModelRef,
+                }),
+              ],
             },
           });
           return {
@@ -212,6 +181,9 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
 
   const session = runtime.session;
   (session as any).__taskId = taskId;
+  (session as any).__runId = effectiveRunId;
+  (session as any).__taskContextState = taskContextState;
+  (session as any).__factStoreExtensionInstalled = !resolvedCustomSession;
 
   const resolvedModel = effectiveContext.runtime.model;
   if (resolvedModel?.modelId && resolvedModel.modelId !== "inherit") {
@@ -225,20 +197,6 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
       );
     }
   }
-  if (resolvedModel?.thinkingLevel) {
-    session.setThinkingLevel(resolvedModel.thinkingLevel);
-  }
-
-  if (typeof session.setActiveToolsByName === "function") {
-    session.setActiveToolsByName([
-      ...effectiveContext.runtime.activeTools,
-      "update_working_memory",
-      "append_process_journal",
-    ]);
-  }
-
-  installTurnRecorderOnSession(session, () => taskId);
-
   const resolvedModelDetails = session.model
     ? {
         provider: session.model.provider,
@@ -246,6 +204,25 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
         name: (session.model as { name?: string }).name,
       }
     : undefined;
+  if (!resolvedModelDetails && !resolvedCustomSession) {
+    throw new Error("Subagent runtime model identity is unavailable before first agent turn");
+  }
+  if (resolvedModelDetails) {
+    runtimeModelRef.current = {
+      provider: resolvedModelDetails.provider,
+      id: resolvedModelDetails.id,
+    };
+  }
+
+  if (resolvedModel?.thinkingLevel) {
+    session.setThinkingLevel(resolvedModel.thinkingLevel);
+  }
+
+  if (typeof session.setActiveToolsByName === "function") {
+    session.setActiveToolsByName([...effectiveContext.runtime.activeTools]);
+  }
+
+  installTurnRecorderOnSession(session, () => taskId);
 
   return { runtime, session, resolvedModelDetails };
 }

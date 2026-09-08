@@ -28,7 +28,7 @@ import {
   registerRuntimeResource,
   unregisterRuntimeResource,
 } from "../../server/git/runtime-resources.ts";
-import { getTaskMemoryDir, removeTaskMemory } from "../../server/task-memory.ts";
+import { getTaskMemoryDir, removeTaskMemory } from "../../server/legacy-task-memory-cleanup.ts";
 
 function initGitRepo(dir: string) {
   nodeExecSync("git init", { cwd: dir, stdio: "ignore" });

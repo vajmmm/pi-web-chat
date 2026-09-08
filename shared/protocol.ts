@@ -259,6 +259,17 @@ export interface UISubagentTask {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
+  /** Immutable task-worktree baseline used by the terminal Episode Card. */
+  baseCommit?: string;
+  /** Number of successful Pi-native compactions observed for this task. */
+  compactionCount?: number;
+  stallTelemetry?: {
+    commandLoopSignals: number;
+    verificationStagnationSignals: number;
+    codeOscillationSignals: number;
+    contextPressure: number;
+    warningCount: number;
+  };
   summary?: string;
   changedFiles?: string[];
   logs?: string[];
@@ -551,6 +562,8 @@ export interface UILLMTurnRecord {
   messages: unknown[];
   tools: UILLMToolDefinition[];
   vendorPayload?: Record<string, unknown>;
+  /** Hash of the stable provider-level prefix extracted from the real wire payload. */
+  requestPrefixHash?: string;
   tokenEstimate?: {
     systemPromptTokens: number;
     messagesTokens: number;

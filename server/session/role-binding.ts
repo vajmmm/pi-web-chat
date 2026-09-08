@@ -61,7 +61,10 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
     session.agent.state.systemPrompt = combined;
   } else {
     // 定制角色：注入分层组装的结构化提示词
-    const assembled = PromptAssembler.assemble(effectiveContext);
+    const runtimeModel = session.model
+      ? { provider: String(session.model.provider), id: String(session.model.id) }
+      : undefined;
+    const assembled = PromptAssembler.assemble(effectiveContext, { runtimeModel });
     (session as any)._systemPromptOverride = assembled.systemPrompt;
     session.agent.state.systemPrompt = assembled.systemPrompt;
   }

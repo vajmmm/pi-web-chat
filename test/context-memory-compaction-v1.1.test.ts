@@ -1,0 +1,321 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { createBashTool, createReadTool } from "@earendil-works/pi-coding-agent";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { ConstraintResolver, PromptAssembler } from "../server/contracts/index.ts";
+import { performSessionCompaction } from "../server/compact.ts";
+import {
+  artifactRefFor,
+  persistToolOutput,
+  resolveArtifactRef,
+  getTaskRuntimeDir,
+  readToolExecutionFacts,
+  removeTaskArtifacts,
+} from "../server/runtime-artifacts.ts";
+import {
+  buildCompactionEvidenceIndex,
+  createTaskContextExtension,
+  renderEvidenceIndex,
+} from "../server/subagent/compaction-evidence-index.ts";
+import { buildTaskEpisodeCard, buildTaskEpisodeView, persistTaskEpisode, boundTaskLineage } from "../server/subagent/episode-card.ts";
+import { createShadowTranscriptRecorder } from "../server/subagent/shadow-transcript.ts";
+import { hashRequestPrefix } from "../server/turn-recorder.ts";
+import { persistAndVirtualizeToolResult } from "../server/subagent/output-virtualizer.ts";
+import {
+  createStallTelemetryState,
+  observeToolExecution,
+  recordContextPressure,
+} from "../server/subagent/stall-arbiter.ts";
+
+describe("Context / Memory / Compaction v1.1", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-harness-v11-"));
+  const previousRoot = process.env.HARNESS_RUNTIME_ROOT;
+
+  before(() => {
+    process.env.HARNESS_RUNTIME_ROOT = root;
+  });
+
+  after(() => {
+    if (previousRoot === undefined) delete process.env.HARNESS_RUNTIME_ROOT;
+    else process.env.HARNESS_RUNTIME_ROOT = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("persists Pi full output before building a bounded preview", () => {
+    const original = "head\n" + "x".repeat(80 * 1024) + "\ntail";
+    const piFull = join(root, "pi-full.log");
+    writeFileSync(piFull, original);
+    const result = persistAndVirtualizeToolResult({
+      runId: "run-1",
+      taskId: "task-1",
+      toolCallId: "call-1",
+      toolName: "bash",
+      content: [{ type: "text", text: "truncated source" }],
+      details: { fullOutputPath: piFull, truncation: { truncated: true } },
+      maxBytes: 4096,
+    });
+    assert.equal(readFileSync(result.pointer.runtimePath, "utf8"), original);
+    assert.equal(result.pointer.completeness, "complete");
+    assert.ok(Buffer.byteLength(result.content[0].text, "utf8") <= 4096);
+    assert.match(result.content[0].text, /artifacts:\/\/runs\/run-1\/task-1/);
+  });
+
+  it("marks an already-truncated result without a physical full-output source as preview-only", () => {
+    const pointer = persistToolOutput({
+      runId: "run-1",
+      taskId: "task-2",
+      toolCallId: "call-2",
+      toolName: "read",
+      content: [{ type: "text", text: "preview" }],
+      details: { truncation: { truncated: true } },
+    });
+    assert.equal(pointer.completeness, "preview_only");
+  });
+
+  it("keeps the global prefix stable while freezing a distinct task suffix", () => {
+    const make = (taskId: string) => ConstraintResolver.resolve({
+      role: "developer",
+      cwd: process.cwd(),
+      taskContract: {
+        taskId,
+        parentSessionId: "run-1",
+        role: "developer",
+        goal: `goal-${taskId}`,
+      },
+    });
+    const a = PromptAssembler.assemble(make("a"));
+    const b = PromptAssembler.assemble(make("b"));
+    assert.equal(a.globalStablePrefix, b.globalStablePrefix);
+    assert.equal(a.globalPrefixHash, b.globalPrefixHash);
+    assert.notEqual(a.taskStableSuffix, b.taskStableSuffix);
+    assert.ok(a.taskSystemPrompt.startsWith(a.globalStablePrefix));
+    assert.match(a.taskSystemPrompt, /TASK_SCOPED_STABLE_PREFIX/);
+  });
+
+  it("uses deterministic evidence ordering and projects latest-only after compaction", async () => {
+    persistToolOutput({
+      runId: "run-e",
+      taskId: "task-e",
+      toolCallId: "failed",
+      toolName: "bash",
+      content: [{ type: "text", text: "failed" }],
+      isError: true,
+    });
+    const index = buildCompactionEvidenceIndex({
+      runId: "run-e",
+      taskId: "task-e",
+      compactionSeq: 1,
+      firstKeptEntryId: "entry-2",
+    });
+    assert.equal(index.failedExecutions[0].toolCallId, "failed");
+
+    const handlers = new Map<string, Function>();
+    const state = { compactionCount: 0 };
+    createTaskContextExtension({ runId: "run-e", taskId: "task-e", role: "developer", state })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    await handlers.get("session_compact")!({ compactionEntry: { firstKeptEntryId: "e1" } });
+    await handlers.get("session_compact")!({ compactionEntry: { firstKeptEntryId: "e2" } });
+    const projected = await handlers.get("context")!({ messages: [] });
+    const rendered = projected.messages[0].content[0].text;
+    assert.match(rendered, /"compactionSeq":\s*2/);
+    assert.doesNotMatch(rendered, /"compactionSeq":\s*1/);
+  });
+
+  it("creates an immutable-schema episode and a hard-bounded coordinator view", () => {
+    const task: any = {
+      taskId: "task-final",
+      parentSessionId: "run-final",
+      role: "developer",
+      taskTitle: "final",
+      taskPrompt: "finish",
+      status: "completed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:00:01.000Z",
+      changedFiles: Array.from({ length: 500 }, (_, index) => `src/file-${index}.ts`),
+      messages: [],
+      taskResult: {
+        taskId: "task-final",
+        role: "developer",
+        status: "completed",
+        summary: "s".repeat(10_000),
+        completedAt: "2026-01-01T00:00:01.000Z",
+      },
+    };
+    const episode = buildTaskEpisodeCard(task)!;
+    assert.equal(episode.physical.terminalStatus, "completed");
+    assert.equal(episode.semantic?.provenance.source, "task_result");
+    const view = buildTaskEpisodeView(episode, { maxTotalBytes: 2048 });
+    assert.ok(Buffer.byteLength(view, "utf8") <= 2048);
+    assert.match(view, /task-result\.json/);
+  });
+
+  it("delegates manual compaction to the public Pi authority", async () => {
+    let calls = 0;
+    const session: any = {
+      model: { id: "m" },
+      messages: [{ role: "user" }],
+      async compact(instructions?: string) {
+        calls += 1;
+        assert.equal(instructions, "keep exact errors");
+        return { summary: "native", firstKeptEntryId: "entry-1" };
+      },
+    };
+    const result = await performSessionCompaction(session, undefined, "keep exact errors");
+    assert.equal(calls, 1);
+    assert.equal(result.summary, "native");
+  });
+
+  it("never treats context pressure alone as stall", () => {
+    const state = createStallTelemetryState();
+    recordContextPressure(state, 4);
+    assert.equal(state.warningCount, 0);
+    assert.equal(observeToolExecution(state, { toolName: "read", args: { path: "a" } }).warning, undefined);
+    assert.equal(observeToolExecution(state, { toolName: "read", args: { path: "a" } }).warning, undefined);
+    assert.match(
+      observeToolExecution(state, { toolName: "read", args: { path: "a" } }).warning || "",
+      /not aborted/,
+    );
+  });
+
+  it("resolves only confined artifact references", () => {
+    const ref = artifactRefFor("run", "task", "tool_outputs/call.log");
+    assert.ok(resolveArtifactRef(ref)?.startsWith(root));
+    assert.equal(existsSync(resolveArtifactRef("artifacts://runs/../../etc/passwd") || ""), false);
+  });
+
+  it("preserves real Pi bash failure output from streaming metadata before projection", async () => {
+    const raw = "ORIGINAL_HEAD\n" + "x".repeat(100_000) + "\nORIGINAL_TAIL";
+    const handlers = new Map<string, Function>();
+    createTaskContextExtension({ runId: "failure", taskId: "task", role: "developer", state: { compactionCount: 0 } })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    const bash = createBashTool(root, { operations: { exec: async (_command, _cwd, options) => {
+      options.onData(Buffer.from(raw));
+      return { exitCode: 7 };
+    } } });
+    let error: Error | undefined;
+    try {
+      await bash.execute("failure-call", { command: "fixture" }, undefined, (partialResult) => {
+        handlers.get("tool_execution_update")!({ toolCallId: "failure-call", partialResult });
+      });
+    } catch (e) { error = e as Error; }
+    assert.ok(error);
+    const result = await handlers.get("tool_result")!({ toolCallId: "failure-call", toolName: "bash",
+      content: [{ type: "text", text: error.message }], isError: true, input: { command: "fixture" } });
+    const fact = readToolExecutionFacts("failure", "task")[0];
+    assert.equal(fact.completeness, "complete");
+    assert.equal(fact.exitCode, 7);
+    assert.equal(readFileSync(fact.runtimePath!, "utf8"), raw);
+    assert.ok(Buffer.byteLength(result.content[0].text) <= 32 * 1024);
+    assert.match(result.content[0].text, /Execution failed: Command exited with code 7/);
+    assert.equal(result.details.artifactRef, fact.artifactRef);
+    assert.equal(result.isError, true);
+    // The model can read the projected path with the real built-in read tool.
+    const read = await createReadTool(root).execute("recover", { path: fact.runtimePath!, limit: 1 });
+    assert.match((read.content[0] as any).text, /ORIGINAL_HEAD/);
+  });
+
+  it("never calls a shell error footer complete when its raw metadata is unavailable", () => {
+    const pointer = persistToolOutput({ runId: "missing", taskId: "task", toolCallId: "call", toolName: "bash",
+      content: [{ type: "text", text: "[Showing lines 1-2 of 300. Full output: /missing/pi.log]\nCommand exited with code 1" }], isError: true });
+    assert.equal(pointer.completeness, "preview_only");
+  });
+
+  it("indexes split-turn failures and keeps the complete projection within budget", async () => {
+    persistToolOutput({ runId: "split", taskId: "task", toolCallId: "split-call", toolName: "bash",
+      content: [{ type: "text", text: "error" }], isError: true });
+    const handlers = new Map<string, Function>();
+    const state: any = { compactionCount: 0 };
+    createTaskContextExtension({ runId: "split", taskId: "task", role: "developer", state })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    await handlers.get("session_before_compact")!({ preparation: {
+      messagesToSummarize: [], turnPrefixMessages: [{ role: "toolResult", toolCallId: "split-call", content: [] }],
+      firstKeptEntryId: "kept", fileOps: { written: new Set(), edited: new Set(), read: new Set() },
+    }, branchEntries: [{ id: "cut" }, { id: "kept" }] });
+    await handlers.get("session_compact")!({ compactionEntry: { firstKeptEntryId: "kept" } });
+    assert.equal(state.latestEvidenceIndex.failedExecutions[0].toolCallId, "split-call");
+    assert.ok(existsSync(state.latestEvidenceIndex.failedExecutions[0].runtimePath));
+    const index = buildCompactionEvidenceIndex({ runId: "split", taskId: "task", compactionSeq: 2,
+      readFiles: Array.from({ length: 2000 }, (_, i) => `src/中文-${i}.ts`) });
+    assert.ok(Buffer.byteLength(renderEvidenceIndex(index)) <= 8192);
+    assert.equal(index.failedExecutions.length, 1);
+    assert.ok(index.transcriptRuntimePath);
+  });
+
+  it("records actual persisted entry IDs across the pre-append message_end boundary", () => {
+    const branch: any[] = [{ id: "first", timestamp: "t1", message: { role: "user", content: "one" } }];
+    const session = { sessionManager: { getBranch: () => branch } };
+    const flush = createShadowTranscriptRecorder("transcript", "task");
+    flush(session); // message_end(second), before Pi appends second
+    branch.push({ id: "second", timestamp: "t2", message: { role: "assistant", content: "two" } });
+    flush(session); // turn_end
+    flush(session); // agent_end must not duplicate
+    const records = readFileSync(join(getTaskRuntimeDir("transcript", "task"), "transcript.jsonl"), "utf8")
+      .trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(records.map((r) => [r.entryId, r.message.content]), [["first", "one"], ["second", "two"]]);
+  });
+
+  it("freezes episode, its referenced result, and subsequent coordinator views together", () => {
+    const task: any = { taskId: "frozen", parentSessionId: "episode", role: "developer", status: "completed",
+      completedAt: "2026-09-06T00:00:00Z", taskResult: { summary: "original" } };
+    const first = persistTaskEpisode(task)!;
+    task.taskResult.summary = "later mutation";
+    const subsequent = buildTaskEpisodeCard(task)!;
+    assert.deepEqual(subsequent, first);
+    const result = JSON.parse(readFileSync(resolveArtifactRef(first.physical.artifacts.taskResult.ref)!, "utf8"));
+    assert.equal(result.summary, "original");
+    assert.doesNotMatch(JSON.stringify(first), /runtimePath/);
+    const view = JSON.parse(buildTaskEpisodeView(subsequent));
+    assert.ok(existsSync(view.artifactPointers.taskResult.runtimePath));
+    const lineage = boundTaskLineage(Array(100).fill(buildTaskEpisodeView(first, { maxTotalBytes: 1500 })));
+    assert.ok(lineage.length < 100);
+    const assembled = PromptAssembler.assemble(ConstraintResolver.resolve({ role: "developer", cwd: root,
+      taskContract: { taskId: "next", parentSessionId: "episode", role: "developer", goal: "next" }, taskLineage: lineage }));
+    const injected = (assembled.jsonPayload.task_stable_suffix as any).bounded_lineage;
+    assert.ok(Buffer.byteLength(JSON.stringify(injected, null, 2)) <= 6144);
+  });
+
+  it("deletes only the requested task artifacts and rejects escaping symlinks", () => {
+    const a = getTaskRuntimeDir("delete", "a");
+    const b = getTaskRuntimeDir("delete", "b");
+    writeFileSync(join(a, "raw.log"), "sensitive output");
+    removeTaskArtifacts("delete", "a");
+    assert.equal(existsSync(a), false);
+    assert.equal(existsSync(b), true);
+    const external = mkdtempSync(join(tmpdir(), "pi-artifact-external-"));
+    try {
+      writeFileSync(join(external, "keep.txt"), "keep");
+      symlinkSync(external, join(b, "escape"));
+      assert.equal(resolveArtifactRef(artifactRefFor("delete", "b", "escape/keep.txt")), null);
+      removeTaskArtifacts("delete", "b");
+      assert.equal(readFileSync(join(external, "keep.txt"), "utf8"), "keep");
+    } finally { rmSync(external, { recursive: true, force: true }); }
+  });
+
+  it("observes changed results as progress and detects verification repetition and inverse edits", () => {
+    const state = createStallTelemetryState();
+    for (let i = 0; i < 4; i++) {
+      assert.equal(observeToolExecution(state, { toolName: "bash", args: { command: "npm test" },
+        isError: true, content: `different failure ${i}` }).warning, undefined);
+    }
+    for (let i = 0; i < 4; i++) observeToolExecution(state, { toolName: "bash", args: { command: "npm test" },
+      isError: true, content: "same failure" });
+    assert.equal(state.verificationStagnationSignals, 1);
+    assert.equal(state.warningCount, 1);
+    for (const [oldText, newText] of [["a", "b"], ["b", "a"], ["a", "b"]]) {
+      observeToolExecution(state, { toolName: "edit", args: { path: "file", oldText, newText }, content: "ok" });
+    }
+    assert.equal(state.codeOscillationSignals, 1);
+  });
+
+  it("fingerprints provider instruction roles and tool schemas without hashing changing user history", () => {
+    const base = { messages: [{ role: "developer", content: "contract" }, { role: "user", content: "one" }],
+      tools: [{ name: "read", parameters: { type: "object" } }] };
+    const first = hashRequestPrefix(base);
+    assert.equal(first, hashRequestPrefix({ ...base, messages: [...base.messages, { role: "user", content: "two" }] }));
+    assert.notEqual(first, hashRequestPrefix({ ...base, tools: [{ name: "write" }] }));
+    assert.notEqual(first, hashRequestPrefix({ ...base, messages: [{ role: "developer", content: "changed" }] }));
+    assert.equal(hashRequestPrefix({ input: [{ role: "user", content: "only dynamic" }] }), undefined);
+  });
+});

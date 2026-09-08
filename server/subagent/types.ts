@@ -5,6 +5,7 @@ import type {
   TaskContract,
   WorkspaceContextDetails,
 } from "../contracts/index.ts";
+import type { StallTelemetryState } from "./stall-arbiter.ts";
 
 export type SubagentReportKind = "terminal" | "blocker";
 
@@ -105,6 +106,7 @@ export interface SubagentInstance {
     type: "completed" | "failed";
     error?: string;
   };
+  stallTelemetry?: StallTelemetryState;
   onUpdate?: (task: UISubagentTask) => void;
   onReport?: (
     task: UISubagentTask,

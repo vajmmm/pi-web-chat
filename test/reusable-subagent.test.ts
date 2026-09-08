@@ -759,7 +759,7 @@ describe("Reusable Subagent (Scheme B)", () => {
           },
         }),
       });
-      assert.ok(prompt.includes("## Goal"));
+      assert.ok(prompt.includes("## Task Kickoff"));
       assert.ok(prompt.includes("===== NEW TASK ====="));
       assert.ok(prompt.includes("/opt/anaconda3/envs/py39/bin/python"));
       assert.ok(!prompt.includes("toolCall"));

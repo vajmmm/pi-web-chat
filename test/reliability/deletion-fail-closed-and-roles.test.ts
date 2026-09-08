@@ -18,7 +18,7 @@ import {
 } from "../../server/contracts/index.ts";
 import { handleProjectsRoutes } from "../../server/http/routes-projects.ts";
 import { handleSessionsRoutes } from "../../server/http/routes-sessions.ts";
-import { getTaskMemoryDir, initTaskMemory } from "../../server/task-memory.ts";
+import { getTaskMemoryDir, initTaskMemory } from "../../server/legacy-task-memory-cleanup.ts";
 import { persistTask, taskFilePath } from "../../server/subagent/task-store.ts";
 import {
   subagentTasks,

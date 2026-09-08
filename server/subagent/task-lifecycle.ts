@@ -22,7 +22,10 @@ import {
   unregisterRuntimeResource,
 } from "../worktree.ts";
 import { buildContinueBoundaryPrompt } from "../reusable-subagent.ts";
-import { initTaskMemory } from "../task-memory.ts";
+import {
+  initializeTaskFactStore,
+  persistToolOutput,
+} from "../runtime-artifacts.ts";
 import { buildSubagentUserPrompt } from "./prompt-builder.ts";
 import { createSubagentSessionRuntime } from "./agent-runtime.ts";
 import { persistTask, subagentTasks } from "./task-store.ts";
@@ -30,6 +33,13 @@ import type { ContinueSubagentOptions, SpawnSubagentOptions, SubagentInstance } 
 import { captureWorkspaceBaseline } from "./workspace-baseline.ts";
 import { queuePendingTerminal } from "./runtime-control.ts";
 import type { SubagentManagerHost } from "./manager-host.ts";
+import { buildTaskEpisodeCard, buildTaskEpisodeView, boundTaskLineage } from "./episode-card.ts";
+import { createShadowTranscriptRecorder } from "./shadow-transcript.ts";
+import {
+  createStallTelemetryState,
+  observeToolExecution,
+  recordContextPressure,
+} from "./stall-arbiter.ts";
 
   /**
    * 严格校验返工关联目标 (rework_of_task_id) 的合法性，收敛为线性返工链 (Fail-closed)
@@ -140,11 +150,11 @@ export async function continueAgent(mgr: SubagentManagerHost, options: ContinueS
 
     const reworkOfTaskId = options.taskContract?.reworkOfTaskId ?? options.reworkOfTaskId;
 
-    const contract: TaskContract = {
+    const contract: TaskContract = Object.freeze(structuredClone({
       taskId,
       parentSessionId: options.parentSessionId,
       role: agent.role,
-      goal: options.taskContract?.goal || options.taskTitle || options.taskPrompt,
+      goal: options.taskContract?.goal || options.taskPrompt,
       scope: options.taskContract?.scope ?? { include: ["*"], exclude: [] },
       contextFiles: options.taskContract?.contextFiles ?? [],
       acceptanceCriteria:
@@ -153,7 +163,7 @@ export async function continueAgent(mgr: SubagentManagerHost, options: ContinueS
       expectedEffects: options.taskContract?.expectedEffects,
       constraints: options.taskContract?.constraints,
       reworkOfTaskId,
-    };
+    }));
 
     try {
       return await mgr.spawn({
@@ -206,19 +216,20 @@ export async function spawn(mgr: SubagentManagerHost, options: SpawnSubagentOpti
       if (reworkOfTaskId) {
         validateReworkTarget(mgr, options.parentSessionId, taskId, reworkOfTaskId);
       }
-      const contract: TaskContract = options.taskContract ?? {
+      let contract: TaskContract = options.taskContract ?? {
         taskId,
         parentSessionId: options.parentSessionId,
         role: options.role,
-        goal: options.taskTitle || options.taskPrompt,
+        goal: options.taskPrompt,
         scope: { include: ["*"], exclude: [] },
         contextFiles: [],
         acceptanceCriteria: ["实现对应需求并通过自测"],
         reworkOfTaskId,
       };
       if (reworkOfTaskId && !contract.reworkOfTaskId) {
-        contract.reworkOfTaskId = reworkOfTaskId;
+        contract = { ...contract, reworkOfTaskId };
       }
+      contract = Object.freeze(structuredClone(contract));
 
       // 2.1 依赖环路严格检测 (Fail-closed)
       const deps = contract.dependsOn ?? [];
@@ -293,6 +304,7 @@ export async function spawn(mgr: SubagentManagerHost, options: SpawnSubagentOpti
         spawnOptions: options,
         onUpdate: options.onUpdate,
         onReport: options.onReport,
+        stallTelemetry: createStallTelemetryState(),
       };
 
       subagentTasks.set(taskId, instance);
@@ -436,6 +448,7 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
         instance.task.worktreePath = worktreePath;
         instance.task.branchName = branchName;
         instance.baseCommit = baseCommit;
+        instance.task.baseCommit = baseCommit;
         baseDir = worktreePath;
       } catch (err) {
         throw new Error(
@@ -490,6 +503,19 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
     }
 
     // 3. 计算最终 EffectiveContext
+    const lineageIds = [...new Set([
+      ...(contract?.reworkOfTaskId ? [contract.reworkOfTaskId] : []),
+      ...(contract?.dependsOn || []),
+    ])];
+    const lineageViews = lineageIds.flatMap((lineageTaskId) => {
+      const prior = mgr.getTasksForParent(options.parentSessionId)
+        .find((candidate) => candidate.taskId === lineageTaskId);
+      const episode = prior ? buildTaskEpisodeCard(prior) : null;
+      return episode
+        ? [buildTaskEpisodeView(episode, { maxTotalBytes: 1500, maxSummaryBytes: 500, maxFiles: 10 })]
+        : [];
+    });
+
     const effectiveContext = ConstraintResolver.resolve({
       role: options.role,
       cwd: effectiveCwd,
@@ -499,26 +525,30 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
       worktreePath,
       targetCwd: options.targetCwd,
       taskContract: contract,
+      taskLineage: boundTaskLineage(lineageViews),
       executionOptions: options.executionOptions,
       parentModel: options.parentModel
         ? { provider: options.parentModel.provider, modelId: options.parentModel.id }
         : null,
     });
 
-    // 4. 初始化 Task Working Memory & Process Journal
-    const memoryPaths = initTaskMemory(
-      taskId,
-      contract?.goal || options.taskTitle || options.taskPrompt,
-    );
+    // 4. 先初始化脱离 Worktree 的 Durable Fact Store。
+    initializeTaskFactStore(options.parentSessionId, taskId);
 
     const subagentSession = await createSubagentSessionRuntime({
       taskId,
+      runId: options.parentSessionId,
       role: options.role,
       effectiveCwd,
       effectiveContext,
       modelRuntime: mgr.modelRuntime,
       parentModel: options.parentModel,
       customSession: options.customSession,
+      onCompaction: (count) => {
+        instance.task.compactionCount = count;
+        if (instance.stallTelemetry) recordContextPressure(instance.stallTelemetry, count);
+        persistTask(instance.task);
+      },
       onReportBlocker: (message, severity, context) => {
         if (options.onReport && !mgr.deletingRuns.has(options.parentSessionId)) {
           const severityTag = severity ? `[${severity.toUpperCase()}] ` : "";
@@ -533,6 +563,7 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
 
     runtime = subagentSession.runtime;
     const { session, resolvedModelDetails } = subagentSession;
+    const flushTranscript = createShadowTranscriptRecorder(options.parentSessionId, taskId);
 
     if (await abortAndCleanupIfDeleted()) return;
 
@@ -564,6 +595,11 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
       }
 
       try {
+        // Pi emits message_end before appending that message. Subsequent events,
+        // especially turn_end/agent_end, flush the actual entries with their own IDs.
+        if (["message_end", "turn_end", "agent_end", "compaction_start"].includes(event.type)) {
+          flushTranscript(session);
+        }
         if (event.type === "tool_execution_start") {
           mgr.registerActiveTool(instance, event);
           const logLine = `[Tool] ${event.toolName || "unknown"} start`;
@@ -571,14 +607,46 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
           persistTask(instance.task);
           mgr.notifyUpdate(instance);
         } else if (event.type === "tool_execution_end") {
+          const activeTool = event.toolCallId
+            ? instance.activeTools?.get(event.toolCallId)
+            : undefined;
           mgr.clearActiveTool(instance, event.toolCallId);
           const logLine = `[Tool] ${event.toolName} -> ${event.isError ? "Error" : "Success"}`;
           instance.task.logs?.push(logLine);
+          if (instance.stallTelemetry) {
+            const signal = observeToolExecution(instance.stallTelemetry, {
+              toolName: event.toolName,
+              args: activeTool?.args,
+              isError: event.isError,
+              content: event.result?.content,
+            });
+            if (signal.warning) instance.task.logs?.push(signal.warning);
+            instance.task.stallTelemetry = {
+              commandLoopSignals: instance.stallTelemetry.commandLoopSignals,
+              verificationStagnationSignals: instance.stallTelemetry.verificationStagnationSignals,
+              codeOscillationSignals: instance.stallTelemetry.codeOscillationSignals,
+              contextPressure: instance.stallTelemetry.contextPressure,
+              warningCount: instance.stallTelemetry.warningCount,
+            };
+          }
 
           // Agent Core emits this event before creating/appending toolResult.
           // Keep the result as a fallback, but do not serialize session.messages
           // here because that would overwrite the task with a dangling toolCall.
           if (event.toolCallId) {
+            let persistedPointer: ReturnType<typeof persistToolOutput> | undefined;
+            if (!(session as any).__factStoreExtensionInstalled) {
+              persistedPointer = persistToolOutput({
+                runId: options.parentSessionId,
+                taskId,
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                content: Array.isArray(event.result?.content) ? event.result.content : [],
+                details: event.result?.details,
+                input: activeTool?.args,
+                isError: event.isError,
+              });
+            }
             if (!instance.pendingToolResults) instance.pendingToolResults = new Map();
             const result = event.result ?? {};
             instance.pendingToolResults.set(event.toolCallId, {
@@ -586,7 +654,9 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
               toolCallId: event.toolCallId,
               toolName: event.toolName,
               content: Array.isArray(result.content) ? result.content : [],
-              details: result.details,
+              details: persistedPointer
+                ? { ...(result.details || {}), artifactRef: persistedPointer.artifactRef }
+                : result.details,
               usage: result.usage,
               isError: Boolean(event.isError),
               timestamp: Date.now(),
@@ -671,7 +741,6 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
 
     const userPrompt = buildSubagentUserPrompt(options.taskPrompt, contract, {
       continueBoundary,
-      memoryPaths,
       workspaceContext,
     });
     if (continueBoundary) {
@@ -756,4 +825,3 @@ export async function startBlockedTask(mgr: SubagentManagerHost, taskId: string)
       return true;
     });
   }
-

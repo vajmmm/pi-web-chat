@@ -4,6 +4,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { UISubagentTask } from "../../shared/protocol.ts";
 import { isCanonicalRole } from "../contracts/roles.ts";
 import type { SubagentInstance } from "./types.ts";
+import { persistTaskEpisode } from "./episode-card.ts";
 
 export const subagentTasks = new Map<string, SubagentInstance>();
 
@@ -37,6 +38,7 @@ export function persistTask(task: UISubagentTask): void {
     const tmpFile = `${file}.${Date.now()}.tmp`;
     writeFileSync(tmpFile, JSON.stringify(task, null, 2), "utf8");
     renameSync(tmpFile, file);
+    persistTaskEpisode(task);
   } catch (err) {
     console.warn(`[SubagentManager] Failed to persist task ${task.taskId}:`, err);
   }
@@ -101,4 +103,3 @@ export function deleteTaskFile(taskId: string): boolean {
     return false;
   }
 }
-

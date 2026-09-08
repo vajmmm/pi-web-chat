@@ -19,13 +19,19 @@ import { adjustSkillsInBasePrompt } from "./skills.ts";
 import { parseModelOverride } from "./subagent-report.ts";
 import type { SubagentManager } from "./subagent-manager.ts";
 import { resolveProjectRoot } from "./worktree.ts";
+import {
+  DEFAULT_OUTPUT_BUDGETS,
+  persistAndVirtualizeToolResult,
+} from "./subagent/output-virtualizer.ts";
+import { buildTaskEpisodeCard, buildTaskEpisodeView } from "./subagent/episode-card.ts";
+import { trackToolOutputMetadata } from "./subagent/tool-output-metadata.ts";
 
 export const COORDINATOR_EXTENSION_NAME = "pi-coordinator-tools";
 
 /** Keep parent-session investigation output materially below the built-in 50KB limit. */
-export const COORDINATOR_TOOL_OUTPUT_LIMIT = 12 * 1024;
+export const COORDINATOR_TOOL_OUTPUT_LIMIT = DEFAULT_OUTPUT_BUDGETS.coordinator;
 /** Task summaries are intentionally compact and never include transcript/log collections. */
-export const COORDINATOR_TASK_SUMMARY_LIMIT = 2 * 1024;
+export const COORDINATOR_TASK_SUMMARY_LIMIT = 4 * 1024;
 export const COORDINATOR_OUTPUT_TRUNCATION_MESSAGE =
   "Output truncated for Coordinator. Use a narrower query or delegate large-volume investigation to a Subagent.";
 
@@ -297,7 +303,7 @@ export function createCoordinatorExtension(
           name: "get_task_summary",
           label: "获取 Task 摘要",
           description:
-            "按 taskId 获取一个属于当前 Coordinator 会话的压缩 Task 状态摘要。只返回状态、角色、错误/失败摘要、验证状态和结果摘要，不返回完整消息历史、stdout、JSONL 或 tool call history。",
+            "按 taskId 获取一个属于当前 Coordinator 会话的有界 Task 状态视图。终态任务优先返回 Physical/Verification/Artifact Pointers/非权威 Agent 报告，不返回完整消息历史、stdout、JSONL 或 tool call history。",
           promptSnippet: "获取单个 Task 的压缩状态、失败与验证摘要",
           parameters: Type.Object({
             taskId: Type.String({
@@ -336,13 +342,16 @@ export function createCoordinatorExtension(
               };
             }
 
-            const summary = buildCoordinatorTaskSummary(task);
+            const episode = buildTaskEpisodeCard(task);
+            const summary = episode ? null : buildCoordinatorTaskSummary(task);
             return {
               details: undefined,
               content: [
                 {
                   type: "text",
-                  text: serializeCoordinatorTaskSummary(summary),
+                  text: episode
+                    ? buildTaskEpisodeView(episode, { maxTotalBytes: COORDINATOR_TASK_SUMMARY_LIMIT })
+                    : serializeCoordinatorTaskSummary(summary!),
                 },
               ],
             };
@@ -360,12 +369,12 @@ export function createCoordinatorExtension(
           promptSnippet: "派发一个独立的异步子智能体任务。派发前可调用 list_available_roles 查看可用角色",
           promptGuidelines: [
             "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具列表（核心角色为 developer、verifier、researcher）；",
-            "【任务粒度与拆分原则】遵循“Prefer fewer, larger, behavior-complete tasks”，避免机械拆解缺乏独立验证与闭环的微任务。能独立调查、独立验证、独立交付的完整行为闭环拆为 Subagent Task（例如派发给 Developer 或 Researcher）；高度耦合需共享深入上下文的子目标保持单任务，不拆分；同一 Task 内通过 Working Memory 保持连贯，跨 Task 则通过 ReusableSubagent Knowledge、context_files 或明确产物传递结论（Working Memory 不跨 Task 自动继承）；",
+            "【任务粒度与拆分原则】遵循“Prefer fewer, larger, behavior-complete tasks”，避免机械拆解缺乏独立验证与闭环的微任务。能独立调查、独立验证、独立交付的完整行为闭环拆为 Subagent Task（例如派发给 Developer 或 Researcher）；高度耦合需共享深入上下文的子目标保持单任务，不拆分；跨 Task 通过 TaskEpisodeView、ReusableSubagent Knowledge、context_files 或明确 ArtifactRef 传递结论；",
             "可连续多次调用 spawn_subagent 以并行启动多个独立的子智能体，各子任务异步执行；",
             "支持传入结构化 Task Contract 字段 (如 expected_effects, acceptance_criteria, context_files, scope_include)；",
             "派发任务时，根据任务真实目标填写 expected_effects（例如 Verifier 核查分析填 ['analysis'] 或 ['test_execution']，Developer 实现代码填 ['code_change']）；",
             "【Inbox 暂存与流转】派发后无需阻塞等待，严禁使用 bash (如 sleep、轮询脚本、死循环检查 git log) 阻塞等待子任务！子任务完成后的 report 仅在 Coordinator Inbox 暂存，不自动打断或唤醒 Coordinator；用户可编辑、引导或取消；只有用户在界面点击引导后，才会在合法的下一 Coordinator Turn 注入；",
-            "已经委派给 Subagent 的调查任务，默认不要自己再重复 read/grep；只有协调、结果冲突、证据不足或最终验证时再自行检查。",
+            "Prefer promotion before the first repository mutation。已经委派给 Subagent 的明确 scope，其 repository mutation ownership 属于该 Subagent；Coordinator 不得再同时对该 scope 做 edit/write。若 Direct Path 已产生 repository mutation，不得把重叠 scope 委派给 isolated Developer Worktree。",
             "子智能体默认继承主会话模型，除非角色配置或任务执行选项中显式指定了专属模型。",
           ],
           executionMode: "parallel",
@@ -814,17 +823,35 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 6. 仅在 Coordinator 主会话中限制 read/bash 的异常大结果；不阻止小范围检查，
-      // 也不影响 Developer / Verifier 等执行角色。
+      // 6. Coordinator 输出同样遵循 raw-first：先持久化，再投影有界 preview。
+      const takeMetadata = trackToolOutputMetadata(pi);
       pi.on("tool_result", async (event) => {
-        const { activeRole } = getSessionContext();
+        const details = takeMetadata(event.toolCallId, event.details);
+        const { activeRole, parentSessionId } = getSessionContext();
         if (activeRole !== "coordinator" || (event.toolName !== "read" && event.toolName !== "bash")) {
           return;
         }
-
-        const bounded = truncateCoordinatorToolContent(event.content);
-        if (!bounded.truncated) return;
-        return { content: bounded.content };
+        const projected = persistAndVirtualizeToolResult({
+          runId: parentSessionId || "coordinator",
+          taskId: "coordinator",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          content: event.content,
+          details,
+          input: event.input,
+          isError: event.isError,
+          maxBytes: COORDINATOR_TOOL_OUTPUT_LIMIT,
+        });
+        if (!projected.virtualized) return;
+        return {
+          content: projected.content,
+          details: {
+            ...(details && typeof details === "object" ? details : {}),
+            artifactRef: projected.pointer.artifactRef,
+            completeness: projected.pointer.completeness,
+          },
+          isError: event.isError,
+        };
       });
 
       // 7. 拦截 before_agent_start 动态注入当前活跃角色的分层系统提示词与首轮 Workspace Context
@@ -860,7 +887,10 @@ export function createCoordinatorExtension(
               : null,
           });
 
-          const assembled = PromptAssembler.assemble(effectiveContext);
+          const runtimeModel = sessionCtx.parentModel
+            ? { provider: sessionCtx.parentModel.provider, id: sessionCtx.parentModel.id }
+            : undefined;
+          const assembled = PromptAssembler.assemble(effectiveContext, { runtimeModel });
           systemPromptStr = assembled.systemPrompt;
         }
 

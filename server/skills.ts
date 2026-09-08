@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { UISkillItem } from "../shared/protocol.ts";
 
 const HOME = homedir();
@@ -108,40 +108,73 @@ export function discoverAllSkills(cwd?: string): UISkillItem[] {
   return Array.from(map.values());
 }
 
-export function loadSkillsContent(
-  skillNames: string[],
-  cwd?: string,
-): Array<{ name: string; content: string }> {
-  if (!skillNames || skillNames.length === 0) return [];
-  const all = discoverAllSkills(cwd);
-  const result: Array<{ name: string; content: string }> = [];
+export interface SkillCatalogEntry {
+  name: string;
+  description: string;
+  location: string;
+}
 
-  for (const name of skillNames) {
-    const item = all.find((s) => s.name === name);
-    if (item) {
-      const fullPath = item.path.startsWith("~") ? join(HOME, item.path.slice(1)) : item.path;
-      const skillMd = join(fullPath, "SKILL.md");
-      const targetFile = existsSync(skillMd) ? skillMd : fullPath.endsWith(".md") ? fullPath : null;
-      if (targetFile && existsSync(targetFile)) {
-        try {
-          const raw = readFileSync(targetFile, "utf8");
-          // 去除 YAML frontmatter，提取纯文本规约
-          const clean = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
-          result.push({ name, content: clean.trim() });
-        } catch (e) {
-          console.warn("[skills] Failed to read skill content:", targetFile, e);
-        }
-      }
+function expandSkillPath(path: string): string {
+  return path.startsWith("~") ? join(HOME, path.slice(1)) : path;
+}
+
+function skillFileLocation(item: UISkillItem): string {
+  const fullPath = expandSkillPath(item.path);
+  const skillMd = join(fullPath, "SKILL.md");
+  return existsSync(skillMd) ? skillMd : fullPath;
+}
+
+function toPosixPath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+/**
+ * Stable catalog location for Prompt Cache.
+ * Project skills use a repo-relative logical path (e.g. `.agents/skills/foo/SKILL.md`).
+ * User skills use a home-relative path. Never emit a worktree-specific absolute path.
+ */
+export function toStableSkillLocation(
+  item: UISkillItem,
+  cwd?: string,
+  projectRoot?: string,
+): string {
+  const abs = skillFileLocation(item);
+  for (const root of [cwd, projectRoot]) {
+    if (!root) continue;
+    const rel = relative(root, abs);
+    if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+      return toPosixPath(rel);
     }
   }
+  if (abs.startsWith(HOME)) {
+    return toPosixPath(`~${abs.slice(HOME.length)}`);
+  }
+  return toPosixPath(abs);
+}
 
-  return result;
+/** Name, description, and readable path only. Never the SKILL.md body. */
+export function resolveSkillCatalog(
+  skillNames: string[],
+  cwd?: string,
+  projectRoot?: string,
+): SkillCatalogEntry[] {
+  if (!skillNames || skillNames.length === 0) return [];
+  const byName = new Map(discoverAllSkills(cwd).map((item) => [item.name, item]));
+  const catalog: SkillCatalogEntry[] = [];
+  for (const name of skillNames) {
+    const item = byName.get(name);
+    if (!item) continue;
+    catalog.push({
+      name: item.name,
+      description: item.description,
+      location: toStableSkillLocation(item, cwd, projectRoot),
+    });
+  }
+  return catalog;
 }
 
 export function formatSelectedSkillsXml(skillNames: string[], cwd?: string): string {
-  if (!skillNames || skillNames.length === 0) return "";
-  const all = discoverAllSkills(cwd);
-  const selected = all.filter((s) => skillNames.includes(s.name));
+  const selected = resolveSkillCatalog(skillNames, cwd);
   if (selected.length === 0) return "";
 
   const lines = [
@@ -152,13 +185,10 @@ export function formatSelectedSkillsXml(skillNames: string[], cwd?: string): str
   ];
 
   for (const s of selected) {
-    const fullPath = s.path.startsWith("~") ? join(HOME, s.path.slice(1)) : s.path;
-    const skillMd = join(fullPath, "SKILL.md");
-    const loc = existsSync(skillMd) ? skillMd : fullPath;
     lines.push("  <skill>");
     lines.push(`    <name>${s.name}</name>`);
     lines.push(`    <description>${s.description}</description>`);
-    lines.push(`    <location>${loc}</location>`);
+    lines.push(`    <location>${s.location}</location>`);
     lines.push("  </skill>");
   }
 

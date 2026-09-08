@@ -3,6 +3,11 @@ import type { ReviewFinding, ReviewResult, ReviewSeverity } from "../contracts/i
 /**
  * Best-effort parse structured ReviewResult from reviewer's last assistant message.
  * Looks for JSON blocks containing verdict and findings.
+ *
+ * Follow-up cleanup (not a functional bug): Verifier prompts use PASS/REWORK while
+ * the runtime canonical ReviewResult uses APPROVE/REQUEST_CHANGES. Keep this
+ * compatibility mapping until a later change unifies on one verdict vocabulary.
+ * Do not expand this into a Task state-machine refactor here.
  */
 export function tryParseReviewResult(text: string): ReviewResult | undefined {
   // Try to find a JSON block with review structure

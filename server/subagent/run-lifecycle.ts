@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { UISubagentTask } from "../../shared/protocol.ts";
 import type { TaskExecutionStatus, TaskResult } from "../contracts/index.ts";
@@ -9,7 +9,8 @@ import { serializeMessages } from "../serialize.ts";
 import { buildBoundedCompletionReport } from "../subagent-report.ts";
 import { isPendingDeletion } from "../session/deletion-tombstone.ts";
 import { deleteSessionTurns } from "../turn-recorder.ts";
-import { removeTaskMemory } from "../task-memory.ts";
+import { removeTaskMemory } from "../legacy-task-memory-cleanup.ts";
+import { removeTaskArtifacts } from "../runtime-artifacts.ts";
 import {
   cleanupRunResources,
   finalizeRun as finalizeGitRun,
@@ -24,7 +25,7 @@ import {
   type IntegrationWorkspace,
   type QuiescenceResult,
 } from "../worktree.ts";
-import { computeDurationMs, deleteTaskFile, persistTask, subagentTasks } from "./task-store.ts";
+import { computeDurationMs, deleteTaskFile, persistTask, subagentTasks, taskFilePath } from "./task-store.ts";
 import type { SubagentInstance } from "./types.ts";
 import type { AbortSource, SubagentManagerHost } from "./manager-host.ts";
 import { waitForActiveTools } from "./runtime-control.ts";
@@ -345,16 +346,15 @@ export async function deleteTask(mgr: SubagentManagerHost, taskId: string): Prom
       }
     }
 
+    // Migration hygiene only: remove directories created by pre-v1.1 releases.
+    // No active runtime initializes or reads this legacy memory.
     try {
-      const memOk = removeTaskMemory(taskId);
-      if (!memOk) {
-        console.warn(
-          `[SubagentManager] Cannot delete task ${taskId}: task memory cleanup failed. Preserving persistent task file as retry anchor.`,
-        );
-        return false;
-      }
+      const task = instance?.task ?? (existsSync(taskFilePath(taskId))
+        ? JSON.parse(readFileSync(taskFilePath(taskId), "utf8")) as UISubagentTask : undefined);
+      if (!removeTaskMemory(taskId)) return false;
+      if (task) removeTaskArtifacts(task.parentSessionId, taskId);
     } catch (err) {
-      console.warn(`[SubagentManager] Unexpected error during memory cleanup for ${taskId}:`, err);
+      console.warn(`[SubagentManager] Artifact cleanup failed for ${taskId}; retaining retry anchor:`, err);
       return false;
     }
 
@@ -697,6 +697,7 @@ export async function clearTasksForParent(mgr: SubagentManagerHost, parentSessio
       );
     }
     mgr.reusableAgents.clearForParent(parentSessionId);
+    removeTaskArtifacts(parentSessionId, "coordinator");
     mgr.finalizedRuns.delete(parentSessionId);
     return count;
   }
@@ -810,4 +811,3 @@ export async function finalizeRun(
     }
     return result;
   }
-

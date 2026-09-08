@@ -181,11 +181,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
 
       const assembled = PromptAssembler.assemble(effectiveContext);
       session._systemPromptOverride = assembled.systemPrompt;
-      session.setActiveToolsByName([
-        ...effectiveContext.runtime.activeTools,
-        "update_working_memory",
-        "append_process_journal",
-      ]);
+      session.setActiveToolsByName([...effectiveContext.runtime.activeTools]);
 
       const userPrompt = buildSubagentUserPrompt(t.taskPrompt, effectiveContext.taskContract, {
         workspaceContext: {
@@ -193,10 +189,6 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
           projectRoot: repoRoot,
           workspaceType: "isolated_worktree",
           gitBranch: t.branchName,
-        },
-        memoryPaths: {
-          workingMemoryPath: `/tmp/memories/${t.taskId}/working-memory.md`,
-          processJournalPath: `/tmp/memories/${t.taskId}/process-journal.md`,
         },
       });
 
@@ -237,11 +229,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
     const testerContext = ConstraintResolver.resolve({ role: "verifier", cwd: repoRoot });
     assert.deepEqual(
       A.fp.toolNames,
-      [
-        ...testerContext.runtime.activeTools,
-        "update_working_memory",
-        "append_process_journal",
-      ],
+      [...testerContext.runtime.activeTools],
       "Must match exact expected active tools list",
     );
 
@@ -302,7 +290,7 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
     assert.equal(systemPromptStr.includes(wmPath), false, "workingMemoryPath must NOT be in system prompt");
     assert.equal(systemPromptStr.includes(pjPath), false, "processJournalPath must NOT be in system prompt");
 
-    // 检查 User Prompt 包含了正确的动态内容
+    // Task Contract lives in the immutable task suffix; kickoff only carries workspace + trigger.
     const userPrompt = buildSubagentUserPrompt("Perform leak check", effectiveContext.taskContract, {
       workspaceContext: {
         cwd: worktreePath,
@@ -310,17 +298,14 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
         workspaceType: "isolated_worktree",
         gitBranch: branchName,
       },
-      memoryPaths: {
-        workingMemoryPath: wmPath,
-        processJournalPath: pjPath,
-      },
     });
 
     assert.ok(userPrompt.includes(worktreePath), "User prompt must contain worktree cwd");
     assert.ok(userPrompt.includes(branchName), "User prompt must contain branchName");
-    assert.ok(userPrompt.includes(wmPath), "User prompt must contain workingMemoryPath");
-    assert.ok(userPrompt.includes(pjPath), "User prompt must contain processJournalPath");
+    assert.equal(userPrompt.includes(wmPath), false, "legacy working memory must not be injected");
+    assert.equal(userPrompt.includes(pjPath), false, "legacy process journal must not be injected");
     assert.ok(userPrompt.includes("## Workspace Context"), "User prompt must contain Workspace Context block");
+    assert.ok(assembled.taskSystemPrompt.includes(taskId), "task suffix must contain the contract");
   });
 
   it("3. AGENTS.md / Project Rules semantic modification correctly updates system fingerprint (semantic cache invalidation)", () => {
@@ -611,4 +596,3 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
     assert.equal(turn4Result, undefined, "Subsequent user messages must NOT inject workspace context header");
   });
 });
-

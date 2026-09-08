@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentRole } from "../../shared/protocol.ts";
-import { loadSkillsContent } from "../skills.ts";
+import { resolveSkillCatalog, type SkillCatalogEntry } from "../skills.ts";
 import { getRoleConfig, getRoleDefinition, type RoleDefinition } from "./roles.ts";
 import { SHARED_DEFAULTS, SHARED_INVARIANTS } from "./rules.ts";
 import type { SubagentExecutionOptions, TaskContract } from "./task.ts";
@@ -36,8 +36,9 @@ export interface EffectiveContext {
   };
   projectRules: string[];
   defaults: readonly string[];
-  assignedSkills: Array<{ name: string; content: string }>;
+  assignedSkills: SkillCatalogEntry[];
   taskContract?: TaskContract;
+  taskLineage?: string[];
   environment: {
     cwd: string;
     projectRoot?: string;
@@ -57,6 +58,7 @@ export interface ResolveOptions {
   worktreePath?: string;
   targetCwd?: string;
   taskContract?: TaskContract;
+  taskLineage?: string[];
   executionOptions?: SubagentExecutionOptions;
   parentModel?: { provider?: string; modelId: string; thinkingLevel?: any } | null;
 }
@@ -136,7 +138,9 @@ export class ConstraintResolver {
     // 3. 解析技能
     const allowedSkills = role.allowedSkills ?? [];
     const assignedSkills =
-      allowedSkills.length > 0 ? loadSkillsContent(allowedSkills, options.cwd) : [];
+      allowedSkills.length > 0
+        ? resolveSkillCatalog(allowedSkills, options.cwd, options.projectRoot)
+        : [];
 
     // 4. 解析项目规则
     const projectRules = loadProjectRules(options.cwd, options.projectRoot);
@@ -153,6 +157,7 @@ export class ConstraintResolver {
       defaults: SHARED_DEFAULTS,
       assignedSkills,
       taskContract: options.taskContract,
+      taskLineage: options.taskLineage ? [...options.taskLineage] : undefined,
       environment: {
         cwd: options.cwd,
         projectRoot: options.projectRoot,

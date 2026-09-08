@@ -30,6 +30,8 @@ import {
   classifyCommandPurpose,
   resolveExpectedEffects,
   DEFAULT_ROLE_EXPECTED_EFFECTS,
+  VERIFICATION_FAILURE_SUMMARY_MAX_CHARS,
+  VERIFICATION_SUCCESS_SUMMARY_MAX_CHARS,
   verifyTestExecution,
 } from "../../server/runtime-verifier.ts";
 import {
@@ -283,6 +285,65 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       assert.equal(records[0].passed, false);
       assert.ok(records[0].stderrSummary?.includes("lint errors"));
     });
+
+    it("should keep successful command summaries small", () => {
+      assert.equal(VERIFICATION_SUCCESS_SUMMARY_MAX_CHARS, 400);
+      const text = `SUCCESS_HEAD\n${"x".repeat(1000)}\nSUCCESS_TAIL`;
+      const records = extractCommandRecords([
+        {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "call-success-summary",
+            name: "bash",
+            arguments: { command: "npm test" },
+          }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-success-summary",
+          content: text,
+          isError: false,
+          details: { exitCode: 0 },
+        },
+      ]);
+
+      assert.ok(records[0].stdoutSummary);
+      assert.equal(records[0].stdoutSummary!.length, VERIFICATION_SUCCESS_SUMMARY_MAX_CHARS);
+      assert.match(records[0].stdoutSummary!, /SUCCESS_HEAD/);
+      assert.doesNotMatch(records[0].stdoutSummary!, /SUCCESS_TAIL/);
+      assert.equal(records[0].stderrSummary, undefined);
+    });
+
+    it("should preserve head and tail context for failed command summaries", () => {
+      assert.equal(VERIFICATION_FAILURE_SUMMARY_MAX_CHARS, 1200);
+      const text = `ERROR_TYPE_HEAD\n${"x".repeat(2400)}\nROOT_CAUSE_TAIL`;
+      const records = extractCommandRecords([
+        {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "call-failure-summary",
+            name: "bash",
+            arguments: { command: "npm run typecheck" },
+          }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-failure-summary",
+          content: text,
+          isError: true,
+          details: { exitCode: 2 },
+        },
+      ]);
+
+      assert.ok(records[0].stderrSummary);
+      assert.equal(records[0].stderrSummary!.length, VERIFICATION_FAILURE_SUMMARY_MAX_CHARS);
+      assert.match(records[0].stderrSummary!, /ERROR_TYPE_HEAD/);
+      assert.match(records[0].stderrSummary!, /middle omitted/);
+      assert.match(records[0].stderrSummary!, /ROOT_CAUSE_TAIL/);
+      assert.equal(records[0].stdoutSummary, undefined);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -367,7 +428,7 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
   // 8. Coordinator Authority & Tools Verification
   // -------------------------------------------------------------------------
   describe("8. Coordinator Authority & Tools Verification", () => {
-    it("should verify Coordinator has lifecycle tools but NO accept/reject/write/edit tools", () => {
+    it("should verify Coordinator has lifecycle tools plus edit/write, but NO accept/reject tools", () => {
       const coordContext = ConstraintResolver.resolve({
         role: "coordinator",
         cwd: "/tmp/project",
@@ -380,8 +441,8 @@ export function registerSubagentLifecycleTests(getGitRepoDir: () => string) {
       assert.ok(tools.includes("continue_subagent"), "Coordinator must have continue_subagent");
       assert.ok(tools.includes("list_subagents"), "Coordinator must have list_subagents");
       assert.ok(tools.includes("abort_subagent"), "Coordinator must have abort_subagent");
-      assert.ok(!tools.includes("edit"), "Coordinator MUST NOT have edit tool");
-      assert.ok(!tools.includes("write"), "Coordinator MUST NOT have write tool");
+      assert.ok(tools.includes("edit"), "Coordinator must have edit tool for Direct Path work");
+      assert.ok(tools.includes("write"), "Coordinator must have write tool for Direct Path work");
     });
   });
 

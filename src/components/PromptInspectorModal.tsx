@@ -323,7 +323,7 @@ export function PromptInspectorModal({
                       {data.rolePrompt && (
                         <div className="border border-line bg-card p-3 space-y-1.5">
                           <div className="flex items-center justify-between text-xs font-bold text-accent">
-                            <span>🎭 当前角色约束 ({data.activeRole})</span>
+                            <span>🎭 Role Definition Preview ({data.activeRole})</span>
                             <button
                               type="button"
                               onClick={() => copyText("rolePrompt", data.rolePrompt!)}
@@ -331,6 +331,9 @@ export function PromptInspectorModal({
                             >
                               {copiedKey === "rolePrompt" ? "✓ 已复制" : "复制"}
                             </button>
+                          </div>
+                          <div className="text-[10px] text-faint">
+                            Role Prompt Projection · RoleConfig.systemPrompt，不等于实际 Provider System Prompt
                           </div>
                           <pre className="thin-scroll max-h-48 overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted bg-canvas p-2 border border-line">
                             {data.rolePrompt}
@@ -517,7 +520,7 @@ export function PromptInspectorModal({
                 {activeTab === "roles" && (
                   <div className="space-y-4">
                     <div className="text-xs text-muted">
-                      查看各子任务角色（前端、后端、全栈、统筹者等）所使用的独立提示词规范与模型配置：
+                      Role Definition Preview / Role Prompt Projection。这是 RoleConfig.systemPrompt 的投影，不是实际发往 Provider 的 System Prompt。
                     </div>
 
                     {/* 角色切换按钮组 */}
@@ -567,7 +570,10 @@ export function PromptInspectorModal({
                           </div>
 
                           <div>
-                            <span className="text-xs font-bold text-ink">System Prompt 提示词内容:</span>
+                            <span className="text-xs font-bold text-ink">Role Prompt Projection:</span>
+                            <div className="text-[10px] text-faint mt-0.5">
+                              RoleConfig.systemPrompt · 不等于实际 Provider System Prompt
+                            </div>
                             <pre className="thin-scroll max-h-96 overflow-y-auto whitespace-pre-wrap font-mono text-xs text-ink bg-canvas p-3 border border-line mt-1 leading-relaxed">
                               {cur.systemPrompt || "（此角色无特定额外系统提示词，使用基础开发提示词）"}
                             </pre>
@@ -584,7 +590,7 @@ export function PromptInspectorModal({
           {/* 底栏 */}
           <div className="border-t-2 border-line bg-card px-4 py-2.5 flex items-center justify-between shrink-0 font-mono text-xs">
             <span className="text-[11px] text-faint">
-              💡 提示：此面板展示实际组装发往大语言模型的全量请求内容，支持分轮次追溯与一键复制。
+              💡 提示：此面板为 Estimated Context / 非最终请求。RoleConfig.systemPrompt 仅为 Role Definition Preview，不等于实际 Provider System Prompt。
             </span>
             <button
               type="button"

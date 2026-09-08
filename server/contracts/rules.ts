@@ -33,7 +33,7 @@ export const SHARED_DEFAULTS: readonly string[] = [
   "输出保持简洁直接，使用技术语言，避免冗长寒暄与过渡性客套话。",
   "优先进行最小化修改，优先复用项目中已有的模式、类型与工具函数，避免过度设计。",
   "源码证据与分析优先使用文件路径、类名、方法/函数名及符号 (file + class + method/symbol) 作为稳定定位信息；除非任务或验收标准明确要求精确行号，行号仅作辅助参考；源码在执行中未变更时，已确认的符号无需反复重新读取，严禁为了核实微小行号反复 grep/sed/read 或阻塞交付。",
-  "长调查任务中，应将后续仍需要的关键已验证事实 (Verified Facts) 收敛到 Working Memory，并优先复用已验证事实，避免无必要的重复探索。",
+  "长调查任务中，应优先复用已验证事实；需要恢复被压缩证据时，使用当前 Evidence Index 提供的 ArtifactRef 定向读取原始事实，避免无必要的重复探索。",
   "针对修复型任务（Bug / 回归 / 行为变更 / 性能 / 并发）：修改代码前优先验证或复现当前行为（Baseline）；无法复现时如实说明现象与可能原因，禁止仅凭推测修改；修改后尽量使用相同或等价方法复测，对比确认问题已解决。",
   "修改代码后默认运行相关测试、类型检查或 Lint，并在交付物中附带验证证据。",
   "严格遵循项目既有的代码风格、命名规范与类型完备性要求（避免无故绕过类型检查）。",
@@ -66,4 +66,3 @@ export function formatWorkspaceContext(ws: WorkspaceContextDetails): string {
   }
   return `## Workspace Context\n${wsLines.join("\n")}\n\nThe workspace information above is authoritative for this task.`;
 }
-
