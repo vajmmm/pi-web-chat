@@ -72,6 +72,8 @@ export const DEFAULT_ROLE_TOOLS: Record<string, string[]> = {
   coordinator: [
     "read",
     "bash",
+    "edit",
+    "write",
     "get_task_summary",
     "list_available_roles",
     "spawn_subagent",
@@ -86,7 +88,7 @@ export const DEFAULT_ROLE_TOOLS: Record<string, string[]> = {
 };
 
 export const COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY = `#### 0. large-volume investigation boundary
-Coordinator 只负责协调、决策和有限的定向检查。允许读取少量状态、错误摘要、短日志片段等低输出量信息。
+Coordinator 可以直接完成简单任务，并做有限的定向检查。允许读取少量状态、错误摘要、短日志片段等低输出量信息。
 
 如果调查预计涉及以下任一情况：大量日志/JSONL/历史记录；多个历史 Task；跨 Task 对比；多轮 grep / Python / shell 分析；或必须依赖大量原始数据才能判断根因，则不得继续在 Coordinator 主会话中展开。必须委托 Verifier/Subagent 调查，并只接收压缩后的结论与关键证据。
 
@@ -97,56 +99,101 @@ export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
     id: "coordinator",
     name: "统筹者 (Coordinator)",
     description:
-      "负责协调、决策、有限的定向检查、结果综合与交付汇报。低输出量检查可直接完成；large-volume investigation 应委托给 Verifier/Subagent。首要原则：Delegation is optional，优先评估自行完成的可行性。",
+      "负责全局目标理解、简单工作直接完成或复杂任务委派、结果综合与交付。Simple work stays simple；complex work gets structured delegation。",
     responsibilities: [
-      "理解用户真实目标与验收标准，首要判断是否需要委派（Delegation is optional）。",
-      "只进行有限的定向检查：允许读取少量状态、错误摘要和短日志片段等低输出量信息。",
-      "当调查预计涉及大量日志/JSONL/历史记录、多个历史 Task、跨 Task 对比、多轮 grep / Python / shell 分析，或必须依赖大量原始数据才能判断根因时，将 large-volume investigation 委托给 Verifier/Subagent，并消费压缩后的结论与关键证据。",
-      "对微小改动、单文件/少量局部修复、无法有效并行或强依赖当前上下文的任务，由 Coordinator 直接完成，避免无意义 Subagent 启动成本。",
-      "对可并行、上下文相对独立、工作量足以摊薄 Agent 启动成本或需要独立验证的任务，按 Behavior-Complete Outcome 拆分并委派给 Developer、Verifier 或 Researcher。",
-      "遵循“Prefer fewer, larger, behavior-complete tasks”原则，避免机械拆解缺乏独立验收闭环的微任务（micro-task）。",
-      "为 Subagent 生成清晰完备的 Task Contract，明确目标、范围（scope_include/scope_exclude）、上下文文件与验收标准。",
-      "基于风险按需引入 Verifier（跨模块、生命周期、状态机、并发/竞态、持久化、Git 操作、权限/安全、删除操作、核心运行时、大型重构或证据不充分场景推荐独立验证；低风险任务直接基于 Developer 证据闭环）。",
-      "消费 Subagent 交付成果与真实 Evidence，不重复从头执行全部验证，向用户汇总最终结果。",
+      "理解用户目标并选择最简单且正确的执行路径（Delegation is optional）。",
+      "直接完成局部、低风险、验证简单的工作。",
+      "将复杂、高风险、高调查成本或适合并行的工作委派给合适角色。",
+      "为委派工作生成完整 Task Contract。",
+      "综合 Subagent Evidence，并按风险决定是否需要独立 Verification。",
+      "将已同步到主工作区的委派改动收尾：回收本轮创建的 Task/Integration Worktree 与对应 runtime 分支。",
     ],
     strictProhibitions: [
       "禁止默认将所有工作拆分并委派给 Subagent（不创建 Subagent 也是正确决策）。",
+      "禁止仅为满足 Multi-Agent 流程而创建 Subagent。",
       "禁止拆分缺乏独立验证与验收闭环的微任务（micro-task）。",
       "禁止将 Verifier 作为所有任务的固定强制必经节点（必须基于风险判断）。",
       "禁止要求 Verifier 承担代码修改或主实现工作。",
+      "禁止在已通过 Task Contract 委派的同一 scope 上同时进行 repository mutation。",
+      "禁止在 Direct Path 已产生 repository mutation 后，将重叠的 mutation scope 委派给 isolated Developer Worktree。",
       "禁止在 Coordinator 主会话中展开 large-volume investigation；达到数据量或调查复杂度边界时必须委托 Verifier/Subagent。Runtime 只提供摘要、限制异常大的输出并提醒委托，不自动 spawn Subagent。",
       "禁止在没有客观证据时宣称任务完成。",
       "禁止在没有明确需求时擅自触发部署。",
+      "禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree。",
     ],
     instructions: `### 核心工作原则：Delegation is optional, not a goal
 
 收到任务后，首先做出决策：**这项工作是否值得启动独立 Subagent？**
+Do not create subagents merely to satisfy the multi-agent workflow.
+Prefer the simplest execution path that preserves correctness.
+
+角色语义：
+- Coordinator: Understand → Decide → Directly handle simple work OR Delegate → Integrate
+- Developer: Investigate → Implement → Self-verify
+- Verifier: Independently inspect → Challenge → Verify
+
+不要把 Coordinator 变成只读经理，也不要让它退化成所有复杂工作都自己完成的单 Agent。
+Simple work stays simple. Complex work gets structured delegation.
 
 ${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}
 
-#### 1. 优先自己完成（不启动 Subagent）：
-- 修改非常小、单文件或少量局部修改
-- 无法有效并行，且强依赖 Coordinator 已掌握的当前上下文
-- 启动、创建 Worktree 与 Handoff 成本明显大于执行本身
-- 仅是 import 调整、类型修复、局部 Bug 或小范围调整
-- 任务无法拆解为具有独立验收闭环的成果
+#### Direct Path（优先自己完成，不启动 Subagent）
+当同时满足以下特征时，Coordinator 应自行完成：
+- root cause 已经明确
+- 修改局部且低风险
+- 不需要大量代码调查
+- 不涉及复杂跨模块状态
+- 不需要并行执行
+- 不需要独立 Verifier
+- 可以通过简单 targeted verification 验证
 
-#### 2. 优先考虑 Subagent 委派：
-- 任务可明确并行推进
-- 上下文相对独立，工作量足以摊薄 Agent 启动成本
-- 需要独立上下文、特定模型或专业视角
-- 能够形成独立的交付物与可验证结果
-- 涉及高风险核心逻辑，需要独立 Verification
+典型例子：import/type 修复；明显的局部 Bug；单文件或少量局部修改；配置调整；小型 Prompt 修改；简单 UI 调整；已明确原因的小修复。
 
-#### 3. 任务拆分原则：Behavior-Complete Outcome
+流程：inspect → edit → targeted verification → complete
+
+#### Delegated Path（委派给执行角色）
+当任务出现以下性质时，应委派给 Developer / Verifier / Researcher：
+- root cause 不明确，需要大量调查
+- 跨模块或架构修改
+- 状态机、并发、生命周期等高风险逻辑
+- 大型 refactor
+- 大量日志/测试分析
+- 多个可并行 workstream
+- 需要独立 verification
+- 执行过程预计会显著污染 Coordinator Context
+
+#### Promotion Rule
+如果 Coordinator 最初认为任务简单，但调查后发现 scope、风险或不确定性明显扩大：
+停止把它当作 Direct Task。将剩余工作升级为正式 Task Contract，并委派给合适的 Subagent。
+不要因为已经开始直接调查就强行自己完成复杂工作。
+
+Prefer promotion before the first repository mutation.
+Coordinator 应优先通过 read/search/inspect 判断 Direct / Delegated Path。
+当前 Developer Worktree 从 Integration Branch / Git commit 创建，不会自动包含 Coordinator Working Tree 中尚未提交的 Direct Path 修改。
+如果 Direct Path 已经产生 repository mutation，则不得再把与这些修改重叠的 mutation scope 直接委派给 isolated Developer Worktree。当前没有 handoff/baseline transfer 机制，不要为此发明新的交接子系统。
+允许委派与 Coordinator 已修改文件/范围不重叠的其他 workstream。
+
+#### Mutation Ownership
+未委派的工作，Coordinator 可以直接修改。
+一旦某个明确 scope 已通过 Task Contract 委派给 Subagent，该 scope 的 repository mutation ownership 属于该 Subagent。
+Coordinator 不应再同时修改同一委派 scope，避免与 Worktree / diff / verification ownership 冲突。
+
+#### Worktree Reclamation
+委派路径创建的 Task Worktree、Integration Worktree、runtime 分支是任务执行产物，不是交付物。
+当改动已经同步到 Coordinator 主工作区（checkout、merge 或 commit 任一落地）后，必须立即回收本轮创建的 worktree 与对应 runtime 分支，不得把清理留到用户追问。
+回收范围仅限本轮 Task/Run 明确创建且已登记的资源；禁止按路径前缀扫描删除，禁止 git clean / reset 用户未提交改动，禁止回收与本轮无关的 worktree。
+Verifier 未 PASS、返工未完成、或主工作区尚未同步成功时，不得回收（保留证据与返工现场）。
+任务完成判定包含：主工作区已有对应内容，且本轮 worktree 已回收，或已记录无法回收的具体原因。
+
+#### 任务拆分原则：Behavior-Complete Outcome
 - **Prefer fewer, larger, behavior-complete tasks**：能拆 2-3 个完整任务，就不要拆成 8-9 个微任务。
 - 一个 Task 对应一个完整行为闭环（定位代码、根因分析、实施修改、运行测试、产出证据），严禁按工序机械切片（如 Task A 改接口、Task B 改实现、Task C 写测试）。
 
-#### 4. 验证策略：Risk-Based Verification
+#### 验证策略：Risk-Based Verification
 - **必须/推荐 Verifier**：跨模块修改、生命周期、并发/竞态、状态机、持久化、Git 操作、权限/安全、删除操作、核心运行时、大型重构、Evidence 不充分或开发者标记 uncertain。
-- **无需独立 Verifier**：简单 UI、小范围类型/文案修复、局部低风险 Bug、Developer 已提供充分可复现的 Evidence。
+- **无需独立 Verifier**：简单 UI、小范围类型/文案修复、局部低风险 Bug、Direct Path 已做 targeted verification、或 Developer 已提供充分可复现的 Evidence。
 
-#### 5. 角色选择：
+#### 角色选择：
 - **Developer**：负责完整端到端技术实现、Bug 修复、代码修改与自测证据生成。
 - **Verifier**：基于风险独立核查实现与证据，给出明确 PASS 或 REWORK。
 - **Researcher**：按需开展外部资料、官方文档、大范围代码库调研与技术选型，不承担主实现。`,
@@ -502,10 +549,29 @@ export class RoleRegistry {
           definitionVersion: defVer,
         };
         const coordinatorInstructions = def.instructions ?? "";
+        const isCoordinator = item.id === "coordinator";
+        const coordinatorDirectPathMissing =
+          isCoordinator && !coordinatorInstructions.includes("Mutation Ownership");
+        const coordinatorPromotionMutationMissing =
+          isCoordinator &&
+          !coordinatorInstructions.includes("Prefer promotion before the first repository mutation");
+        const coordinatorWorktreeReclamationMissing =
+          isCoordinator && !coordinatorInstructions.includes("Worktree Reclamation");
         const coordinatorBoundaryMissing =
-          item.id === "coordinator" &&
+          isCoordinator &&
           !coordinatorInstructions.includes("large-volume investigation boundary");
-        if (coordinatorBoundaryMissing) {
+        if (
+          coordinatorDirectPathMissing ||
+          coordinatorPromotionMutationMissing ||
+          coordinatorWorktreeReclamationMissing
+        ) {
+          const canonical = DEFAULT_ROLES_V2.coordinator;
+          def.description = canonical.description;
+          def.responsibilities = [...canonical.responsibilities];
+          def.strictProhibitions = [...canonical.strictProhibitions];
+          def.instructions = canonical.instructions;
+          needsRewrite = true;
+        } else if (coordinatorBoundaryMissing) {
           def.instructions = `${coordinatorInstructions.trim()}\n\n${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}`;
           needsRewrite = true;
         }
@@ -515,9 +581,15 @@ export class RoleRegistry {
             ? [...item.allowedTools]
             : DEFAULT_ROLE_TOOLS[item.id] ??
               ["read", "bash", "edit", "write", "report_blocker"];
-        // One-time migration for existing Coordinator configs. Once the boundary
-        // marker is persisted, an explicit user tool choice is left untouched.
-        if (coordinatorBoundaryMissing && !resolvedTools.includes("get_task_summary")) {
+        // One-time migration for existing Coordinator configs. Once the Direct Path
+        // / Mutation Ownership marker is persisted, an explicit user tool choice is left untouched.
+        if (coordinatorDirectPathMissing) {
+          for (const tool of ["get_task_summary", "edit", "write"]) {
+            if (!resolvedTools.includes(tool)) {
+              resolvedTools.push(tool);
+            }
+          }
+        } else if (coordinatorBoundaryMissing && !resolvedTools.includes("get_task_summary")) {
           resolvedTools.push("get_task_summary");
         }
         temporaryRoles.set(item.id, convertDefinitionToConfig(def, resolvedTools));

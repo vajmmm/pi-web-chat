@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,12 +8,13 @@ process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-coordinator-bou
 
 import type { AgentRole, UISubagentTask } from "../shared/protocol.ts";
 import {
-  COORDINATOR_OUTPUT_TRUNCATION_MESSAGE,
   COORDINATOR_TASK_SUMMARY_LIMIT,
   COORDINATOR_TOOL_OUTPUT_LIMIT,
   createCoordinatorExtension,
 } from "../server/coordinator-tools.ts";
 import { getRoleConfig, getRoleDefinition, RoleRegistry, rolesPath } from "../server/contracts/index.ts";
+import { getTaskRuntimeDir } from "../server/runtime-artifacts.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "../server/subagent/output-virtualizer.ts";
 
 function setupCoordinatorTools(
   task: UISubagentTask,
@@ -87,6 +88,14 @@ function makeTask(overrides: Partial<UISubagentTask> = {}): UISubagentTask {
 }
 
 describe("Coordinator large-volume investigation boundary", () => {
+  it("uses the intended role-specific default tool output budgets", () => {
+    assert.equal(COORDINATOR_TOOL_OUTPUT_LIMIT, 24 * 1024);
+    assert.equal(DEFAULT_OUTPUT_BUDGETS.coordinator, 24 * 1024);
+    assert.equal(DEFAULT_OUTPUT_BUDGETS.subagent, 32 * 1024);
+    assert.equal(DEFAULT_OUTPUT_BUDGETS.verifier, 40 * 1024);
+    assert.equal(COORDINATOR_TASK_SUMMARY_LIMIT, 4 * 1024);
+  });
+
   it("documents a data-volume/complexity boundary without banning ordinary log checks", () => {
     const coordinator = getRoleDefinition("coordinator");
     assert.match(coordinator.instructions, /large-volume investigation/);
@@ -97,20 +106,41 @@ describe("Coordinator large-volume investigation boundary", () => {
     assert.ok(getRoleConfig("coordinator").allowedTools?.includes("get_task_summary"));
   });
 
-  it("truncates oversized Coordinator bash/read results at the Coordinator threshold", async () => {
+  it("virtualizes oversized Coordinator bash/read results with a recoverable pointer", async () => {
     const { events } = setupCoordinatorTools(makeTask());
-    const oversized = "x".repeat(COORDINATOR_TOOL_OUTPUT_LIMIT + 500);
+    const oversized = `RAW_HEAD\n${"x".repeat(COORDINATOR_TOOL_OUTPUT_LIMIT + 500)}\nRAW_TAIL`;
 
     for (const toolName of ["bash", "read"]) {
       const patch = await events.tool_result({
+        toolCallId: `oversized-${toolName}`,
         toolName,
         content: [{ type: "text", text: oversized }],
       });
       assert.ok(patch, `${toolName} should be truncated`);
       const output = patch.content[0].text;
       assert.ok(Buffer.byteLength(output, "utf8") <= COORDINATOR_TOOL_OUTPUT_LIMIT);
-      assert.ok(output.includes(COORDINATOR_OUTPUT_TRUNCATION_MESSAGE));
+      assert.match(output, /Full output: artifacts:\/\/runs\//);
+      assert.match(output, /Runtime path:/);
+      assert.match(output, /RAW_HEAD/);
+      assert.match(output, /RAW_TAIL/);
+      const runtimePath = output.match(/\[Runtime path: ([^\]]+)\]/)?.[1];
+      assert.ok(runtimePath);
+      assert.equal(readFileSync(runtimePath, "utf8"), oversized);
     }
+  });
+
+  it("returns Coordinator output below 24KB unchanged while still persisting it", async () => {
+    const { events } = setupCoordinatorTools(makeTask());
+    const raw = `SMALL_HEAD\n${"x".repeat(COORDINATOR_TOOL_OUTPUT_LIMIT - 1024)}\nSMALL_TAIL`;
+    const patch = await events.tool_result({
+      toolCallId: "small-bash",
+      toolName: "bash",
+      content: [{ type: "text", text: raw }],
+    });
+
+    assert.equal(patch, undefined);
+    const runtimePath = `${getTaskRuntimeDir("parent-1", "coordinator")}/tool_outputs/small-bash_bash.log`;
+    assert.equal(readFileSync(runtimePath, "utf8"), raw);
   });
 
   it("does not apply the Coordinator threshold to Verifier or Developer", async () => {
@@ -180,6 +210,60 @@ describe("Coordinator large-volume investigation boundary", () => {
     assert.equal(output.includes("RESULT_TAIL_SENTINEL"), false);
   });
 
+  it("retains a complete TaskEpisodeView within 4KB", async () => {
+    const taskId = "task-episode-within-budget";
+    const reportedSummary = "Implemented the requested change and verified the focused behavior.";
+    const task = makeTask({
+      taskId,
+      status: "completed",
+      completedAt: "2026-09-08T00:00:01.000Z",
+      changedFiles: ["server/a.ts", "test/a.test.ts"],
+      taskResult: {
+        ...makeTask().taskResult!,
+        taskId,
+        status: "completed",
+        summary: reportedSummary,
+        changedFiles: ["server/a.ts", "test/a.test.ts"],
+      },
+    });
+    const { tools } = setupCoordinatorTools(task);
+    const result = await tools.get_task_summary.execute("call-episode-small", { taskId });
+    const output = result.content[0].text;
+    const view = JSON.parse(output);
+
+    assert.ok(Buffer.byteLength(output, "utf8") <= COORDINATOR_TASK_SUMMARY_LIMIT);
+    assert.equal(view.truncated, undefined);
+    assert.equal(view.agentReportedInterpretation.reportedSummary, reportedSummary);
+    assert.deepEqual(view.physical.worktree.filesChanged, ["server/a.ts", "test/a.test.ts"]);
+    assert.ok(view.artifactPointers.taskResult.ref);
+    assert.ok(view.artifactPointers.verifier.ref);
+  });
+
+  it("degrades an oversized TaskEpisodeView within 4KB without losing artifact pointers", async () => {
+    const taskId = "task-episode-over-budget";
+    const task = makeTask({
+      taskId,
+      completedAt: "2026-09-08T00:00:01.000Z",
+      changedFiles: Array.from({ length: 500 }, (_, index) => `src/very-long-file-name-${index}.ts`),
+      taskResult: {
+        ...makeTask().taskResult!,
+        taskId,
+        summary: "summary ".repeat(1000),
+      },
+    });
+    const { tools } = setupCoordinatorTools(task);
+    const result = await tools.get_task_summary.execute("call-episode-large", { taskId });
+    const output = result.content[0].text;
+    const view = JSON.parse(output);
+
+    assert.ok(Buffer.byteLength(output, "utf8") <= COORDINATOR_TASK_SUMMARY_LIMIT);
+    assert.equal(view.truncated, true);
+    assert.ok(view.artifactPointers.transcript.ref);
+    assert.ok(view.artifactPointers.taskResult.ref);
+    assert.ok(view.artifactPointers.toolOutputsDir.ref);
+    assert.ok(view.artifactPointers.verifier.ref);
+  });
+
   it("leaves ordinary small-scope Coordinator checks available", async () => {
     const { events } = setupCoordinatorTools(makeTask());
     const smallOutput = "short error summary\nline 2";
@@ -219,7 +303,91 @@ describe("Coordinator large-volume investigation boundary", () => {
     RoleRegistry.getInstance().reload();
     const migrated = getRoleConfig("coordinator");
     assert.match(migrated.definition.instructions ?? "", /large-volume investigation boundary/);
-    assert.deepEqual(migrated.allowedTools, ["read", "bash", "get_task_summary"]);
+    assert.match(migrated.definition.instructions ?? "", /Mutation Ownership/);
+    assert.match(migrated.definition.instructions ?? "", /Direct Path/);
+    assert.deepEqual(migrated.allowedTools, ["read", "bash", "get_task_summary", "edit", "write"]);
     assert.equal(getRoleConfig("developer").description, "Custom Developer description");
+  });
+
+  it("leaves an explicit Coordinator tool choice untouched after Mutation Ownership is persisted", () => {
+    const coordinator = getRoleConfig("coordinator");
+    const developer = getRoleConfig("developer");
+    writeFileSync(
+      rolesPath(),
+      JSON.stringify([
+        {
+          ...coordinator,
+          allowedTools: ["read", "bash", "get_task_summary"],
+          definition: {
+            ...coordinator.definition,
+            instructions: coordinator.definition.instructions,
+          },
+        },
+        developer,
+      ]),
+      "utf8",
+    );
+
+    RoleRegistry.getInstance().reload();
+    const reloaded = getRoleConfig("coordinator");
+    assert.match(reloaded.definition.instructions ?? "", /Mutation Ownership/);
+    assert.deepEqual(reloaded.allowedTools, ["read", "bash", "get_task_summary"]);
+  });
+
+  it("refreshes Coordinator definition for promotion-before-mutation without resetting tools", () => {
+    const coordinator = getRoleConfig("coordinator");
+    const developer = getRoleConfig("developer");
+    writeFileSync(
+      rolesPath(),
+      JSON.stringify([
+        {
+          ...coordinator,
+          allowedTools: ["read", "bash", "get_task_summary"],
+          definition: {
+            ...coordinator.definition,
+            instructions: "Has Mutation Ownership but not the new promotion-before-mutation rule.",
+          },
+        },
+        developer,
+      ]),
+      "utf8",
+    );
+
+    RoleRegistry.getInstance().reload();
+    const refreshed = getRoleConfig("coordinator");
+    assert.match(refreshed.definition.instructions ?? "", /Prefer promotion before the first repository mutation/);
+    assert.equal(refreshed.definition.responsibilities.length, 6);
+    assert.deepEqual(refreshed.allowedTools, ["read", "bash", "get_task_summary"]);
+  });
+
+  it("refreshes Coordinator definition for Worktree Reclamation without resetting tools", () => {
+    const coordinator = getRoleConfig("coordinator");
+    const developer = getRoleConfig("developer");
+    writeFileSync(
+      rolesPath(),
+      JSON.stringify([
+        {
+          ...coordinator,
+          allowedTools: ["read", "bash", "get_task_summary"],
+          definition: {
+            ...coordinator.definition,
+            instructions:
+              "Has Mutation Ownership and Prefer promotion before the first repository mutation, but not the new reclaim rule.",
+          },
+        },
+        developer,
+      ]),
+      "utf8",
+    );
+
+    RoleRegistry.getInstance().reload();
+    const refreshed = getRoleConfig("coordinator");
+    assert.match(refreshed.definition.instructions ?? "", /Worktree Reclamation/);
+    assert.ok(
+      refreshed.definition.strictProhibitions.some((p) =>
+        p.includes("禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree"),
+      ),
+    );
+    assert.deepEqual(refreshed.allowedTools, ["read", "bash", "get_task_summary"]);
   });
 });

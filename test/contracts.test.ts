@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -43,6 +43,7 @@ import {
   unhideSubscriptionModel,
 } from "../server/subscription-preferences.ts";
 import { buildSubagentUserPrompt } from "../server/subagent-manager.ts";
+import { adjustSkillsInBasePrompt } from "../server/skills.ts";
 import type { TaskContract as SharedTaskContract } from "../shared/protocol.ts";
 
 describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
@@ -67,7 +68,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(SHARED_DEFAULTS.some((d) => d.includes("针对修复型任务") && d.includes("Baseline")));
       assert.ok(SHARED_DEFAULTS.some((d) => d.includes("简明交付报告")));
       assert.ok(SHARED_DEFAULTS.some((d) => d.includes("file + class + method/symbol") && d.includes("行号仅作辅助参考")));
-      assert.ok(SHARED_DEFAULTS.some((d) => d.includes("Verified Facts") && d.includes("Working Memory")));
+      assert.ok(SHARED_DEFAULTS.some((d) => d.includes("Evidence Index") && d.includes("ArtifactRef")));
     });
   });
 
@@ -140,6 +141,31 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         "Coordinator instructions must detail when to finish tasks themselves without subagents",
       );
       assert.ok(
+        coordinator.instructions?.includes("Direct Path"),
+        "Coordinator instructions must define Direct Path",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Delegated Path"),
+        "Coordinator instructions must define Delegated Path",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Promotion Rule"),
+        "Coordinator instructions must define Promotion Rule",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Mutation Ownership"),
+        "Coordinator instructions must define Mutation Ownership",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Worktree Reclamation"),
+        "Coordinator instructions must define Worktree Reclamation after sync",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("Prefer promotion before the first repository mutation"),
+        "Coordinator instructions must prefer promotion before the first repository mutation",
+      );
+      assert.equal(coordinator.responsibilities.length, 6);
+      assert.ok(
         coordinator.instructions?.includes("Behavior-Complete Outcome"),
         "Coordinator instructions must emphasize behavior-complete task decomposition",
       );
@@ -159,9 +185,33 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         coordinator.strictProhibitions.some((p) => p.includes("禁止拆分缺乏独立验证与验收闭环的微任务")),
         "Coordinator must prohibit decomposing micro-tasks without independent closure",
       );
+      assert.ok(
+        coordinator.strictProhibitions.some((p) => p.includes("禁止在已通过 Task Contract 委派的同一 scope 上同时进行 repository mutation")),
+        "Coordinator must prohibit mutating a delegated scope",
+      );
+      assert.ok(
+        coordinator.strictProhibitions.some((p) => p.includes("禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree")),
+        "Coordinator must prohibit leaving this-run worktrees after sync",
+      );
+      assert.ok(
+        coordinator.responsibilities.some((r) => r.includes("回收本轮创建的 Task/Integration Worktree")),
+        "Coordinator responsibilities must include reclaiming this-run worktrees after sync",
+      );
+      assert.doesNotMatch(
+        coordinator.instructions ?? "",
+        /禁止修改代码|不得修改代码|readonly role/i,
+        "Coordinator prompt must not declare a readonly/no-code-change ban",
+      );
+      assert.equal(
+        coordinator.strictProhibitions.some((p) => /禁止修改代码|不得修改代码/.test(p)),
+        false,
+        "Coordinator must not prohibit modifying code",
+      );
       assert.equal(coordinator.requiresWorktree, false, "Coordinator must not require worktree");
       assert.equal((coordinator as any).allowedTools, undefined);
       assert.ok(coordinatorCfg.allowedTools?.includes("spawn_subagent"));
+      assert.ok(coordinatorCfg.allowedTools?.includes("edit"), "Coordinator must have edit for Direct Path");
+      assert.ok(coordinatorCfg.allowedTools?.includes("write"), "Coordinator must have write for Direct Path");
     });
 
     it("6. Developer Role handles frontend, backend, and debug tasks with root cause and baseline evidence", () => {
@@ -406,6 +456,82 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.equal((parsed as any).workspace_context, undefined, "workspace_context must not be in system prompt");
     });
 
+    it("projects assigned skills as a catalog and never inlines SKILL.md bodies into any prompt", () => {
+      const project = mkdtempSync(join(tmpdir(), "pi-skill-catalog-"));
+      const skillDir = join(project, ".agents", "skills", "harness-catalog-only-fixture");
+      mkdirSync(skillDir, { recursive: true });
+      const bodyMarker = "UNIQUE_SKILL_BODY_MUST_NEVER_ENTER_THE_SYSTEM_PROMPT";
+      writeFileSync(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "name: harness-catalog-only-fixture",
+          "description: Use when running the catalog-only skill projection fixture.",
+          "---",
+          "",
+          `# Playbook`,
+          bodyMarker,
+          "Follow these long workflow instructions in every turn.",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const registry = RoleRegistry.getInstance();
+      const coordinator = registry.getRole("coordinator");
+      saveRolesConfig([
+        {
+          ...coordinator,
+          allowedSkills: ["harness-catalog-only-fixture"],
+          definition: {
+            ...coordinator.definition,
+            allowedSkills: ["harness-catalog-only-fixture"],
+          },
+        },
+      ]);
+      RoleRegistry.getInstance().reload();
+
+      try {
+        const context = ConstraintResolver.resolve({
+          role: "coordinator",
+          cwd: project,
+        });
+        const assembled = PromptAssembler.assemble(context);
+        const parsed = JSON.parse(assembled.systemPrompt);
+        const catalog = parsed.assigned_skills;
+
+        assert.equal(catalog.skills.length, 1);
+        assert.equal(catalog.skills[0].name, "harness-catalog-only-fixture");
+        assert.match(catalog.skills[0].description, /catalog-only skill projection fixture/);
+        assert.equal(
+          catalog.skills[0].location,
+          ".agents/skills/harness-catalog-only-fixture/SKILL.md",
+        );
+        assert.equal(catalog.skills[0].workflow_instructions, undefined);
+        assert.equal(catalog.skills[0].content, undefined);
+        assert.match(String(catalog.load_policy), /read/i);
+        assert.equal(assembled.systemPrompt.includes(bodyMarker), false);
+        assert.equal(assembled.taskSystemPrompt.includes(bodyMarker), false);
+        assert.equal(JSON.stringify(assembled.jsonPayload).includes(bodyMarker), false);
+        assert.deepEqual(context.assignedSkills, [
+          {
+            name: "harness-catalog-only-fixture",
+            description: "Use when running the catalog-only skill projection fixture.",
+            location: ".agents/skills/harness-catalog-only-fixture/SKILL.md",
+          },
+        ]);
+        assert.equal(assembled.globalStablePrefix.includes(skillDir), false);
+
+        const native = adjustSkillsInBasePrompt("You are a coding agent.", ["harness-catalog-only-fixture"], project);
+        assert.match(native, /harness-catalog-only-fixture/);
+        assert.match(native, /<location>/);
+        assert.equal(native.includes(bodyMarker), false);
+      } finally {
+        saveRolesConfig(Object.values(DEFAULT_ROLES_V2).map((d) => convertDefinitionToConfig(d)));
+        RoleRegistry.getInstance().reload();
+        rmSync(project, { recursive: true, force: true });
+      }
+    });
+
     it("should guarantee System Prompt prefix stability across consecutive tasks with different worktrees, branches, and taskIds", () => {
       // Task A
       const contextA = ConstraintResolver.resolve({
@@ -498,6 +624,33 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(userPromptA.includes("pi-subagent-task-A"));
       assert.ok(userPromptB.includes("/Users/dev/project/.pi/agent/worktrees/task-B"));
       assert.ok(userPromptB.includes("pi-subagent-task-B"));
+      assert.equal(userPromptA.includes("Run CK tests"), false);
+    });
+
+    it("places resolved runtime model identity between global prefix and task suffix", () => {
+      const context = ConstraintResolver.resolve({
+        role: "developer",
+        cwd: "/tmp/project",
+        taskContract: {
+          taskId: "task-model-1",
+          parentSessionId: "session-1",
+          role: "developer",
+          goal: "implement",
+        },
+      });
+      const assembled = PromptAssembler.assemble(context, {
+        runtimeModel: { provider: "anthropic", id: "claude-fallback-sonnet" },
+      });
+
+      assert.equal(assembled.globalStablePrefix.includes("claude-fallback-sonnet"), false);
+      assert.equal(assembled.globalStablePrefix.includes("runtime_model"), false);
+      assert.ok(assembled.taskSystemPrompt.startsWith(assembled.globalStablePrefix));
+      const modelIdx = assembled.taskSystemPrompt.indexOf("claude-fallback-sonnet");
+      const taskIdx = assembled.taskSystemPrompt.indexOf("TASK_SCOPED_STABLE_PREFIX");
+      assert.ok(modelIdx > assembled.globalStablePrefix.length);
+      assert.ok(taskIdx > modelIdx);
+      assert.match(assembled.systemPrompt, /"provider": "anthropic"/);
+      assert.equal(assembled.systemPrompt.includes("configured-target-model"), false);
     });
   });
 
@@ -601,30 +754,24 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
     });
   });
 
-  describe("7. Subagent User Prompt & Working Memory Boundaries", () => {
-    it("should build subagent user prompt with authoritative memory guidelines and task-scoped lifecycle", () => {
+  describe("7. Subagent kickoff and task-stable boundaries", () => {
+    it("keeps legacy memory out of the kickoff user turn", () => {
       const prompt = buildSubagentUserPrompt(
         "Investigate ClickHouse clean config",
         {
           taskId: "task-test-mem-1",
           parentSessionId: "parent-1",
-          role: "tester",
+          role: "developer",
           goal: "Verify CK isolation",
-        },
-        {
-          memoryPaths: {
-            workingMemoryPath: "/tmp/working-memory.md",
-            processJournalPath: "/tmp/process-journal.md",
-          },
         },
       );
 
-      assert.ok(prompt.includes("## Working Memory & Process Journal"));
-      assert.ok(prompt.includes("current task rolling state"));
-      assert.ok(prompt.includes("current real evidence is authoritative"));
-      assert.ok(prompt.includes("Working Memory is maintained for this task"));
-      assert.ok(prompt.includes("directly reuse these facts instead of unconditionally re-reading source code"));
+      assert.ok(prompt.includes("## Task Kickoff"));
+      assert.ok(prompt.includes("assigned immutable Task Contract"));
+      assert.equal(prompt.includes("Investigate ClickHouse clean config"), false);
+      assert.equal(prompt.includes("Initial instruction:"), false);
+      assert.equal(prompt.includes("Working Memory"), false);
+      assert.equal(prompt.includes("Process Journal"), false);
     });
   });
 });
-
