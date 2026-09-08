@@ -15,6 +15,12 @@ export interface ServerContext {
   createRuntime: CreateAgentSessionRuntimeFactory;
   reloadModelProviders: (providers: UICustomProvider[]) => Promise<string | undefined>;
   updateModelRuntime: (newRuntime: ModelRuntime) => void;
+  /**
+   * Optional bound (ms) for the best-effort model catalog refresh performed by
+   * /api/models routes. Defaults to module constants in server/model-catalog.ts;
+   * tests override with small values for deterministic timeout paths.
+   */
+  modelCatalogRefreshTimeoutMs?: number;
 }
 
 export function readBody(req: IncomingMessage, limit = 1_000_000): Promise<string> {

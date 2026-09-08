@@ -37,6 +37,9 @@ export const zh: Messages = {
   clearSearch: "清除搜索",
   noModelsAvailable: "没有可用模型",
   noSearchResults: "无搜索结果",
+  refreshModels: "刷新模型",
+  refreshingModels: "刷新中…",
+  refreshModelsFailed: "刷新失败，已显示缓存模型",
 
   forkSession: "分叉会话",
   forkSessionEllipsis: "分叉会话…",

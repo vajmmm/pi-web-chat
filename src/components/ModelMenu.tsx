@@ -1,7 +1,8 @@
 import { Menu } from "@base-ui-components/react/menu";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIModel } from "../../shared/protocol";
-import { useCustomModels, useModels, useSubscriptionModels } from "../lib/api";
+import { MODELS_QUERY_KEY, refreshModelsApi, useCustomModels, useModels, useSubscriptionModels } from "../lib/api";
 import { chatClient } from "../lib/chat";
 import { useT } from "../lib/i18n";
 
@@ -58,13 +59,16 @@ interface GroupedCategory {
 
 export function ModelMenu({ current }: { current: UIModel | null }) {
   const t = useT();
-  const { data: models } = useModels();
+  const queryClient = useQueryClient();
+  const { data: models, refetch } = useModels();
   const { data: customData } = useCustomModels();
   const { data: subscriptionData } = useSubscriptionModels();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ModelCategoryTab>("all");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const customSet = useMemo(() => {
@@ -167,6 +171,10 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
     if (!open) return;
     setQuery("");
     setActiveTab("all");
+    setRefreshError(null);
+    // Re-fetch on every open: the server performs a freshness-throttled catalog
+    // refresh while serving GET /api/models, so newly published models appear.
+    void refetch();
     const focus = () => inputRef.current?.focus();
     const t1 = window.setTimeout(focus, 0);
     const t2 = window.setTimeout(focus, 50);
@@ -174,7 +182,21 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
     };
-  }, [open]);
+  }, [open, refetch]);
+
+  const handleForceRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const fresh = await refreshModelsApi();
+      queryClient.setQueryData(MODELS_QUERY_KEY, fresh);
+    } catch {
+      setRefreshError(t("refreshModelsFailed"));
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
     <Menu.Root open={open} onOpenChange={setOpen}>
@@ -261,7 +283,29 @@ export function ModelMenu({ current }: { current: UIModel | null }) {
                     <span className="opacity-80">({c.totalCount})</span>
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={handleForceRefresh}
+                  disabled={refreshing}
+                  aria-label={t("refreshModels")}
+                  className="ml-auto flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-muted transition-colors hover:bg-hover hover:text-ink disabled:cursor-wait disabled:opacity-60"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className={`size-3 fill-none stroke-current stroke-2 ${refreshing ? "animate-spin" : ""}`}
+                    aria-hidden
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>{refreshing ? t("refreshingModels") : t("refreshModels")}</span>
+                </button>
               </div>
+
+              {refreshError && (
+                <div className="text-[10px] text-red-500" role="alert">
+                  {refreshError}
+                </div>
+              )}
             </div>
 
             {/* Grouped Model List */}

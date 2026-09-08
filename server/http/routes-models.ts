@@ -27,7 +27,52 @@ import {
   unhideAllSubscriptionModels,
   unhideSubscriptionModel,
 } from "../subscription-preferences.ts";
+import { refreshModelCatalog } from "../model-catalog.ts";
 import { readBody, type ServerContext } from "./context.ts";
+
+/**
+ * Collect the user-visible model list: available models from the live runtime,
+ * plus a safety net of catalog models for configured providers that yielded
+ * zero available models, minus user-hidden models. Shared by GET /api/models
+ * and POST /api/models/refresh so both endpoints return the same list shape.
+ */
+async function collectVisibleModels(ctx: ServerContext) {
+  const runtime = ctx.getModelRuntime();
+  const models = [...(await runtime.getAvailable())];
+  const seen = new Set(models.map((m) => `${m.provider}\0${m.id}`));
+  const availableProviders = new Set(models.map((m) => m.provider));
+  const storedCredentials = readAuthCredentials();
+  const hiddenModels = readHiddenModelsMap();
+
+  // Safety net: configured providers that still yield zero available models (filter edge
+  // cases) should still appear in the picker using their catalog models.
+  for (const provider of runtime.getProviders()) {
+    if (availableProviders.has(provider.id)) continue;
+    const configured =
+      runtime.hasConfiguredAuth(provider.id) || Boolean(storedCredentials[provider.id]);
+    if (!configured) continue;
+    for (const m of provider.getModels()) {
+      const key = `${m.provider}\0${m.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      models.push(m);
+    }
+  }
+
+  return models
+    .filter((m) => !isModelHidden(hiddenModels, m.provider, m.id))
+    .map((m) => ({
+      provider: m.provider,
+      id: m.id,
+      name: (m as { name?: string }).name,
+      reasoning: (m as { reasoning?: boolean }).reasoning,
+    }));
+}
+
+function sendModelList(res: ServerResponse, models: unknown[]): void {
+  res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+  res.end(JSON.stringify(models));
+}
 
 export async function handleModelsRoutes(
   url: URL,
@@ -36,6 +81,25 @@ export async function handleModelsRoutes(
   ctx: ServerContext,
 ): Promise<boolean> {
   const { subagentManager } = ctx;
+
+  if (url.pathname === "/api/models/refresh") {
+    if (req.method !== "POST") {
+      res.writeHead(405, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "method not allowed" }));
+      return true;
+    }
+
+    // Explicit force refresh: bypass provider freshness throttling and refetch
+    // the official catalog over the network. Fail-open: on failure or timeout
+    // the cached snapshot is still returned in the same shape as GET.
+    await refreshModelCatalog(ctx.getModelRuntime(), {
+      force: true,
+      timeoutMs: ctx.modelCatalogRefreshTimeoutMs,
+    });
+
+    sendModelList(res, await collectVisibleModels(ctx));
+    return true;
+  }
 
   if (url.pathname === "/api/models") {
     // Re-heal if a later OAuth refresh wrote availableModelIds: [] again.
@@ -49,41 +113,16 @@ export async function handleModelsRoutes(
       }
     }
 
-    const runtime = ctx.getModelRuntime();
-    const models = [...(await runtime.getAvailable())];
-    const seen = new Set(models.map((m) => `${m.provider}\0${m.id}`));
-    const availableProviders = new Set(models.map((m) => m.provider));
-    const storedCredentials = readAuthCredentials();
-    const hiddenModels = readHiddenModelsMap();
+    // Standalone catalog freshness: best-effort network refresh of the live
+    // runtime's model catalog (pi-ai throttles per provider, so this is cheap
+    // when nothing changed). Fail-open: on failure/timeout the cached snapshot
+    // below is still served with a 200.
+    await refreshModelCatalog(ctx.getModelRuntime(), {
+      force: false,
+      timeoutMs: ctx.modelCatalogRefreshTimeoutMs,
+    });
 
-    // Safety net: configured providers that still yield zero available models (filter edge
-    // cases) should still appear in the picker using their catalog models.
-    for (const provider of runtime.getProviders()) {
-      if (availableProviders.has(provider.id)) continue;
-      const configured =
-        runtime.hasConfiguredAuth(provider.id) || Boolean(storedCredentials[provider.id]);
-      if (!configured) continue;
-      for (const m of provider.getModels()) {
-        const key = `${m.provider}\0${m.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        models.push(m);
-      }
-    }
-
-    const visible = models.filter((m) => !isModelHidden(hiddenModels, m.provider, m.id));
-
-    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-    res.end(
-      JSON.stringify(
-        visible.map((m) => ({
-          provider: m.provider,
-          id: m.id,
-          name: (m as { name?: string }).name,
-          reasoning: (m as { reasoning?: boolean }).reasoning,
-        })),
-      ),
-    );
+    sendModelList(res, await collectVisibleModels(ctx));
     return true;
   }
 

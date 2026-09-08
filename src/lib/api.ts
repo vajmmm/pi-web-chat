@@ -106,12 +106,21 @@ export function useExtensions(enabled = true) {
   });
 }
 
+export const MODELS_QUERY_KEY = ["models"] as const;
+
 export function useModels() {
   return useQuery({
-    queryKey: ["models"],
+    queryKey: MODELS_QUERY_KEY,
     queryFn: () => fetchJson<UIModel[]>("/api/models"),
     staleTime: 5 * 60_000,
   });
+}
+
+/** POST /api/models/refresh: force a server-side catalog refresh, returns the same list shape as GET /api/models. */
+export async function refreshModelsApi(): Promise<UIModel[]> {
+  const res = await fetch("/api/models/refresh", { method: "POST" });
+  if (!res.ok) throw new Error(`/api/models/refresh: ${res.status}`);
+  return res.json() as Promise<UIModel[]>;
 }
 
 export const CUSTOM_MODELS_QUERY_KEY = ["custom-models"] as const;
@@ -171,7 +180,7 @@ export function useInvalidateRoles() {
 
 export function useInvalidateModels() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ["models"] });
+  return () => qc.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
 }
 
 export async function validateCwd(cwd: string): Promise<UICwdValidateResponse> {

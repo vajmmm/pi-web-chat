@@ -21,6 +21,7 @@ import { createCoordinatorExtension } from "./coordinator-tools.ts";
 import { installTurnRecorderOnSession } from "./turn-recorder.ts";
 import { readCustomModels } from "./models-config.ts";
 import { sanitizeEmptyAvailableModelIds } from "./auth-config.ts";
+import { startBackgroundCatalogRefresh } from "./model-catalog.ts";
 import { SubagentManager } from "./subagent-manager.ts";
 import { getCurrentGitBranch, recoverRuntimeResources, resolveGitRepoRoot } from "./worktree.ts";
 import { registerKnownProjectPath } from "./projects.ts";
@@ -380,3 +381,9 @@ httpServer.listen(PORT, HOST, () => {
     `pi-web-chat server: http://${displayHost}:${PORT}  (bind ${HOST}, chat cwd: ${AGENT_CWD})`,
   );
 });
+
+// Standalone catalog freshness (non-blocking): the web app must not depend on a
+// prior `pi` CLI run having populated the local models-store cache. Refresh the
+// official catalog over the network while the server is already listening;
+// bounded and fail-open, so startup never waits on the network.
+void startBackgroundCatalogRefresh(modelRuntime);

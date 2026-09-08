@@ -38,6 +38,9 @@ export type Messages = {
   clearSearch: string;
   noModelsAvailable: string;
   noSearchResults: string;
+  refreshModels: string;
+  refreshingModels: string;
+  refreshModelsFailed: string;
 
   // fork
   forkSession: string;
@@ -130,6 +133,9 @@ export const en: Messages = {
   clearSearch: "Clear search",
   noModelsAvailable: "No models available",
   noSearchResults: "No results",
+  refreshModels: "Refresh models",
+  refreshingModels: "Refreshing…",
+  refreshModelsFailed: "Refresh failed, showing cached models",
 
   forkSession: "Fork session",
   forkSessionEllipsis: "Fork session…",
