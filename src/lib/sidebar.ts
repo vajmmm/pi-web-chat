@@ -3,11 +3,22 @@ import { useSyncExternalStore } from "react";
 const STORAGE_KEY = "pi-web-chat:sidebar-pinned";
 const listeners = new Set<() => void>();
 
+/**
+ * Resolve the persisted sidebar-pinned flag.
+ *
+ * The sidebar is pinned (open) by default: only an explicit "0" collapses it.
+ * A missing key (null) keeps the default pinned state so new users land in the
+ * decompressed layout.
+ */
+export function resolvePinnedStoredValue(raw: string | null): boolean {
+  return raw !== "0";
+}
+
 function readPinned(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "1";
+    return resolvePinnedStoredValue(localStorage.getItem(STORAGE_KEY));
   } catch {
-    return false;
+    return true;
   }
 }
 

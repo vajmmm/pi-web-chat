@@ -28,7 +28,8 @@ import {
 } from "../runtime-artifacts.ts";
 import { buildSubagentUserPrompt } from "./prompt-builder.ts";
 import { createSubagentSessionRuntime } from "./agent-runtime.ts";
-import { persistTask, subagentTasks } from "./task-store.ts";
+import { createAgySessionRuntime } from "./agy/agy-adapter.ts";
+import { computeDurationMs, persistTask, subagentTasks } from "./task-store.ts";
 import type { ContinueSubagentOptions, SpawnSubagentOptions, SubagentInstance } from "./types.ts";
 import { captureWorkspaceBaseline } from "./workspace-baseline.ts";
 import { queuePendingTerminal } from "./runtime-control.ts";
@@ -189,6 +190,72 @@ export async function continueAgent(mgr: SubagentManagerHost, options: ContinueS
   }
 
   /**
+   * startTaskExecution 失败时：清掉可能已创建的 worktree/runtime，并把任务从 running 打成 failed。
+   * spawn 在 persist+notify 之后才启动，失败若不回滚，UI 会留下一条永远 RUNNING 的僵尸任务，Coordinator 重试就会表现为重复任务。
+   */
+async function rollbackFailedStart(
+    mgr: SubagentManagerHost,
+    instance: SubagentInstance,
+    err: unknown,
+  ): Promise<void> {
+    const task = instance.task;
+    const parentSessionId = task.parentSessionId;
+    const repoRoot = instance.repoRoot;
+    const errorMsg = String(err instanceof Error ? err.message : err);
+
+    if (instance.timeoutTimer) {
+      clearTimeout(instance.timeoutTimer);
+      instance.timeoutTimer = undefined;
+    }
+
+    if (instance.runtime) {
+      try {
+        await instance.runtime.dispose();
+      } catch (disposeErr) {
+        console.warn(
+          `[SubagentManager] Failed to dispose runtime during start rollback for ${task.taskId}:`,
+          disposeErr,
+        );
+      }
+      instance.runtime = undefined;
+    }
+
+    if (task.worktreePath && repoRoot) {
+      try {
+        await removeWorktree(repoRoot, task.worktreePath);
+        unregisterRuntimeResource(parentSessionId, "task_worktree", task.worktreePath, repoRoot);
+      } catch (cleanupErr) {
+        console.warn(
+          `[SubagentManager] Failed to remove worktree during start rollback for ${task.taskId}:`,
+          cleanupErr,
+        );
+      }
+      task.worktreePath = undefined;
+    }
+
+    if (task.branchName && repoRoot) {
+      try {
+        await runGit(repoRoot, ["branch", "-D", task.branchName]);
+        unregisterRuntimeResource(parentSessionId, "task_branch", task.branchName, repoRoot);
+      } catch (cleanupErr) {
+        console.warn(
+          `[SubagentManager] Failed to delete branch during start rollback for ${task.taskId}:`,
+          cleanupErr,
+        );
+      }
+      task.branchName = undefined;
+    }
+
+    task.status = "failed";
+    task.error = errorMsg;
+    task.summary = errorMsg;
+    task.completedAt = new Date().toISOString();
+    task.durationMs = computeDurationMs(task);
+    persistTask(task);
+    mgr.notifyUpdate(instance);
+  }
+
+  /**
    * 派发并异步启动一个 Subagent 子任务 (Fail-closed 严格隔离)
    */
 export async function spawn(mgr: SubagentManagerHost, options: SpawnSubagentOptions): Promise<UISubagentTask> {
@@ -318,7 +385,12 @@ export async function spawn(mgr: SubagentManagerHost, options: SpawnSubagentOpti
       }
 
       // 依赖已满足或无依赖，立即启动执行
-      await mgr.startTaskExecution(instance);
+      try {
+        await mgr.startTaskExecution(instance);
+      } catch (err) {
+        await rollbackFailedStart(mgr, instance, err);
+        throw err;
+      }
       return task;
     });
   }
@@ -535,7 +607,12 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
     // 4. 先初始化脱离 Worktree 的 Durable Fact Store。
     initializeTaskFactStore(options.parentSessionId, taskId);
 
-    const subagentSession = await createSubagentSessionRuntime({
+    const effectiveModel = effectiveContext.runtime.model;
+    const isAgy =
+      effectiveModel?.provider === "agy" ||
+      options.role?.startsWith("agy");
+
+    const runtimeOptions = {
       taskId,
       runId: options.parentSessionId,
       role: options.role,
@@ -544,12 +621,13 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
       modelRuntime: mgr.modelRuntime,
       parentModel: options.parentModel,
       customSession: options.customSession,
-      onCompaction: (count) => {
+      executionOptions: options.executionOptions,
+      onCompaction: (count: number) => {
         instance.task.compactionCount = count;
         if (instance.stallTelemetry) recordContextPressure(instance.stallTelemetry, count);
         persistTask(instance.task);
       },
-      onReportBlocker: (message, severity, context) => {
+      onReportBlocker: (message: string, severity?: "info" | "warning" | "blocking", context?: string) => {
         if (options.onReport && !mgr.deletingRuns.has(options.parentSessionId)) {
           const severityTag = severity ? `[${severity.toUpperCase()}] ` : "";
           options.onReport(
@@ -559,7 +637,11 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
           );
         }
       },
-    });
+    };
+
+    const subagentSession = isAgy
+      ? await createAgySessionRuntime(runtimeOptions)
+      : await createSubagentSessionRuntime(runtimeOptions);
 
     runtime = subagentSession.runtime;
     const { session, resolvedModelDetails } = subagentSession;
@@ -789,7 +871,12 @@ export async function startBlockedTask(mgr: SubagentManagerHost, taskId: string)
       }
 
       if (instance.spawnOptions) {
-        await mgr.startTaskExecution(instance);
+        try {
+          await mgr.startTaskExecution(instance);
+        } catch (err) {
+          await rollbackFailedStart(mgr, instance, err);
+          throw err;
+        }
         return (instance.task.status as TaskExecutionStatus) !== "aborted";
       }
 

@@ -29,14 +29,17 @@ import {
 } from "../subscription-preferences.ts";
 import { refreshModelCatalog } from "../model-catalog.ts";
 import { readBody, type ServerContext } from "./context.ts";
+import { getAgyCatalogModels } from "../subagent/agy/models.ts";
 
 /**
  * Collect the user-visible model list: available models from the live runtime,
  * plus a safety net of catalog models for configured providers that yielded
- * zero available models, minus user-hidden models. Shared by GET /api/models
- * and POST /api/models/refresh so both endpoints return the same list shape.
+ * zero available models, minus user-hidden models. AGY models are only added
+ * for the role-scoped catalog because the main session cannot execute them.
+ * Shared by GET /api/models and POST /api/models/refresh so both endpoints
+ * return the same list shape for the main-session catalog.
  */
-async function collectVisibleModels(ctx: ServerContext) {
+async function collectVisibleModels(ctx: ServerContext, options: { includeAgy?: boolean } = {}) {
   const runtime = ctx.getModelRuntime();
   const models = [...(await runtime.getAvailable())];
   const seen = new Set(models.map((m) => `${m.provider}\0${m.id}`));
@@ -59,7 +62,18 @@ async function collectVisibleModels(ctx: ServerContext) {
     }
   }
 
+  if (options.includeAgy) {
+    // AGY is a subagent-only provider; expose its catalog only to role config.
+    for (const m of getAgyCatalogModels()) {
+      const key = `${m.provider}\0${m.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      models.push(m as any);
+    }
+  }
+
   return models
+    .filter((m) => options.includeAgy || m.provider !== "agy")
     .filter((m) => !isModelHidden(hiddenModels, m.provider, m.id))
     .map((m) => ({
       provider: m.provider,
@@ -122,7 +136,8 @@ export async function handleModelsRoutes(
       timeoutMs: ctx.modelCatalogRefreshTimeoutMs,
     });
 
-    sendModelList(res, await collectVisibleModels(ctx));
+    const includeAgy = url.searchParams.get("scope") === "role";
+    sendModelList(res, await collectVisibleModels(ctx, { includeAgy }));
     return true;
   }
 

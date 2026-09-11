@@ -13,8 +13,9 @@ import {
   createCoordinatorExtension,
 } from "../server/coordinator-tools.ts";
 import { getRoleConfig, getRoleDefinition, RoleRegistry, rolesPath } from "../server/contracts/index.ts";
-import { getTaskRuntimeDir } from "../server/runtime-artifacts.ts";
+import { getTaskRuntimeDir, readToolExecutionFacts } from "../server/runtime-artifacts.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "../server/subagent/output-virtualizer.ts";
+import { createTaskContextExtension } from "../server/subagent/compaction-evidence-index.ts";
 
 function setupCoordinatorTools(
   task: UISubagentTask,
@@ -87,6 +88,17 @@ function makeTask(overrides: Partial<UISubagentTask> = {}): UISubagentTask {
   } as UISubagentTask;
 }
 
+function taskContextHandler(role: AgentRole, runId = "parent-1"): Function {
+  const events: Record<string, Function> = {};
+  createTaskContextExtension({
+    runId,
+    taskId: "coordinator",
+    role,
+    state: { compactionCount: 0 },
+  }).factory({ on: (event: string, handler: Function) => { events[event] = handler; } } as any);
+  return events.tool_result;
+}
+
 describe("Coordinator large-volume investigation boundary", () => {
   it("uses the intended role-specific default tool output budgets", () => {
     assert.equal(COORDINATOR_TOOL_OUTPUT_LIMIT, 24 * 1024);
@@ -94,6 +106,20 @@ describe("Coordinator large-volume investigation boundary", () => {
     assert.equal(DEFAULT_OUTPUT_BUDGETS.subagent, 32 * 1024);
     assert.equal(DEFAULT_OUTPUT_BUDGETS.verifier, 40 * 1024);
     assert.equal(COORDINATOR_TASK_SUMMARY_LIMIT, 4 * 1024);
+  });
+
+  it("describes get_task_summary as a bounded Episode view and does not teach foreign read_artifact", () => {
+    const { tools } = setupCoordinatorTools(makeTask());
+    assert.match(tools.get_task_summary.description, /TaskEpisodeView|有界 Task 状态视图/);
+    assert.doesNotMatch(tools.get_task_summary.description, /压缩状态/);
+    const spawnText = [
+      tools.spawn_subagent.description,
+      ...(tools.spawn_subagent.promptGuidelines ?? []),
+    ].join("\n");
+    assert.match(spawnText, /TaskEpisodeView/);
+    assert.match(spawnText, /context_files/);
+    assert.doesNotMatch(spawnText, /由执行角色在其任务范围内用 read_artifact/);
+    assert.doesNotMatch(spawnText, /read_artifact them/);
   });
 
   it("documents a data-volume/complexity boundary without banning ordinary log checks", () => {
@@ -107,11 +133,11 @@ describe("Coordinator large-volume investigation boundary", () => {
   });
 
   it("virtualizes oversized Coordinator bash/read results with a recoverable pointer", async () => {
-    const { events } = setupCoordinatorTools(makeTask());
+    const onToolResult = taskContextHandler("coordinator");
     const oversized = `RAW_HEAD\n${"x".repeat(COORDINATOR_TOOL_OUTPUT_LIMIT + 500)}\nRAW_TAIL`;
 
     for (const toolName of ["bash", "read"]) {
-      const patch = await events.tool_result({
+      const patch = await onToolResult({
         toolCallId: `oversized-${toolName}`,
         toolName,
         content: [{ type: "text", text: oversized }],
@@ -127,12 +153,14 @@ describe("Coordinator large-volume investigation boundary", () => {
       assert.ok(runtimePath);
       assert.equal(readFileSync(runtimePath, "utf8"), oversized);
     }
+    assert.equal(readToolExecutionFacts("parent-1", "coordinator")
+      .filter((fact) => fact.toolCallId.startsWith("oversized-")).length, 2);
   });
 
   it("returns Coordinator output below 24KB unchanged while still persisting it", async () => {
-    const { events } = setupCoordinatorTools(makeTask());
+    const onToolResult = taskContextHandler("coordinator");
     const raw = `SMALL_HEAD\n${"x".repeat(COORDINATOR_TOOL_OUTPUT_LIMIT - 1024)}\nSMALL_TAIL`;
-    const patch = await events.tool_result({
+    const patch = await onToolResult({
       toolCallId: "small-bash",
       toolName: "bash",
       content: [{ type: "text", text: raw }],
@@ -143,13 +171,12 @@ describe("Coordinator large-volume investigation boundary", () => {
     assert.equal(readFileSync(runtimePath, "utf8"), raw);
   });
 
-  it("does not apply the Coordinator threshold to Verifier or Developer", async () => {
-    const setup = setupCoordinatorTools(makeTask());
+  it("uses role-specific Task Context budgets", async () => {
     const oversized = "x".repeat(COORDINATOR_TOOL_OUTPUT_LIMIT + 500);
 
     for (const role of ["verifier", "developer"] as const) {
-      setup.setRole(role);
-      const patch = await setup.events.tool_result({
+      const patch = await taskContextHandler(role, `parent-${role}`)({
+        toolCallId: `budget-${role}`,
         toolName: "bash",
         content: [{ type: "text", text: oversized }],
       });
@@ -265,9 +292,9 @@ describe("Coordinator large-volume investigation boundary", () => {
   });
 
   it("leaves ordinary small-scope Coordinator checks available", async () => {
-    const { events } = setupCoordinatorTools(makeTask());
+    const onToolResult = taskContextHandler("coordinator");
     const smallOutput = "short error summary\nline 2";
-    const patch = await events.tool_result({
+    const patch = await onToolResult({
       toolName: "bash",
       content: [{ type: "text", text: smallOutput }],
     });
@@ -305,7 +332,19 @@ describe("Coordinator large-volume investigation boundary", () => {
     assert.match(migrated.definition.instructions ?? "", /large-volume investigation boundary/);
     assert.match(migrated.definition.instructions ?? "", /Mutation Ownership/);
     assert.match(migrated.definition.instructions ?? "", /Direct Path/);
-    assert.deepEqual(migrated.allowedTools, ["read", "bash", "get_task_summary", "edit", "write"]);
+    assert.match(migrated.definition.instructions ?? "", /recovery_manifest/);
+    assert.deepEqual(migrated.allowedTools, [
+      "read",
+      "bash",
+      "get_task_summary",
+      "edit",
+      "write",
+      "read_transcript",
+      "search_transcript",
+      "read_artifact",
+      "web_search",
+    ]);
+    assert.match(migrated.definition.instructions ?? "", /#### Web search/);
     assert.equal(getRoleConfig("developer").description, "Custom Developer description");
   });
 
@@ -357,7 +396,15 @@ describe("Coordinator large-volume investigation boundary", () => {
     const refreshed = getRoleConfig("coordinator");
     assert.match(refreshed.definition.instructions ?? "", /Prefer promotion before the first repository mutation/);
     assert.equal(refreshed.definition.responsibilities.length, 6);
-    assert.deepEqual(refreshed.allowedTools, ["read", "bash", "get_task_summary"]);
+    assert.deepEqual(refreshed.allowedTools, [
+      "read",
+      "bash",
+      "get_task_summary",
+      "read_transcript",
+      "search_transcript",
+      "read_artifact",
+      "web_search",
+    ]);
   });
 
   it("refreshes Coordinator definition for Worktree Reclamation without resetting tools", () => {
@@ -388,6 +435,151 @@ describe("Coordinator large-volume investigation boundary", () => {
         p.includes("禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree"),
       ),
     );
-    assert.deepEqual(refreshed.allowedTools, ["read", "bash", "get_task_summary"]);
+    assert.deepEqual(refreshed.allowedTools, [
+      "read",
+      "bash",
+      "get_task_summary",
+      "read_transcript",
+      "search_transcript",
+      "read_artifact",
+      "web_search",
+    ]);
+  });
+
+  it("appends Context recovery guidance and adds missing recovery tools", () => {
+    const coordinator = getRoleConfig("coordinator");
+    const developer = getRoleConfig("developer");
+    writeFileSync(
+      rolesPath(),
+      JSON.stringify([
+        {
+          ...coordinator,
+          allowedTools: ["read", "bash", "get_task_summary"],
+          definition: {
+            ...coordinator.definition,
+            instructions: [
+              "Mutation Ownership",
+              "Prefer promotion before the first repository mutation",
+              "Worktree Reclamation",
+              "large-volume investigation boundary",
+            ].join("\n"),
+          },
+        },
+        {
+          ...developer,
+          allowedTools: ["read", "bash", "edit", "write", "report_blocker"],
+          definition: {
+            ...developer.definition,
+            description: "Custom Developer description",
+            instructions: "Contract → Root Cause → Minimal Change → Verification → Evidence",
+          },
+        },
+      ]),
+      "utf8",
+    );
+
+    RoleRegistry.getInstance().reload();
+    const migratedCoordinator = getRoleConfig("coordinator");
+    const migratedDeveloper = getRoleConfig("developer");
+    assert.match(migratedCoordinator.definition.instructions ?? "", /#### Context recovery/);
+    assert.match(migratedCoordinator.definition.instructions ?? "", /get_task_summary/);
+    assert.match(migratedCoordinator.definition.instructions ?? "", /TaskEpisodeView/);
+    assert.doesNotMatch(migratedCoordinator.definition.instructions ?? "", /recovery_manifest\.boundary/);
+    assert.deepEqual(migratedCoordinator.allowedTools, [
+      "read",
+      "bash",
+      "get_task_summary",
+      "read_transcript",
+      "search_transcript",
+      "read_artifact",
+      "web_search",
+    ]);
+    assert.match(migratedDeveloper.definition.instructions ?? "", /#### Context recovery/);
+    assert.equal(migratedDeveloper.description, "Custom Developer description");
+    assert.deepEqual(migratedDeveloper.allowedTools, [
+      "read",
+      "bash",
+      "edit",
+      "write",
+      "report_blocker",
+      "read_transcript",
+      "search_transcript",
+      "read_artifact",
+    ]);
+  });
+
+  it("adds web_search to Coordinator and Researcher when #### Web search is missing", () => {
+    const coordinator = getRoleConfig("coordinator");
+    const researcher = getRoleConfig("researcher");
+    const developer = getRoleConfig("developer");
+    writeFileSync(
+      rolesPath(),
+      JSON.stringify([
+        {
+          ...coordinator,
+          allowedTools: ["read", "bash", "get_task_summary"],
+          definition: {
+            ...coordinator.definition,
+            instructions: [
+              "Mutation Ownership",
+              "Prefer promotion before the first repository mutation",
+              "Worktree Reclamation",
+              "large-volume investigation boundary",
+              "#### Context recovery",
+            ].join("\n"),
+          },
+        },
+        {
+          ...researcher,
+          allowedTools: ["read", "bash", "report_blocker"],
+          definition: {
+            ...researcher.definition,
+            instructions: "Findings Evidence Recommendation Uncertainties\n#### Context recovery",
+          },
+        },
+        developer,
+      ]),
+      "utf8",
+    );
+
+    RoleRegistry.getInstance().reload();
+    const migratedCoordinator = getRoleConfig("coordinator");
+    const migratedResearcher = getRoleConfig("researcher");
+    assert.match(migratedCoordinator.definition.instructions ?? "", /#### Web search/);
+    assert.match(migratedResearcher.definition.instructions ?? "", /#### Web search/);
+    assert.ok(migratedCoordinator.allowedTools?.includes("web_search"));
+    assert.ok(migratedResearcher.allowedTools?.includes("web_search"));
+    assert.equal(getRoleConfig("developer").allowedTools?.includes("web_search"), false);
+  });
+
+  it("does not re-add web_search after #### Web search is persisted", () => {
+    const coordinator = getRoleConfig("coordinator");
+    const researcher = getRoleConfig("researcher");
+    writeFileSync(
+      rolesPath(),
+      JSON.stringify([
+        {
+          ...coordinator,
+          allowedTools: ["read", "bash", "get_task_summary"],
+          definition: {
+            ...coordinator.definition,
+            instructions: `${coordinator.definition.instructions}\n\n#### Web search`,
+          },
+        },
+        {
+          ...researcher,
+          allowedTools: ["read", "bash", "report_blocker"],
+          definition: {
+            ...researcher.definition,
+            instructions: `${researcher.definition.instructions}\n\n#### Web search`,
+          },
+        },
+      ]),
+      "utf8",
+    );
+
+    RoleRegistry.getInstance().reload();
+    assert.deepEqual(getRoleConfig("coordinator").allowedTools, ["read", "bash", "get_task_summary"]);
+    assert.deepEqual(getRoleConfig("researcher").allowedTools, ["read", "bash", "report_blocker"]);
   });
 });

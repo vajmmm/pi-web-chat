@@ -12,17 +12,26 @@ import {
   resolveArtifactRef,
   getTaskRuntimeDir,
   readToolExecutionFacts,
+  readTranscriptEntries,
+  searchTranscriptEntries,
+  readArtifactByRef,
+  appendShadowTranscript,
+  writeTaskArtifact,
   removeTaskArtifacts,
+  readTaskArtifact,
 } from "../server/runtime-artifacts.ts";
 import {
   buildCompactionEvidenceIndex,
   createTaskContextExtension,
+  inspectContinuationSummary,
   renderEvidenceIndex,
+  restoreLatestRecoveryManifest,
 } from "../server/subagent/compaction-evidence-index.ts";
 import { buildTaskEpisodeCard, buildTaskEpisodeView, persistTaskEpisode, boundTaskLineage } from "../server/subagent/episode-card.ts";
 import { createShadowTranscriptRecorder } from "../server/subagent/shadow-transcript.ts";
 import { hashRequestPrefix } from "../server/turn-recorder.ts";
 import { persistAndVirtualizeToolResult } from "../server/subagent/output-virtualizer.ts";
+import { createRecoveryTools } from "../server/subagent/agent-runtime.ts";
 import {
   createStallTelemetryState,
   observeToolExecution,
@@ -123,6 +132,144 @@ describe("Context / Memory / Compaction v1.1", () => {
     assert.doesNotMatch(rendered, /"compactionSeq":\s*1/);
   });
 
+  it("inspects structured summaries without blocking compaction", () => {
+    const summary = `<continuation_summary schema="1.2">\n# Task Goal\n# Current State\n# Completed Work\n# Unresolved / Failed Work\n# Failed Attempts / Do Not Retry\n# Key Decisions / Reasons\n# Modified Files\n# Verification State\n# Next Actions\n# Critical Evidence / Artifact Refs\n</continuation_summary>`;
+    assert.deepEqual(inspectContinuationSummary(summary), {
+      present: true,
+      schemaVersion: "1.2",
+      byteLength: Buffer.byteLength(summary, "utf8"),
+      missingSections: [],
+      status: "valid",
+    });
+    assert.equal(inspectContinuationSummary("# Task Goal").status, "degraded");
+    assert.equal(inspectContinuationSummary(summary.replace('schema="1.2"', 'schema="1.1"')).status, "degraded");
+    assert.equal(inspectContinuationSummary("x".repeat(64 * 1024)).byteLength, 64 * 1024);
+    assert.equal(inspectContinuationSummary("中".repeat(64 * 1024)).status, "degraded");
+  });
+
+  it("captures the compaction boundary and latest recovery manifest", async () => {
+    const handlers = new Map<string, Function>();
+    const state: any = { compactionCount: 0 };
+    createTaskContextExtension({ runId: "manifest", taskId: "task", role: "developer", state })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    await handlers.get("session_before_compact")!({
+      preparation: {
+        messagesToSummarize: [],
+        turnPrefixMessages: [],
+        firstKeptEntryId: "kept",
+        fileOps: { written: new Set(), edited: new Set(), read: new Set() },
+      },
+      branchEntries: [{ id: "compacted" }, { id: "kept" }],
+    });
+    await handlers.get("session_compact")!({
+      compactionEntry: {
+        id: "compact-1",
+        firstKeptEntryId: "kept",
+        summary: "# Task Goal",
+      },
+    });
+    assert.equal(state.latestEvidenceIndex.compactionEntryId, "compact-1");
+    assert.equal(state.latestEvidenceIndex.boundary.firstCompactedEntryId, "compacted");
+    assert.equal(state.latestEvidenceIndex.summaryInspection.status, "degraded");
+    assert.deepEqual(readTaskArtifact("manifest", "task", "recovery-manifest.json"), {
+      schemaVersion: "1.2",
+      compactionSeq: 1,
+      compactionEntryId: "compact-1",
+      firstCompactedEntryId: "compacted",
+      firstKeptEntryId: "kept",
+      transcriptRef: "artifacts://runs/manifest/task/transcript.jsonl",
+      criticalArtifactRefs: [],
+    });
+  });
+
+  it("restores only the latest durable recovery manifest after runtime recreation", async () => {
+    const handlers = new Map<string, Function>();
+    const state: any = { compactionCount: 0 };
+    createTaskContextExtension({ runId: "stable-session", taskId: "coordinator", role: "coordinator", state })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    await handlers.get("session_before_compact")!({
+      preparation: { messagesToSummarize: [], turnPrefixMessages: [], firstKeptEntryId: "kept", fileOps: { written: new Set(), edited: new Set(), read: new Set() } },
+      branchEntries: [{ id: "old" }, { id: "kept" }],
+    });
+    await handlers.get("session_compact")!({ compactionEntry: { id: "compact-1", firstKeptEntryId: "kept", summary: "# Task Goal" } });
+    const restored: any = { compactionCount: 0 };
+    restoreLatestRecoveryManifest(restored, "stable-session", "coordinator");
+    assert.equal(restored.compactionCount, 1);
+    assert.equal(restored.latestEvidenceIndex.compactionEntryId, "compact-1");
+    assert.equal(restored.latestEvidenceIndex.transcriptRef, "artifacts://runs/stable-session/coordinator/transcript.jsonl");
+    removeTaskArtifacts("stable-session", "coordinator");
+    assert.equal(readTaskArtifact("stable-session", "coordinator", "recovery-manifest.json"), null);
+  });
+
+  it("uses a bound session-stable coordinator scope and never falls back to a temporary directory", async () => {
+    let scope: { runId: string; taskId: string } | undefined;
+    const handlers = new Map<string, Function>();
+    createTaskContextExtension({ getScope: () => scope, role: "coordinator", state: { compactionCount: 0 } })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    await assert.rejects(
+      handlers.get("tool_result")!({ toolCallId: "unbound", toolName: "bash", content: [{ type: "text", text: "x" }] }),
+      /scope is not bound/,
+    );
+    scope = { runId: "coordinator-session-1", taskId: "coordinator" };
+    await handlers.get("tool_result")!({ toolCallId: "stable", toolName: "bash", content: [{ type: "text", text: "persisted" }] });
+    const ref = artifactRefFor(scope.runId, scope.taskId, "tool_outputs/stable_bash.log");
+    assert.equal(readArtifactByRef(ref, scope.runId, scope.taskId), "persisted");
+    removeTaskArtifacts(scope.runId, scope.taskId);
+    const removedPath = resolveArtifactRef(ref);
+    assert.ok(removedPath);
+    assert.equal(existsSync(removedPath), false);
+  });
+
+  it("tracks the real boundary across repeated compactions", async () => {
+    const handlers = new Map<string, Function>();
+    const state: any = { compactionCount: 0 };
+    createTaskContextExtension({ runId: "repeated", taskId: "task", role: "developer", state })
+      .factory({ on: (name: string, handler: Function) => handlers.set(name, handler) } as any);
+    const compact = async (branchEntries: any[], firstKeptEntryId: string, compactionId: string) => {
+      await handlers.get("session_before_compact")!({
+        preparation: {
+          messagesToSummarize: [], turnPrefixMessages: [], firstKeptEntryId,
+          fileOps: { written: new Set(), edited: new Set(), read: new Set() },
+        },
+        branchEntries,
+      });
+      await handlers.get("session_compact")!({
+        compactionEntry: { id: compactionId, firstKeptEntryId, summary: "# Task Goal" },
+      });
+      return state.latestEvidenceIndex.boundary.firstCompactedEntryId;
+    };
+    assert.equal(await compact([{ id: "a" }, { id: "b" }, { id: "c" }], "b", "compact-1"), "a");
+    assert.equal(await compact([
+      { id: "a" }, { id: "b" }, { type: "compaction", id: "compact-1", firstKeptEntryId: "b" }, { id: "c" },
+    ], "c", "compact-2"), "b");
+    assert.equal(await compact([
+      { id: "a" }, { id: "b" }, { type: "compaction", id: "compact-1", firstKeptEntryId: "b" },
+      { id: "c" }, { type: "compaction", id: "compact-2", firstKeptEntryId: "c" }, { id: "d" },
+    ], "d", "compact-3"), "c");
+  });
+
+  it("recovers transcript ranges, searches, and artifacts on demand", () => {
+    appendShadowTranscript("recovery", "task", { entryId: "e1", message: { text: "first failure" } });
+    appendShadowTranscript("recovery", "task", { entryId: "e2", message: { text: "successful fix" } });
+    const pointer = writeTaskArtifact("recovery", "task", "tool_outputs/result.log", "complete output");
+    const siblingPointer = writeTaskArtifact("recovery", "sibling", "tool_outputs/result.log", "sibling output");
+    const otherRunPointer = writeTaskArtifact("other-run", "task", "tool_outputs/result.log", "other run output");
+    assert.deepEqual(readTranscriptEntries("recovery", "task", { firstEntryId: "e2" }).map((entry: any) => entry.entryId), ["e2"]);
+    assert.equal(searchTranscriptEntries("recovery", "task", "failure").length, 1);
+    assert.equal(readArtifactByRef(pointer.artifactRef, "recovery", "task"), '"complete output"\n');
+    assert.equal(readArtifactByRef(siblingPointer.artifactRef, "recovery", "task"), null);
+    assert.equal(readArtifactByRef(otherRunPointer.artifactRef, "recovery", "task"), null);
+    assert.equal(readArtifactByRef("artifacts://runs/../../etc/passwd", "recovery", "task"), null);
+  });
+
+  it("fails closed for invalid transcript ranges", () => {
+    appendShadowTranscript("range-errors", "task", { entryId: "e1" });
+    appendShadowTranscript("range-errors", "task", { entryId: "e2" });
+    assert.throws(() => readTranscriptEntries("range-errors", "task", { firstEntryId: "missing" }), /not found/);
+    assert.throws(() => readTranscriptEntries("range-errors", "task", { lastEntryId: "missing" }), /not found/);
+    assert.throws(() => readTranscriptEntries("range-errors", "task", { firstEntryId: "e2", lastEntryId: "e1" }), /reversed/);
+  });
+
   it("creates an immutable-schema episode and a hard-bounded coordinator view", () => {
     const task: any = {
       taskId: "task-final",
@@ -149,6 +296,37 @@ describe("Context / Memory / Compaction v1.1", () => {
     const view = buildTaskEpisodeView(episode, { maxTotalBytes: 2048 });
     assert.ok(Buffer.byteLength(view, "utf8") <= 2048);
     assert.match(view, /task-result\.json/);
+  });
+
+  it("teaches recovery tools to use recovery_manifest within the current run/task", () => {
+    const rendered = renderEvidenceIndex({
+      version: "1",
+      taskId: "task-e",
+      compactionSeq: 1,
+      boundary: { firstCompactedEntryId: "c1", firstKeptEntryId: "k1" },
+      files: { changed: [], read: [] },
+      failedExecutions: [],
+      offloadedOutputs: [],
+      transcriptRef: "artifacts://runs/run-e/task-e/transcript.jsonl",
+    });
+    assert.match(rendered, /"firstCompactedEntryId":\s*"c1"/);
+    assert.match(rendered, /"firstKeptEntryId":\s*"k1"/);
+    assert.doesNotMatch(rendered, /"boundary"/);
+
+    const tools = Object.fromEntries(
+      createRecoveryTools(() => ({ runId: "run-e", taskId: "task-e" })).map((tool: any) => [tool.name, tool]),
+    );
+    assert.match(tools.read_transcript.description, /firstCompactedEntryId/);
+    assert.match(tools.read_transcript.description, /firstKeptEntryId/);
+    assert.match(tools.read_transcript.description, /not lastEntryId|is not lastEntryId/);
+    assert.doesNotMatch(tools.read_transcript.description, /recovery_manifest\.boundary|\.boundary/);
+    assert.match(tools.read_artifact.description, /artifacts:\/\//);
+    assert.match(tools.read_artifact.description, /current run\/task only/);
+    assert.doesNotMatch(tools.read_artifact.description, /由执行角色在其范围内读取/);
+    assert.doesNotMatch(
+      `${tools.read_transcript.description}\n${tools.read_artifact.description}`,
+      /Evidence Index/,
+    );
   });
 
   it("delegates manual compaction to the public Pi authority", async () => {
@@ -254,6 +432,25 @@ describe("Context / Memory / Compaction v1.1", () => {
     const records = readFileSync(join(getTaskRuntimeDir("transcript", "task"), "transcript.jsonl"), "utf8")
       .trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(records.map((r) => [r.entryId, r.message.content]), [["first", "one"], ["second", "two"]]);
+  });
+
+  it("deduplicates a durable shadow transcript when the Coordinator runtime is recreated", () => {
+    const branch: any[] = [
+      { id: "e1", timestamp: "t1", message: { role: "user", content: "one" } },
+      { id: "e2", timestamp: "t2", message: { role: "assistant", content: "two" } },
+    ];
+    const session = { sessionManager: { getBranch: () => branch } };
+    createShadowTranscriptRecorder("recreated-transcript", "coordinator")(session);
+
+    // A recreated runtime sees the full durable branch again, plus one new entry.
+    branch.push({ id: "e3", timestamp: "t3", message: { role: "assistant", content: "three" } });
+    createShadowTranscriptRecorder("recreated-transcript", "coordinator")(session);
+
+    assert.deepEqual(
+      readTranscriptEntries("recreated-transcript", "coordinator", { limit: 10 })
+        .map((record: any) => record.entryId),
+      ["e1", "e2", "e3"],
+    );
   });
 
   it("freezes episode, its referenced result, and subsequent coordinator views together", () => {

@@ -3,17 +3,20 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type {
+  UIBatchDeleteSessionsResult,
+  UIRunningSessionsResponse,
   UISessionFileResponse,
   UISessionInfo,
 } from "../../shared/protocol.ts";
 import {
+  cleanupEmptyProjectDirs,
   deleteSessionFile,
   formatRelativeTime,
 } from "../projects.ts";
 import { resolveSessionPath, sessionIdOf } from "../session/session-registry.ts";
 import { cleanupDeletedSessionResources } from "../session/index.ts";
 import { getSessionTurns } from "../turn-recorder.ts";
-import type { ServerContext } from "./context.ts";
+import { readBody, type ServerContext } from "./context.ts";
 
 export async function handleSessionsRoutes(
   url: URL,
@@ -23,6 +26,80 @@ export async function handleSessionsRoutes(
 ): Promise<boolean> {
   const { sessionRegistry, subagentManager, agentCwd: AGENT_CWD } = ctx;
   const entries = sessionRegistry.entries;
+
+  // 正在运行的会话集合（主会话回答中 / 子智能体或协调者工作中） (/api/sessions/running)
+  if (url.pathname === "/api/sessions/running" && req.method === "GET") {
+    const running = new Set<string>();
+    for (const entry of entries.values()) {
+      if (entry.runtime?.session?.isStreaming || entry.isCompacting) {
+        running.add(entry.id);
+      }
+    }
+    for (const id of subagentManager.getActiveParentSessionIds()) {
+      running.add(id);
+    }
+    const payload: UIRunningSessionsResponse = { sessionIds: Array.from(running) };
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify(payload));
+    return true;
+  }
+
+  // 批量删除会话 (/api/sessions/batch-delete)
+  if (url.pathname === "/api/sessions/batch-delete" && req.method === "POST") {
+    let body: { sessions?: Array<{ id?: string; cwd?: string }> } = {};
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch (err) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: `Invalid request body: ${String(err instanceof Error ? err.message : err)}`,
+        }),
+      );
+      return true;
+    }
+
+    const targets = Array.isArray(body.sessions) ? body.sessions : [];
+    const deletedSessionIds: string[] = [];
+    const failedSessionIds: string[] = [];
+    const errors: string[] = [];
+    const seen = new Set<string>();
+
+    for (const target of targets) {
+      const sessionId = target?.id?.trim();
+      if (!sessionId || seen.has(sessionId)) continue;
+      seen.add(sessionId);
+      const cleanupResult = await cleanupDeletedSessionResources(sessionId, ctx, target?.cwd, {
+        deleteFile: true,
+      });
+      if (cleanupResult.success) {
+        deletedSessionIds.push(sessionId);
+      } else {
+        failedSessionIds.push(sessionId);
+        if (cleanupResult.errors) errors.push(...cleanupResult.errors);
+      }
+    }
+
+    const payload: UIBatchDeleteSessionsResult = {
+      ok: failedSessionIds.length === 0,
+      deletedCount: deletedSessionIds.length,
+      deletedSessionIds,
+      failedSessionIds,
+    };
+
+    if (failedSessionIds.length === 0) {
+      cleanupEmptyProjectDirs();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(payload));
+    } else {
+      payload.error = `Deletion failure: ${failedSessionIds.length} session(s) could not be safely stopped or deleted.`;
+      payload.details = errors;
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify(payload));
+    }
+    return true;
+  }
 
   // 删除单个会话 (/api/sessions/:id)
   if (url.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {

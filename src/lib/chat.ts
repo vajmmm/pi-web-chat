@@ -18,6 +18,8 @@ export interface ChatState {
   activeTools: ActiveTool[];
   injectText: string | null;
   focusToken: number;
+  /** Increments whenever the server reports a session title change. */
+  sessionNameToken: number;
 }
 
 const initialState: ChatState = {
@@ -29,6 +31,7 @@ const initialState: ChatState = {
   activeTools: [],
   injectText: null,
   focusToken: 0,
+  sessionNameToken: 0,
 };
 
 class ChatClient {
@@ -162,6 +165,9 @@ class ChatClient {
       case "session_bound":
         this.target = event.sessionId;
         this.update({ sessionId: event.sessionId });
+        break;
+      case "session_name_changed":
+        this.update({ sessionNameToken: this.state.sessionNameToken + 1 });
         break;
       case "snapshot":
         if (event.snapshot.cwd) {

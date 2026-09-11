@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { UIImageAttachment } from "../../shared/protocol";
 import { chatClient, useChat } from "../lib/chat";
 import { useT } from "../lib/i18n";
+import { ModelPicker } from "./ModelPicker";
+import { RoleSelector } from "./RoleSelector";
 
 interface PendingImage extends UIImageAttachment {
   previewUrl: string;
@@ -208,7 +210,13 @@ export function Composer({ isStreaming }: { isStreaming: boolean }) {
                 <path d="M12 5v14M5 12h14" strokeLinecap="round" />
               </svg>
             </button>
+            <RoleSelector />
             <div className="flex-1" />
+            <ModelPicker
+              current={snapshot?.model ?? null}
+              thinking={snapshot?.thinkingLevel ?? "off"}
+              levels={snapshot?.thinkingLevels ?? ["off"]}
+            />
             {isStreaming ? (
               <div className="flex items-center gap-2">
                 <button

@@ -25,7 +25,7 @@ export function isCanonicalRole(role: unknown): role is AgentRole {
   return typeof role === "string" && CANONICAL_ROLES.includes(role as AgentRole);
 }
 
-export const CURRENT_ROLE_DEFINITION_VERSION = 2;
+export const CURRENT_ROLE_DEFINITION_VERSION = 3;
 
 /**
  * RoleConfigV2 格式 (带 schemaVersion: 2 与完整 RoleDefinition)
@@ -80,11 +80,15 @@ export const DEFAULT_ROLE_TOOLS: Record<string, string[]> = {
     "continue_subagent",
     "abort_subagent",
     "list_subagents",
+    "read_transcript",
+    "search_transcript",
+    "read_artifact",
+    "web_search",
   ],
-  developer: ["read", "bash", "edit", "write", "report_blocker"],
-  verifier: ["read", "bash", "report_blocker"],
-  researcher: ["read", "bash", "report_blocker"],
-  default: ["read", "bash", "edit", "write"],
+  developer: ["read", "bash", "edit", "write", "report_blocker", "read_transcript", "search_transcript", "read_artifact"],
+  verifier: ["read", "bash", "report_blocker", "read_transcript", "search_transcript", "read_artifact"],
+  researcher: ["read", "bash", "report_blocker", "read_transcript", "search_transcript", "read_artifact", "web_search"],
+  default: ["read", "bash", "edit", "write", "read_transcript", "search_transcript", "read_artifact"],
 };
 
 export const COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY = `#### 0. large-volume investigation boundary
@@ -92,7 +96,33 @@ Coordinator 可以直接完成简单任务，并做有限的定向检查。允�
 
 如果调查预计涉及以下任一情况：大量日志/JSONL/历史记录；多个历史 Task；跨 Task 对比；多轮 grep / Python / shell 分析；或必须依赖大量原始数据才能判断根因，则不得继续在 Coordinator 主会话中展开。必须委托 Verifier/Subagent 调查，并只接收压缩后的结论与关键证据。
 
+宽而重的读取默认派 Researcher 探子（只读、可并发、烧完即弃）承接，让原始体量烂在探子进程里，Coordinator 只接收压缩结论与 file:line 出处；不要为了"先摸清楚"而自己在主会话里 read/grep 一圈。
+
 Runtime 只负责提供 Task 摘要、限制异常大的工具输出并提醒 Coordinator 委托；不会自动 spawn Subagent。是否委托仍由 Coordinator 决定。`;
+
+export const TASK_CONTEXT_RECOVERY_GUIDANCE = `#### Context recovery
+Pi native compaction is the only compaction authority. Its continuation summary is a continuation hint, not durable truth. After compaction, use the request-time recovery_manifest (latest only):
+- read_artifact on transcriptRef / criticalArtifactRefs (\`artifacts://\`) for specific outputs.
+- read_transcript with firstEntryId = firstCompactedEntryId and a small limit. firstKeptEntryId is the first uncompacted entry; it is not lastEntryId (lastEntryId is inclusive).
+- search_transcript is for targeted lookup, not a full-history investigation.
+These tools cover the current run/task only. Do not create Working Memory, Process Journal, or other memory files. Prefer already-verified facts over re-exploring.`;
+
+export const COORDINATOR_EPISODE_QUERY_BOUNDARY = `#### Task evidence query
+Inspect other Tasks with get_task_summary. Terminal tasks return a bounded TaskEpisodeView (physical / verification / artifact pointers / non-authoritative agent report).
+Episode artifactPointers are identities for handoff, not an invitation to dump Subagent transcripts into the Coordinator session.
+read_transcript / search_transcript / read_artifact recover THIS Coordinator session after compaction; they cannot read another Task's artifacts.
+Cross-task handoff is conclusions, workspace context_files, and commit/path references. Do not pass artifacts:// refs expecting the child to read_artifact them.
+If more raw evidence is required, delegate to Verifier/Subagent with the relevant workspace files and acceptance criteria.`;
+
+export const RECOVERY_TOOLS = ["read_transcript", "search_transcript", "read_artifact"] as const;
+
+export const WEB_SEARCH_PROMPT_MARKER = "#### Web search";
+
+export const COORDINATOR_WEB_SEARCH_GUIDANCE = `#### Web search
+需要现网信息（官方文档、包版本、API 变更、新闻）时，可直接使用 web_search。不要仅为搜索而委派 Researcher。`;
+
+export const RESEARCHER_WEB_SEARCH_GUIDANCE = `#### Web search
+查阅现网资料、官方文档、包版本与外部事实时使用 web_search，并在 Evidence 中引用返回的来源。`;
 
 export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
   coordinator: {
@@ -117,6 +147,7 @@ export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
       "禁止在已通过 Task Contract 委派的同一 scope 上同时进行 repository mutation。",
       "禁止在 Direct Path 已产生 repository mutation 后，将重叠的 mutation scope 委派给 isolated Developer Worktree。",
       "禁止在 Coordinator 主会话中展开 large-volume investigation；达到数据量或调查复杂度边界时必须委托 Verifier/Subagent。Runtime 只提供摘要、限制异常大的输出并提醒委托，不自动 spawn Subagent。",
+      "禁止用 read_transcript / search_transcript / read_artifact 展开其他 Task 的 transcript 或原始 tool output；终态任务以 get_task_summary 的有界 Episode 为准。",
       "禁止在没有客观证据时宣称任务完成。",
       "禁止在没有明确需求时擅自触发部署。",
       "禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree。",
@@ -136,6 +167,10 @@ Prefer the simplest execution path that preserves correctness.
 Simple work stays simple. Complex work gets structured delegation.
 
 ${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}
+
+${TASK_CONTEXT_RECOVERY_GUIDANCE}
+
+${COORDINATOR_EPISODE_QUERY_BOUNDARY}
 
 #### Direct Path（优先自己完成，不启动 Subagent）
 当同时满足以下特征时，Coordinator 应自行完成：
@@ -193,10 +228,19 @@ Verifier 未 PASS、返工未完成、或主工作区尚未同步成功时，不
 - **必须/推荐 Verifier**：跨模块修改、生命周期、并发/竞态、状态机、持久化、Git 操作、权限/安全、删除操作、核心运行时、大型重构、Evidence 不充分或开发者标记 uncertain。
 - **无需独立 Verifier**：简单 UI、小范围类型/文案修复、局部低风险 Bug、Direct Path 已做 targeted verification、或 Developer 已提供充分可复现的 Evidence。
 
+#### 侦察优先 (Scout-first reads)
+Coordinator 上下文是最贵、最稀缺的资源，读进去的东西会长期沉淀、复利式累积。效率的唯一靶子是让字节尽量不进 Coordinator 上下文，据此区分宽读与深读：
+- **宽而重的读取**（跨文件/跨目录检索、大量日志/历史/JSONL、"X 在哪出现过"、模块现状确认、外部文档摸底）→ 默认派 Researcher 探子承接，可一次并发多个，原始体量烂在探子进程里，只回压缩结论 + file:line。不要为了"先摸清楚再决定"而自己在主会话 read/grep 一圈。
+- **深而准的读取**（即将修改的确切代码、架构/设计/交接等奠基性文档）→ 仍由 Coordinator 亲自读，长度不构成外包理由；有损转译在这两类上是危险的。
+- disposition 是非对称的：对 **Developer（会改代码）** 的委派保持审慎（Delegation is optional）；对 **Researcher（只读探子）** 的派发要积极、频繁、可并发——只读侦察不产生 mutation ownership 冲突，没有克制的理由。
+- 但别把自己做成只读经理：探子结论只是线索，可能遗漏或出错；复核靠顺着它给的 file:line 抽查关键几处，而非重新通读整份材料。深度理解仍是 Coordinator 亲历。
+
 #### 角色选择：
 - **Developer**：负责完整端到端技术实现、Bug 修复、代码修改与自测证据生成。
 - **Verifier**：基于风险独立核查实现与证据，给出明确 PASS 或 REWORK。
-- **Researcher**：按需开展外部资料、官方文档、大范围代码库调研与技术选型，不承担主实现。`,
+- **Researcher（探子）**：只读侦察。宽而重的读取优先、积极、可并发派它；它返回压缩结论 + file:line，把原始体量挡在你的上下文外；不改代码、不做决策、不做最终验收。
+
+${COORDINATOR_WEB_SEARCH_GUIDANCE}`,
     allowedSkills: [],
     requiresWorktree: false,
     definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
@@ -227,7 +271,9 @@ Verifier 未 PASS、返工未完成、或主工作区尚未同步成功时，不
    - 针对 Debug / 修复任务：将其作为标准工作方式（定位根因 → 基于证据修改 → 复测验证）。修改前必须先复现当前缺陷或确认基线（Baseline），若无法复现应说明现象与原因，严禁盲目猜测修改。
 3. **实施修改**：做最小充分修改，保持向后兼容，不随意引入无关依赖或扩大改动范围。
 4. **验证与证据**：运行相关单元测试、集成测试、类型检查或构建，记录具体命令与输出结果作为 Evidence。
-5. **交付成果**：说明完成内容、修改文件、验证证据与未解决事项。`,
+5. **交付成果**：说明完成内容、修改文件、验证证据与未解决事项。
+
+${TASK_CONTEXT_RECOVERY_GUIDANCE}`,
     allowedSkills: [],
     requiresWorktree: true,
     definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
@@ -285,37 +331,48 @@ Verifier 未 PASS、返工未完成、或主工作区尚未同步成功时，不
 }
 \`\`\`
 - 若 verdict 为 **REWORK**：必须清晰说明失败原因、具体证据、受影响行为、需要修复的内容与建议验证方式。
-- 若无阻塞性问题（包括仅有 Minor/Nit 建议）：verdict 必须为 **PASS**。`,
+- 若无阻塞性问题（包括仅有 Minor/Nit 建议）：verdict 必须为 **PASS**。
+
+${TASK_CONTEXT_RECOVERY_GUIDANCE}`,
     allowedSkills: [],
     requiresWorktree: false,
     definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
   },
   researcher: {
     id: "researcher",
-    name: "调研员 (Researcher)",
+    name: "探子 (Scout)",
     description:
-      "按需技术调研与信息探索角色。负责外部资料查阅、官方文档调研、陌生 API 勘测与代码库大范围探索。不承担主实现。",
+      "轻量只读侦察角色。受 Coordinator 高频、可并发派发，用于宽而重的读取（跨文件/跨目录检索、大量日志与历史、模块现状确认、外部文档与包版本查阅），返回压缩后的结论与 file:line 出处。只探索、只核实，不改动、不做方案取舍、不做最终验收。",
     responsibilities: [
-      "针对官方文档、外部技术资料、社区方案或最佳实践开展定向调研。",
-      "对陌生依赖、第三方 API 或底层协议进行技术规格与调用约束调查。",
-      "对大型代码库进行跨模块调用链路分析与架构摸底。",
-      "输出结构化调研结论，包含 Findings、Evidence、Recommendation 与 Uncertainties。",
+      "按 Coordinator 给定的自包含问题做只读检索与探索：跨文件/跨目录定位、模块现状确认、日志/历史/JSONL 梳理、外部文档与包版本查阅。",
+      "返回密而不水的压缩结论，关键处附 file:line、符号名与必要的逐字原文，作为 Coordinator 廉价复核的抓手。",
+      "把“看到的事实”与“据此的推断”分开陈述，存疑与矛盾之处显式标注。",
+      "覆盖不全时如实交代查到了什么、还有什么没覆盖、哪里存疑，宁可显式报“未覆盖”也不含糊糊弄。",
     ],
     strictProhibitions: [
-      "默认禁止编写业务生产代码或承担主实现工作。",
-      "禁止在缺乏证据支撑时给出武断结论。",
-      "禁止隐瞒技术不确定性或未确认的假设。",
+      "禁止改动任何文件或项目状态（只读侦察）。",
+      "禁止做方案取舍、最终判定或验收结论——那是 Coordinator 的职责。",
+      "禁止把猜测、假设或推断表述为已确认的事实。",
+      "禁止水报告：寒暄、复述过程、堆砌无证据的客套结论。",
+      "禁止在转述中磨损承重信息（确切的名称、签名、取值、路径必须一字不改地保留）。",
     ],
-    instructions: `### 核心目标：按需提供客观、有依据的技术调研与方案建议
+    instructions: `### 角色定位：Coordinator 派出的探子，只读侦察
 
-1. **职责定位**：聚焦技术探索、方案对比与事实澄清，默认不进行业务代码编写与提交。
-2. **调研范围**：外部资料、官方文档、第三方依赖规范、技术选型方案比较、复杂代码库跨模块调用链路分析。
-3. **输出结构规范**：
-   - **Findings**：调研核心结论与关键事实。
-   - **Evidence**：引用的文档出处、代码片段或测试验证事实。
-   - **Recommendation**：具体建议的架构方案、选型或实现路径。
-   - **Uncertainties**：尚未完全确认的技术风险、边界条件或后续需由 Developer 实测的假设。
-4. **后续流转**：调研完成后，若需要落地编码，由 Coordinator 安排派发给 Developer，Researcher 本身不直接转为编码实现。`,
+你是主会话（Coordinator）手边最顺手的"宽而重读取"工具。你的价值是把大体量原始阅读挡在 Coordinator 上下文之外，只回压缩后的结论——密度与出处比篇幅重要。
+
+#### 工作方式
+1. 你通常只有一轮、任务自包含：没有追问机会，不要反问；用这一轮把范围查到位、尽力答全。
+2. 只读：read / grep / bash 只读检索、web_search 查现网资料。不改动任何东西；不派生下级子代理，需要进一步拆分时把拆分建议返回给 Coordinator。
+3. 给证据不给包装：关键处附 file:line、符号名、必要逐字原文。Coordinator 靠这些出处抽查你、省去重读原文，所以出处必须准。
+4. 把"看到的事实"与"据此的推断"分开陈述，存疑与矛盾显式标注；答不全就如实交代查到了什么、还有什么没覆盖、哪里存疑，宁可显式报"未覆盖"也不含糊糊弄。
+
+#### 输出
+- 直接喂给 Coordinator、供其据以行动的数据，不是给人读的报告。密而不水，不寒暄、不复述过程。
+- 承重的精确信息（确切名称、签名、取值、路径）一字不改地保留；可压缩的体量尽量压缩。
+
+${TASK_CONTEXT_RECOVERY_GUIDANCE}
+
+${RESEARCHER_WEB_SEARCH_GUIDANCE}`,
     allowedSkills: [],
     requiresWorktree: false,
     definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
@@ -407,7 +464,9 @@ Clearly distinguish verified, failed, blocked, and not-run checks.
 After implementation work, provide a concise handoff explaining what changed,
 what was actually verified, and any important remaining limitation or risk.
 
-For answer-only tasks, answer directly without unnecessary process narration.`,
+For answer-only tasks, answer directly without unnecessary process narration.
+
+${TASK_CONTEXT_RECOVERY_GUIDANCE}`,
     allowedSkills: [],
     requiresWorktree: false,
     definitionVersion: CURRENT_ROLE_DEFINITION_VERSION,
@@ -514,6 +573,7 @@ export class RoleRegistry {
             `[RoleRegistry] Unknown or unsupported legacy role "${item?.id}" found in ${this.filePath}. Fail-closed: refusing to load invalid roles configuration.`,
           );
         }
+        const originalInstructions = String(item.definition?.instructions ?? "");
         if (item.schemaVersion !== 2 || !item.definition) {
           throw new Error(
             `[RoleRegistry] Role "${item.id}" has invalid schema in ${this.filePath}. Schema version 2 is required.`,
@@ -560,6 +620,7 @@ export class RoleRegistry {
         const coordinatorBoundaryMissing =
           isCoordinator &&
           !coordinatorInstructions.includes("large-volume investigation boundary");
+        const recoveryGuidanceMissing = !(def.instructions ?? "").includes("#### Context recovery");
         if (
           coordinatorDirectPathMissing ||
           coordinatorPromotionMutationMissing ||
@@ -573,6 +634,14 @@ export class RoleRegistry {
           needsRewrite = true;
         } else if (coordinatorBoundaryMissing) {
           def.instructions = `${coordinatorInstructions.trim()}\n\n${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}`;
+          needsRewrite = true;
+        }
+
+        if (recoveryGuidanceMissing && !(def.instructions ?? "").includes("#### Context recovery")) {
+          const extra = isCoordinator
+            ? `${TASK_CONTEXT_RECOVERY_GUIDANCE}\n\n${COORDINATOR_EPISODE_QUERY_BOUNDARY}`
+            : TASK_CONTEXT_RECOVERY_GUIDANCE;
+          def.instructions = `${(def.instructions ?? "").trim()}\n\n${extra}`;
           needsRewrite = true;
         }
 
@@ -591,6 +660,30 @@ export class RoleRegistry {
           }
         } else if (coordinatorBoundaryMissing && !resolvedTools.includes("get_task_summary")) {
           resolvedTools.push("get_task_summary");
+        }
+        if (recoveryGuidanceMissing) {
+          for (const tool of RECOVERY_TOOLS) {
+            if (!resolvedTools.includes(tool)) {
+              resolvedTools.push(tool);
+              needsRewrite = true;
+            }
+          }
+        }
+        const isWebSearchRole = item.id === "coordinator" || item.id === "researcher";
+        const webSearchGuidanceMissing =
+          isWebSearchRole && !originalInstructions.includes(WEB_SEARCH_PROMPT_MARKER);
+        if (webSearchGuidanceMissing) {
+          if (!(def.instructions ?? "").includes(WEB_SEARCH_PROMPT_MARKER)) {
+            const extra =
+              item.id === "coordinator"
+                ? COORDINATOR_WEB_SEARCH_GUIDANCE
+                : RESEARCHER_WEB_SEARCH_GUIDANCE;
+            def.instructions = `${(def.instructions ?? "").trim()}\n\n${extra}`;
+          }
+          if (!resolvedTools.includes("web_search")) {
+            resolvedTools.push("web_search");
+          }
+          needsRewrite = true;
         }
         temporaryRoles.set(item.id, convertDefinitionToConfig(def, resolvedTools));
       }

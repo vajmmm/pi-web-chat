@@ -1,0 +1,1088 @@
+{
+  "timestamp": "2026-09-09T08:45:27.221Z",
+  "model": "minimax-custom/MiniMax-M2.7",
+  "contextWindow": 20000,
+  "pairedRunsCount": 3,
+  "aggregates": [
+    {
+      "workload": "core_coding",
+      "nativeRuns": [
+        {
+          "runMode": "native",
+          "workload": "core_coding",
+          "runIndex": 0,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 28,
+          "readToolCalls": 13,
+          "editToolCalls": 11,
+          "testCommandsRun": 3,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 98690
+        },
+        {
+          "runMode": "native",
+          "workload": "core_coding",
+          "runIndex": 1,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 22,
+          "readToolCalls": 13,
+          "editToolCalls": 6,
+          "testCommandsRun": 3,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 76502
+        },
+        {
+          "runMode": "native",
+          "workload": "core_coding",
+          "runIndex": 2,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 23,
+          "readToolCalls": 12,
+          "editToolCalls": 6,
+          "testCommandsRun": 3,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 69315
+        }
+      ],
+      "structuredRuns": [
+        {
+          "runMode": "structured",
+          "workload": "core_coding",
+          "runIndex": 0,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 24,
+          "readToolCalls": 14,
+          "editToolCalls": 6,
+          "testCommandsRun": 3,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 73412
+        },
+        {
+          "runMode": "structured",
+          "workload": "core_coding",
+          "runIndex": 1,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 32,
+          "readToolCalls": 15,
+          "editToolCalls": 12,
+          "testCommandsRun": 2,
+          "compactionCount": 1,
+          "thresholdCompactionCount": 1,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [
+            {
+              "sessionId": "task-core_coding-structured-1-1788941302477",
+              "taskId": "task-core_coding-structured-1-1788941302477",
+              "modelProvider": "minimax-custom",
+              "modelId": "MiniMax-M2.7",
+              "contextWindow": 20000,
+              "compactionSeq": 1,
+              "reason": "threshold",
+              "triggerRatio": 0.8,
+              "reserveTokens": 5000,
+              "keepRecentTokens": 7000,
+              "effectiveThresholdTokens": 15000,
+              "tokensBefore": 15448,
+              "summaryBytes": 1272,
+              "summaryInspectionStatus": "degraded",
+              "missingSections": [
+                "continuation_summary wrapper/schema",
+                "Task Goal",
+                "Current State",
+                "Completed Work",
+                "Unresolved / Failed Work",
+                "Failed Attempts / Do Not Retry",
+                "Key Decisions / Reasons",
+                "Modified Files",
+                "Verification State",
+                "Next Actions",
+                "Critical Evidence / Artifact Refs"
+              ],
+              "artifactRecoveryCount": 0,
+              "transcriptRecoveryCount": 0,
+              "tokensAfter": 9935
+            }
+          ],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 0,
+          "durationMs": 198586
+        },
+        {
+          "runMode": "structured",
+          "workload": "core_coding",
+          "runIndex": 2,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 27,
+          "readToolCalls": 13,
+          "editToolCalls": 6,
+          "testCommandsRun": 6,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 109380
+        }
+      ],
+      "metrics": {
+        "totalToolCalls": {
+          "native": {
+            "median": 23,
+            "min": 22,
+            "max": 28
+          },
+          "structured": {
+            "median": 27,
+            "min": 24,
+            "max": 32
+          }
+        },
+        "readToolCalls": {
+          "native": {
+            "median": 13,
+            "min": 12,
+            "max": 13
+          },
+          "structured": {
+            "median": 14,
+            "min": 13,
+            "max": 15
+          }
+        },
+        "editToolCalls": {
+          "native": {
+            "median": 6,
+            "min": 6,
+            "max": 11
+          },
+          "structured": {
+            "median": 6,
+            "min": 6,
+            "max": 12
+          }
+        },
+        "testCommandsRun": {
+          "native": {
+            "median": 3,
+            "min": 3,
+            "max": 3
+          },
+          "structured": {
+            "median": 3,
+            "min": 2,
+            "max": 6
+          }
+        },
+        "compactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          }
+        },
+        "thresholdCompactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          }
+        },
+        "overflowCompactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "unnecessaryRepeatedReadCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "repeatedFailedApproachCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "verificationStateLossCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "structuredSchemaComplianceRate": {
+          "native": {
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "structured": {
+            "median": 100,
+            "min": 0,
+            "max": 100
+          }
+        },
+        "durationMs": {
+          "native": {
+            "median": 76502,
+            "min": 69315,
+            "max": 98690
+          },
+          "structured": {
+            "median": 109380,
+            "min": 73412,
+            "max": 198586
+          }
+        }
+      }
+    },
+    {
+      "workload": "negative_knowledge",
+      "nativeRuns": [
+        {
+          "runMode": "native",
+          "workload": "negative_knowledge",
+          "runIndex": 0,
+          "taskSuccess": false,
+          "finalVerificationSuccess": false,
+          "totalToolCalls": 19,
+          "readToolCalls": 3,
+          "editToolCalls": 3,
+          "testCommandsRun": 7,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": true,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": false,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 300600
+        },
+        {
+          "runMode": "native",
+          "workload": "negative_knowledge",
+          "runIndex": 1,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 10,
+          "readToolCalls": 4,
+          "editToolCalls": 2,
+          "testCommandsRun": 1,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 106768
+        },
+        {
+          "runMode": "native",
+          "workload": "negative_knowledge",
+          "runIndex": 2,
+          "taskSuccess": false,
+          "finalVerificationSuccess": false,
+          "totalToolCalls": 16,
+          "readToolCalls": 1,
+          "editToolCalls": 6,
+          "testCommandsRun": 4,
+          "compactionCount": 1,
+          "thresholdCompactionCount": 1,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [
+            {
+              "sessionId": "task-negative_knowledge-native-2-1788942495896",
+              "taskId": "task-negative_knowledge-native-2-1788942495896",
+              "modelProvider": "minimax-custom",
+              "modelId": "MiniMax-M2.7",
+              "contextWindow": 20000,
+              "compactionSeq": 1,
+              "reason": "threshold",
+              "triggerRatio": 0.8,
+              "reserveTokens": 5000,
+              "keepRecentTokens": 7000,
+              "effectiveThresholdTokens": 15000,
+              "tokensBefore": 15965,
+              "summaryBytes": 1304,
+              "summaryInspectionStatus": "degraded",
+              "missingSections": [
+                "continuation_summary wrapper/schema",
+                "Task Goal",
+                "Current State",
+                "Completed Work",
+                "Unresolved / Failed Work",
+                "Failed Attempts / Do Not Retry",
+                "Key Decisions / Reasons",
+                "Modified Files",
+                "Verification State",
+                "Next Actions",
+                "Critical Evidence / Artifact Refs"
+              ],
+              "artifactRecoveryCount": 0,
+              "transcriptRecoveryCount": 0,
+              "tokensAfter": 9939
+            }
+          ],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": true,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": false,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 0,
+          "durationMs": 301111
+        }
+      ],
+      "structuredRuns": [
+        {
+          "runMode": "structured",
+          "workload": "negative_knowledge",
+          "runIndex": 0,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 9,
+          "readToolCalls": 3,
+          "editToolCalls": 2,
+          "testCommandsRun": 2,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 79460
+        },
+        {
+          "runMode": "structured",
+          "workload": "negative_knowledge",
+          "runIndex": 1,
+          "taskSuccess": false,
+          "finalVerificationSuccess": false,
+          "totalToolCalls": 15,
+          "readToolCalls": 4,
+          "editToolCalls": 6,
+          "testCommandsRun": 3,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": true,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": false,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 300791
+        },
+        {
+          "runMode": "structured",
+          "workload": "negative_knowledge",
+          "runIndex": 2,
+          "taskSuccess": false,
+          "finalVerificationSuccess": false,
+          "totalToolCalls": 14,
+          "readToolCalls": 2,
+          "editToolCalls": 1,
+          "testCommandsRun": 6,
+          "compactionCount": 1,
+          "thresholdCompactionCount": 1,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [
+            {
+              "sessionId": "task-negative_knowledge-structured-2-1788942801282",
+              "taskId": "task-negative_knowledge-structured-2-1788942801282",
+              "modelProvider": "minimax-custom",
+              "modelId": "MiniMax-M2.7",
+              "contextWindow": 20000,
+              "compactionSeq": 1,
+              "reason": "threshold",
+              "triggerRatio": 0.8,
+              "reserveTokens": 5000,
+              "keepRecentTokens": 7000,
+              "effectiveThresholdTokens": 15000,
+              "tokensBefore": 15959,
+              "summaryBytes": 1206,
+              "summaryInspectionStatus": "degraded",
+              "missingSections": [
+                "continuation_summary wrapper/schema",
+                "Task Goal",
+                "Current State",
+                "Completed Work",
+                "Unresolved / Failed Work",
+                "Failed Attempts / Do Not Retry",
+                "Key Decisions / Reasons",
+                "Modified Files",
+                "Verification State",
+                "Next Actions",
+                "Critical Evidence / Artifact Refs"
+              ],
+              "artifactRecoveryCount": 0,
+              "transcriptRecoveryCount": 0,
+              "tokensAfter": 596
+            }
+          ],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": true,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 2,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": false,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 0,
+          "durationMs": 300901
+        }
+      ],
+      "metrics": {
+        "totalToolCalls": {
+          "native": {
+            "median": 16,
+            "min": 10,
+            "max": 19
+          },
+          "structured": {
+            "median": 14,
+            "min": 9,
+            "max": 15
+          }
+        },
+        "readToolCalls": {
+          "native": {
+            "median": 3,
+            "min": 1,
+            "max": 4
+          },
+          "structured": {
+            "median": 3,
+            "min": 2,
+            "max": 4
+          }
+        },
+        "editToolCalls": {
+          "native": {
+            "median": 3,
+            "min": 2,
+            "max": 6
+          },
+          "structured": {
+            "median": 2,
+            "min": 1,
+            "max": 6
+          }
+        },
+        "testCommandsRun": {
+          "native": {
+            "median": 4,
+            "min": 1,
+            "max": 7
+          },
+          "structured": {
+            "median": 3,
+            "min": 2,
+            "max": 6
+          }
+        },
+        "compactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          }
+        },
+        "thresholdCompactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          }
+        },
+        "overflowCompactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "unnecessaryRepeatedReadCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "repeatedFailedApproachCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "verificationStateLossCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "structuredSchemaComplianceRate": {
+          "native": {
+            "median": 100,
+            "min": 0,
+            "max": 100
+          },
+          "structured": {
+            "median": 100,
+            "min": 0,
+            "max": 100
+          }
+        },
+        "durationMs": {
+          "native": {
+            "median": 300600,
+            "min": 106768,
+            "max": 301111
+          },
+          "structured": {
+            "median": 300791,
+            "min": 79460,
+            "max": 300901
+          }
+        }
+      }
+    },
+    {
+      "workload": "recovery",
+      "nativeRuns": [
+        {
+          "runMode": "native",
+          "workload": "recovery",
+          "runIndex": 0,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 19,
+          "readToolCalls": 4,
+          "editToolCalls": 0,
+          "testCommandsRun": 9,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 174416
+        },
+        {
+          "runMode": "native",
+          "workload": "recovery",
+          "runIndex": 1,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 7,
+          "readToolCalls": 4,
+          "editToolCalls": 0,
+          "testCommandsRun": 2,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 46296
+        },
+        {
+          "runMode": "native",
+          "workload": "recovery",
+          "runIndex": 2,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 20,
+          "readToolCalls": 5,
+          "editToolCalls": 0,
+          "testCommandsRun": 7,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 64444
+        }
+      ],
+      "structuredRuns": [
+        {
+          "runMode": "structured",
+          "workload": "recovery",
+          "runIndex": 0,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 8,
+          "readToolCalls": 4,
+          "editToolCalls": 0,
+          "testCommandsRun": 1,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 30313
+        },
+        {
+          "runMode": "structured",
+          "workload": "recovery",
+          "runIndex": 1,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 8,
+          "readToolCalls": 4,
+          "editToolCalls": 0,
+          "testCommandsRun": 3,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 0,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 28283
+        },
+        {
+          "runMode": "structured",
+          "workload": "recovery",
+          "runIndex": 2,
+          "taskSuccess": true,
+          "finalVerificationSuccess": true,
+          "totalToolCalls": 26,
+          "readToolCalls": 3,
+          "editToolCalls": 0,
+          "testCommandsRun": 6,
+          "compactionCount": 0,
+          "thresholdCompactionCount": 0,
+          "overflowCompactionCount": 0,
+          "manualCompactionCount": 0,
+          "telemetryRecords": [],
+          "unnecessaryRepeatedReadCount": 0,
+          "repeatedInvestigationCount": 0,
+          "repeatedFailedApproachCount": 0,
+          "unresolvedFrontierLoss": false,
+          "incorrectModifiedFileState": false,
+          "verificationStateLossCount": 0,
+          "wrongNextActionCount": 0,
+          "artifactRecoveryCount": 0,
+          "transcriptRecoveryCount": 2,
+          "recoverySuccess": true,
+          "structuredSchemaValidCount": 0,
+          "structuredSchemaComplianceRate": 100,
+          "durationMs": 67449
+        }
+      ],
+      "metrics": {
+        "totalToolCalls": {
+          "native": {
+            "median": 19,
+            "min": 7,
+            "max": 20
+          },
+          "structured": {
+            "median": 8,
+            "min": 8,
+            "max": 26
+          }
+        },
+        "readToolCalls": {
+          "native": {
+            "median": 4,
+            "min": 4,
+            "max": 5
+          },
+          "structured": {
+            "median": 4,
+            "min": 3,
+            "max": 4
+          }
+        },
+        "editToolCalls": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "testCommandsRun": {
+          "native": {
+            "median": 7,
+            "min": 2,
+            "max": 9
+          },
+          "structured": {
+            "median": 3,
+            "min": 1,
+            "max": 6
+          }
+        },
+        "compactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "thresholdCompactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "overflowCompactionCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "unnecessaryRepeatedReadCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "repeatedFailedApproachCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "verificationStateLossCount": {
+          "native": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "structured": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        },
+        "structuredSchemaComplianceRate": {
+          "native": {
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "structured": {
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "durationMs": {
+          "native": {
+            "median": 64444,
+            "min": 46296,
+            "max": 174416
+          },
+          "structured": {
+            "median": 30313,
+            "min": 28283,
+            "max": 67449
+          }
+        }
+      }
+    }
+  ]
+}

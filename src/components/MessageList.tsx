@@ -96,12 +96,22 @@ export function Blocks({ blocks, markdown }: { blocks: UIContentBlock[]; markdow
             return <ToolCallCard key={i} block={b} />;
           case "image":
             return b.dataUrl ? (
-              <img
-                key={i}
-                src={b.dataUrl}
-                alt={t("attachedImage")}
-                className="my-1 max-h-64 max-w-full border-2 border-line object-cover"
-              />
+              <div key={i} className="my-1">
+                <a href={b.dataUrl} download="generated-image" className="inline-block">
+                  <img
+                    src={b.dataUrl}
+                    alt={t("attachedImage")}
+                    className="max-h-64 max-w-full border-2 border-line object-cover"
+                  />
+                </a>
+                <a
+                  href={b.dataUrl}
+                  download="generated-image"
+                  className="mt-1 block font-mono text-xs text-accent underline underline-offset-2"
+                >
+                  下载图片
+                </a>
+              </div>
             ) : (
               <div key={i} className="font-mono text-xs opacity-60">
                 {t("imagePlaceholder")}

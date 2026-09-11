@@ -7,6 +7,14 @@ import {
   PromptAssembler,
 } from "../contracts/index.ts";
 import { adjustSkillsInBasePrompt } from "../skills.ts";
+import {
+  canUseProductDesign,
+  getMainSessionCapabilities,
+  hasProductDesignSkill,
+  PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME,
+  PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME,
+  resolveMainModelCapabilityBinding,
+} from "./capabilities.ts";
 import type { SessionEntry } from "./session-registry.ts";
 
 export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
@@ -17,11 +25,14 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
     );
   }
 
+  const capabilities = getMainSessionCapabilities(entry.runtime.session.model);
+  const productDesignAvailable = canUseProductDesign(capabilities);
   const effectiveContext = ConstraintResolver.resolve({
     role,
     cwd: entry.cwd,
     branchName: entry.gitBranch,
     isGitRepo: entry.isGitRepo,
+    allowProductDesign: productDesignAvailable,
   });
 
   // 校验与解析成功后才赋值
@@ -30,10 +41,26 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
 
   // 1. 设置有效工具集 (直接通过 setActiveToolsByName 暴露)
   if (typeof session.setActiveToolsByName === "function") {
-    session.setActiveToolsByName(effectiveContext.runtime.activeTools);
+    const productDesignTools = new Set([
+      PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME,
+      PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME,
+    ]);
+    const nativeImageTool = resolveMainModelCapabilityBinding(session.model)?.nativeImageGenerationTool;
+    const activeTools = effectiveContext.runtime.activeTools.filter(
+      (toolName) => toolName !== nativeImageTool && !productDesignTools.has(toolName),
+    );
+    if (nativeImageTool) activeTools.push(nativeImageTool);
+    if (productDesignAvailable && hasProductDesignSkill(effectiveContext.assignedSkills.map((s) => s.name))) {
+      activeTools.push(PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME, PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME);
+    }
+    session.setActiveToolsByName(activeTools);
   }
 
   // 2. 根据角色分层更新系统提示词 (System Prompt)
+  // 某些轻量测试替身只实现了模型/工具接口，没有 Pi Agent 的 prompt state。
+  // 这种情况下仍完成 capability/tool 绑定，但跳过不存在的 prompt state 写入。
+  if (!(session as any).agent?.state) return;
+
   if (role === "default") {
     // 标准模式：Standard Mode Behavior + Pi Native System Prompt (含 skills 过滤)
     (session as any)._systemPromptOverride = undefined;
@@ -50,7 +77,7 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
 
     const adjustedNativePrompt = adjustSkillsInBasePrompt(
       cleanBasePrompt,
-      effectiveContext.role.allowedSkills ?? [],
+      effectiveContext.assignedSkills.map((s) => s.name),
       entry.cwd,
     );
 

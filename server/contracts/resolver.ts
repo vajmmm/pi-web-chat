@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentRole } from "../../shared/protocol.ts";
 import { resolveSkillCatalog, type SkillCatalogEntry } from "../skills.ts";
+import { filterProductDesignSkills } from "../session/capabilities.ts";
 import { getRoleConfig, getRoleDefinition, type RoleDefinition } from "./roles.ts";
 import { SHARED_DEFAULTS, SHARED_INVARIANTS } from "./rules.ts";
 import type { SubagentExecutionOptions, TaskContract } from "./task.ts";
@@ -61,6 +62,8 @@ export interface ResolveOptions {
   taskLineage?: string[];
   executionOptions?: SubagentExecutionOptions;
   parentModel?: { provider?: string; modelId: string; thinkingLevel?: any } | null;
+  /** Main-session-only Product Design gate. Subagents leave this unset and fail closed. */
+  allowProductDesign?: boolean;
 }
 
 /**
@@ -136,7 +139,10 @@ export class ConstraintResolver {
     };
 
     // 3. 解析技能
-    const allowedSkills = role.allowedSkills ?? [];
+    const allowedSkills = filterProductDesignSkills(
+      role.allowedSkills,
+      options.allowProductDesign === true,
+    );
     const assignedSkills =
       allowedSkills.length > 0
         ? resolveSkillCatalog(allowedSkills, options.cwd, options.projectRoot)

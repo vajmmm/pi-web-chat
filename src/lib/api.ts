@@ -13,6 +13,8 @@ import type {
   UIPickDirectoryResponse,
   UIProjectItem,
   UIPromptInspection,
+  UIRunningSessionsResponse,
+  UIBatchDeleteSessionsResult,
   UISessionFileResponse,
   UISessionInfo,
   UISkillsResponse,
@@ -54,6 +56,25 @@ export async function deleteSessionApi(sessionId: string, cwd?: string): Promise
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+/**
+ * Batch-delete multiple sessions in a single request. A 409 response carries a
+ * partial-failure summary (ok:false + failedSessionIds), so it is returned
+ * instead of thrown; only network / unexpected statuses reject.
+ */
+export async function deleteSessionsBatchApi(
+  sessions: { id: string; cwd?: string }[],
+): Promise<UIBatchDeleteSessionsResult> {
+  const res = await fetch("/api/sessions/batch-delete", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessions }),
+  });
+  if (res.status !== 200 && res.status !== 409) {
+    throw new Error(`/api/sessions/batch-delete: ${res.status}`);
+  }
+  return res.json() as Promise<UIBatchDeleteSessionsResult>;
+}
+
 export async function deleteProjectApi(cwd: string): Promise<{ ok: boolean; deletedCount: number }> {
   const url = `/api/projects?cwd=${encodeURIComponent(cwd)}`;
   const res = await fetch(url, { method: "DELETE" });
@@ -87,6 +108,23 @@ export function useInvalidateSessions() {
   };
 }
 
+export const RUNNING_SESSIONS_QUERY_KEY = ["running-sessions"] as const;
+
+/**
+ * Lightweight in-memory set of session ids that are actively running: the main
+ * turn is streaming, or subagents / the coordinator are working for the
+ * session. Polled by the session list to render a live "busy" spinner.
+ */
+export function useRunningSessions(enabled = true, refetchInterval: number | false = false) {
+  return useQuery({
+    queryKey: RUNNING_SESSIONS_QUERY_KEY,
+    queryFn: () => fetchJson<UIRunningSessionsResponse>("/api/sessions/running"),
+    enabled,
+    staleTime: 0,
+    refetchInterval,
+  });
+}
+
 export function useForkPoints(sessionId: string | null, enabled = true) {
   return useQuery({
     queryKey: ["fork-points", sessionId],
@@ -112,6 +150,18 @@ export function useModels() {
   return useQuery({
     queryKey: MODELS_QUERY_KEY,
     queryFn: () => fetchJson<UIModel[]>("/api/models"),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export const ROLE_MODELS_QUERY_KEY = ["role-models"] as const;
+
+/** Role/subagent model catalog, including providers that are not executable by the main session. */
+export function useRoleModels(enabled = true) {
+  return useQuery({
+    queryKey: ROLE_MODELS_QUERY_KEY,
+    queryFn: () => fetchJson<UIModel[]>("/api/models?scope=role"),
+    enabled,
     staleTime: 5 * 60_000,
   });
 }
@@ -180,7 +230,11 @@ export function useInvalidateRoles() {
 
 export function useInvalidateModels() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: MODELS_QUERY_KEY }),
+      qc.invalidateQueries({ queryKey: ROLE_MODELS_QUERY_KEY }),
+    ]);
 }
 
 export async function validateCwd(cwd: string): Promise<UICwdValidateResponse> {
@@ -392,4 +446,3 @@ export async function fetchRemoteCustomModels(params: {
   if (!res.ok) throw new Error(json.error ?? `fetch models failed: ${res.status}`);
   return json;
 }
-

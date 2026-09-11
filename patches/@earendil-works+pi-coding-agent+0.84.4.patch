@@ -1,0 +1,142 @@
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
+index fd82b71..adab777 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
+@@ -1450,6 +1450,14 @@ export class AgentSession {
+     async _runDefaultCompaction(preparation, requestModel, apiKey, headers, customInstructions, signal, env, reason) {
+         return compact(preparation, requestModel, apiKey, headers, customInstructions, signal, this.thinkingLevel, this.agent.streamFunction, env, this.settingsManager.getRetrySettings(), this._summarizationRetryCallbacks({ source: "compaction", reason }), undefined);
+     }
++    _getCompactionInstructions(manualSupplement) {
++        const base = this.settingsManager.getCompactionCustomInstructions();
++        if (!base)
++            return manualSupplement;
++        if (!manualSupplement?.trim())
++            return base;
++        return `${base}\n\nAdditional manual guidance:\n${manualSupplement}`;
++    }
+     /**
+      * Manually compact the session context.
+      *
+@@ -1520,7 +1528,7 @@ export class AgentSession {
+             }
+             else {
+                 // Shared default summary generator, also used by automatic compaction.
+-                const result = await this._runDefaultCompaction(preparation, requestModel, apiKey, headers, customInstructions, this._compactionAbortController.signal, env, "manual");
++                const result = await this._runDefaultCompaction(preparation, requestModel, apiKey, headers, this._getCompactionInstructions(customInstructions), this._compactionAbortController.signal, env, "manual");
+                 summary = result.summary;
+                 firstKeptEntryId = result.firstKeptEntryId;
+                 tokensBefore = result.tokensBefore;
+@@ -1794,7 +1802,7 @@ export class AgentSession {
+             }
+             else {
+                 // Shared default summary generator, also used by manual compaction.
+-                const compactResult = await this._runDefaultCompaction(preparation, requestModel, apiKey, headers, undefined, this._autoCompactionAbortController.signal, env, reason);
++                const compactResult = await this._runDefaultCompaction(preparation, requestModel, apiKey, headers, settings.customInstructions, this._autoCompactionAbortController.signal, env, reason);
+                 summary = compactResult.summary;
+                 firstKeptEntryId = compactResult.firstKeptEntryId;
+                 tokensBefore = compactResult.tokensBefore;
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
+index 6f867f9..fef0b26 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
+@@ -27,8 +27,10 @@ export interface CompactionResult<T = unknown> {
+ }
+ export interface CompactionSettings {
+     enabled: boolean;
++    triggerRatio: number;
+     reserveTokens: number;
+     keepRecentTokens: number;
++    customInstructions?: string;
+ }
+ export declare const DEFAULT_COMPACTION_SETTINGS: CompactionSettings;
+ /**
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js
+index e936db7..12b8d0d 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js
+@@ -73,6 +73,7 @@ function combineUsage(first, second) {
+ }
+ export const DEFAULT_COMPACTION_SETTINGS = {
+     enabled: true,
++    triggerRatio: 0.8,
+     reserveTokens: 16384,
+     keepRecentTokens: 20000,
+ };
+@@ -160,7 +161,12 @@ export function estimateContextTokens(messages) {
+ export function shouldCompact(contextTokens, contextWindow, settings) {
+     if (!settings.enabled)
+         return false;
+-    return contextTokens > contextWindow - settings.reserveTokens;
++    const triggerRatio = Number.isFinite(settings.triggerRatio) && settings.triggerRatio > 0 && settings.triggerRatio < 1
++        ? settings.triggerRatio
++        : DEFAULT_COMPACTION_SETTINGS.triggerRatio;
++    const ratioBoundary = contextWindow * triggerRatio;
++    const reserveBoundary = contextWindow - settings.reserveTokens;
++    return contextTokens > Math.min(ratioBoundary, reserveBoundary);
+ }
+ // ============================================================================
+ // Cut point detection
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.d.ts
+index f93ac1a..de47433 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.d.ts
+@@ -3,8 +3,10 @@ import type { Transport } from "@earendil-works/pi-ai";
+ import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
+ export interface CompactionSettings {
+     enabled?: boolean;
++    triggerRatio?: number;
+     reserveTokens?: number;
+     keepRecentTokens?: number;
++    customInstructions?: string;
+ }
+ export interface BranchSummarySettings {
+     reserveTokens?: number;
+@@ -218,12 +220,16 @@ export declare class SettingsManager {
+     setTransport(transport: TransportSetting): void;
+     getCompactionEnabled(): boolean;
+     setCompactionEnabled(enabled: boolean): void;
++    getCompactionTriggerRatio(): number;
+     getCompactionReserveTokens(): number;
+     getCompactionKeepRecentTokens(): number;
++    getCompactionCustomInstructions(): string | undefined;
+     getCompactionSettings(): {
+         enabled: boolean;
++        triggerRatio: number;
+         reserveTokens: number;
+         keepRecentTokens: number;
++        customInstructions?: string;
+     };
+     getBranchSummarySettings(): {
+         reserveTokens: number;
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.js
+index f0f936e..bbfdeb2 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.js
+@@ -556,6 +556,10 @@ export class SettingsManager {
+         this.markModified("compaction", "enabled");
+         this.save();
+     }
++    getCompactionTriggerRatio() {
++        const value = this.settings.compaction?.triggerRatio;
++        return typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1 ? value : 0.8;
++    }
+     getCompactionReserveTokens() {
+         return this.settings.compaction?.reserveTokens ?? 16384;
+     }
+@@ -565,10 +569,16 @@ export class SettingsManager {
+     getCompactionSettings() {
+         return {
+             enabled: this.getCompactionEnabled(),
++            triggerRatio: this.getCompactionTriggerRatio(),
+             reserveTokens: this.getCompactionReserveTokens(),
+             keepRecentTokens: this.getCompactionKeepRecentTokens(),
++            customInstructions: this.getCompactionCustomInstructions(),
+         };
+     }
++    getCompactionCustomInstructions() {
++        const value = this.settings.compaction?.customInstructions;
++        return typeof value === "string" && value.trim() ? value : undefined;
++    }
+     getBranchSummarySettings() {
+         return {
+             reserveTokens: this.settings.branchSummary?.reserveTokens ?? 16384,

@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import type { UISnapshot, UIThinkingLevel } from "../../shared/protocol.ts";
 import { serializeMessages } from "../serialize.ts";
 import type { SubagentManager } from "../subagent-manager.ts";
+import { canUseProductDesign, getMainSessionCapabilities } from "./capabilities.ts";
 import type { SessionEntry } from "./session-registry.ts";
 import { calculateTokenUsage, supportedThinkingLevels } from "./usage.ts";
 
@@ -11,6 +12,7 @@ export function buildSnapshot(
 ): UISnapshot {
   const session = entry.runtime.session;
   const model = session.model;
+  const capabilities = getMainSessionCapabilities(model);
   return {
     messages: serializeMessages(session.messages),
     isStreaming: session.isStreaming,
@@ -23,6 +25,8 @@ export function buildSnapshot(
           reasoning: (model as { reasoning?: boolean }).reasoning,
         }
       : null,
+    capabilities,
+    productDesignAvailable: canUseProductDesign(capabilities),
     thinkingLevel: session.thinkingLevel as UIThinkingLevel,
     thinkingLevels: supportedThinkingLevels(model),
     sessionFile: session.sessionFile,

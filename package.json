@@ -27,6 +27,7 @@
     "bin",
     "dist",
     "extensions",
+    "patches",
     "LICENSE",
     "README.md"
   ],
@@ -39,6 +40,7 @@
     "build:web": "vite build",
     "start": "node bin/pi-web-chat.mjs",
     "typecheck": "tsc --noEmit",
+    "postinstall": "patch-package",
     "prepack": "npm run build",
     "pack:check": "npm run build && npm pack --dry-run"
   },
@@ -48,8 +50,12 @@
     ]
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.4",
-    "typebox": "^1.1.38",
+    "@earendil-works/pi-coding-agent": "*",
+    "jiti": "^2.7.0",
+    "patch-package": "^8.0.1",
+    "pi-web-search": "^1.5.0",
+    "playwright": "^1.63.0",
+    "typebox": "*",
     "ws": "^8.21.1"
   },
   "peerDependencies": {
@@ -96,6 +102,6 @@
     "wait-on": "^9.0.10"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   }
 }

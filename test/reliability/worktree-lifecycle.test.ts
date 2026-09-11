@@ -229,9 +229,96 @@ export function registerWorktreeLifecycleTests(getGitRepoDir: () => string) {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 4. Task Status 仅表示执行结束，业务/Runtime 验证结果反映在 verification.overall
-  // -------------------------------------------------------------------------
+  describe("spawn start failure must not leave RUNNING zombies", () => {
+    it("marks researcher spawn failed when targetCwd escapes, with no running leftover", async () => {
+      const sessionId = `session-cwd-escape-researcher-${Date.now()}`;
+      const manager = new SubagentManager(mockModelRuntime);
+
+      await assert.rejects(
+        () =>
+          manager.spawn({
+            parentSessionId: sessionId,
+            role: "researcher",
+            taskTitle: "复查扫描路径探测",
+            taskPrompt: "test",
+            parentCwd: gitRepoDir,
+            targetCwd: "/tmp/pi-web-chat-cwd-escape",
+          }),
+        /escapes the assigned worktree\/repo boundary/i,
+      );
+
+      const leftover = manager.getTasksForParent(sessionId);
+      assert.equal(
+        leftover.filter((t) => t.status === "running").length,
+        0,
+        "failed spawn must not remain running",
+      );
+      assert.ok(leftover.length >= 1, "failed spawn should remain visible as failed, not vanish silently");
+      assert.ok(
+        leftover.every((t) => t.status === "failed"),
+        `expected failed, got ${leftover.map((t) => t.status).join(",")}`,
+      );
+    });
+
+    it("marks verifier spawn failed when cwd points outside integration worktree", async () => {
+      const sessionId = `session-cwd-escape-verifier-${Date.now()}`;
+      const manager = new SubagentManager(mockModelRuntime);
+
+      await assert.rejects(
+        () =>
+          manager.spawn({
+            parentSessionId: sessionId,
+            role: "verifier",
+            taskTitle: "复查扫描路径探测",
+            taskPrompt: "test",
+            parentCwd: gitRepoDir,
+            targetCwd: join(gitRepoDir, ".worktrees", "task-does-not-belong"),
+          }),
+        /escapes the assigned worktree\/repo boundary/i,
+      );
+
+      const leftover = manager.getTasksForParent(sessionId);
+      assert.equal(leftover.filter((t) => t.status === "running").length, 0);
+      assert.ok(leftover.every((t) => t.status === "failed"));
+    });
+
+    it("rolls back developer worktree when targetCwd escapes after worktree create", async () => {
+      const sessionId = `session-cwd-escape-developer-${Date.now()}`;
+      const manager = new SubagentManager(mockModelRuntime);
+
+      await assert.rejects(
+        () =>
+          manager.spawn({
+            parentSessionId: sessionId,
+            role: "developer",
+            taskTitle: "实现功能",
+            taskPrompt: "test",
+            parentCwd: gitRepoDir,
+            targetCwd: "/tmp/pi-web-chat-cwd-escape",
+          }),
+        /escapes the assigned worktree\/repo boundary/i,
+      );
+
+      const leftover = manager.getTasksForParent(sessionId);
+      assert.equal(leftover.filter((t) => t.status === "running").length, 0);
+      assert.ok(leftover.every((t) => t.status === "failed"));
+      for (const task of leftover) {
+        assert.equal(task.worktreePath, undefined, "failed start must drop worktree path");
+        assert.equal(task.branchName, undefined, "failed start must drop branch name");
+      }
+
+      const listed = execFileSync("git", ["-C", gitRepoDir, "worktree", "list", "--porcelain"], {
+        encoding: "utf8",
+      });
+      const taskId = leftover[0]?.taskId;
+      assert.ok(taskId);
+      assert.equal(
+        listed.includes(taskId),
+        false,
+        "developer worktree created before cwd check must be removed",
+      );
+    });
+  });
 
 }
 

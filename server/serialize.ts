@@ -15,6 +15,27 @@ type AnyMessage = {
   [key: string]: unknown;
 };
 
+type SerializedToolResult = {
+  text: string;
+  isError: boolean;
+};
+
+function imageBlocksFromContent(content: unknown): UIContentBlock[] {
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((b) => b && typeof b === "object" && (b as { type?: string }).type === "image")
+    .map((b) => {
+      const block = b as { data?: unknown; mimeType?: unknown };
+      return {
+        type: "image" as const,
+        dataUrl:
+          typeof block.data === "string" && typeof block.mimeType === "string"
+            ? `data:${block.mimeType};base64,${block.data}`
+            : undefined,
+      };
+    });
+}
+
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -29,7 +50,7 @@ function textFromContent(content: unknown): string {
 export function serializeMessages(messages: unknown[]): UIMessage[] {
   const msgs = messages as AnyMessage[];
 
-  const results = new Map<string, { text: string; isError: boolean }>();
+  const results = new Map<string, SerializedToolResult>();
   for (const m of msgs) {
     if (m.role === "toolResult" && typeof m.toolCallId === "string") {
       results.set(m.toolCallId, {
@@ -41,7 +62,11 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
 
   const out: UIMessage[] = [];
   for (const m of msgs) {
-    if (m.role === "toolResult") continue;
+    if (m.role === "toolResult") {
+      const images = imageBlocksFromContent(m.content);
+      if (images.length > 0) out.push({ role: "assistant", content: images });
+      continue;
+    }
 
     if (m.role === "user") {
       const blocks: UIContentBlock[] = [];
@@ -76,6 +101,13 @@ export function serializeMessages(messages: unknown[]): UIMessage[] {
             blocks.push({ type: "text", text: b.text });
           } else if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking.length > 0) {
             blocks.push({ type: "thinking", text: b.thinking });
+          } else if (b.type === "image") {
+            const data = typeof b.data === "string" ? b.data : undefined;
+            const mimeType = typeof b.mimeType === "string" ? b.mimeType : undefined;
+            blocks.push({
+              type: "image",
+              dataUrl: data && mimeType ? `data:${mimeType};base64,${data}` : undefined,
+            });
           } else if (b.type === "toolCall") {
             const id = String(b.id ?? "");
             blocks.push({

@@ -5,7 +5,7 @@ import {
   type ExtensionAPI,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentRole, UISubagentTask } from "../shared/protocol.ts";
+import type { AgentRole, MainModelCapabilities, UISubagentTask } from "../shared/protocol.ts";
 import {
   ConstraintResolver,
   formatWorkspaceContext,
@@ -16,15 +16,14 @@ import {
   type WorkspaceContextDetails,
 } from "./contracts/index.ts";
 import { adjustSkillsInBasePrompt } from "./skills.ts";
+import { canUseProductDesign, filterProductDesignSkills } from "./session/capabilities.ts";
 import { parseModelOverride } from "./subagent-report.ts";
 import type { SubagentManager } from "./subagent-manager.ts";
 import { resolveProjectRoot } from "./worktree.ts";
 import {
   DEFAULT_OUTPUT_BUDGETS,
-  persistAndVirtualizeToolResult,
 } from "./subagent/output-virtualizer.ts";
 import { buildTaskEpisodeCard, buildTaskEpisodeView } from "./subagent/episode-card.ts";
-import { trackToolOutputMetadata } from "./subagent/tool-output-metadata.ts";
 
 export const COORDINATOR_EXTENSION_NAME = "pi-coordinator-tools";
 
@@ -239,6 +238,7 @@ export function createCoordinatorExtension(
     parentSessionId: string;
     parentCwd: string;
     parentModel?: { provider: string; id: string } | null;
+    getMainSessionCapabilities?: () => MainModelCapabilities;
     activeRole: AgentRole;
     customSession?: any;
     onUpdate?: (task: any) => void;
@@ -303,8 +303,8 @@ export function createCoordinatorExtension(
           name: "get_task_summary",
           label: "获取 Task 摘要",
           description:
-            "按 taskId 获取一个属于当前 Coordinator 会话的有界 Task 状态视图。终态任务优先返回 Physical/Verification/Artifact Pointers/非权威 Agent 报告，不返回完整消息历史、stdout、JSONL 或 tool call history。",
-          promptSnippet: "获取单个 Task 的压缩状态、失败与验证摘要",
+            "按 taskId 获取一个属于当前 Coordinator 会话的有界 Task 状态视图。终态任务优先返回 TaskEpisodeView（Physical/Verification/Artifact Pointers/非权威 Agent 报告），不返回完整消息历史、stdout、JSONL 或 tool call history。",
+          promptSnippet: "获取单个 Task 的有界 Episode / 状态视图（终态优先），不是完整 transcript",
           parameters: Type.Object({
             taskId: Type.String({
               description: "要查询的 Task ID",
@@ -365,11 +365,11 @@ export function createCoordinatorExtension(
           name: "spawn_subagent",
           label: "派发子任务",
           description:
-            "派发一个结构化契约子智能体任务。后台异步非阻塞执行（Developer / Verifier 在独立 Git 分支 Worktree 隔离运行，Researcher 在只读工作区执行）。子任务完成后成果将进入 Coordinator Inbox 暂存，不会打断当前对话，用户确认引导后由系统在后续轮次接入。",
+            "派发一个结构化契约子智能体任务。后台异步非阻塞执行（Developer / Verifier 在独立 Git 分支 Worktree 隔离运行，Researcher 在只读工作区执行）。子任务完成后成果将进入 Coordinator Inbox 暂存，不会打断当前对话，用户确认引导后由系统在后续轮次接入。跨 Task 传递 TaskEpisodeView 结论、workspace context_files 与 commit/path，不要把其他 Task 的 artifacts:// 交给子任务 read_artifact。",
           promptSnippet: "派发一个独立的异步子智能体任务。派发前可调用 list_available_roles 查看可用角色",
           promptGuidelines: [
             "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具列表（核心角色为 developer、verifier、researcher）；",
-            "【任务粒度与拆分原则】遵循“Prefer fewer, larger, behavior-complete tasks”，避免机械拆解缺乏独立验证与闭环的微任务。能独立调查、独立验证、独立交付的完整行为闭环拆为 Subagent Task（例如派发给 Developer 或 Researcher）；高度耦合需共享深入上下文的子目标保持单任务，不拆分；跨 Task 通过 TaskEpisodeView、ReusableSubagent Knowledge、context_files 或明确 ArtifactRef 传递结论；",
+            "【任务粒度与拆分原则】遵循“Prefer fewer, larger, behavior-complete tasks”，避免机械拆解缺乏独立验证与闭环的微任务。能独立调查、独立验证、独立交付的完整行为闭环拆为 Subagent Task（例如派发给 Developer 或 Researcher）；高度耦合需共享深入上下文的子目标保持单任务，不拆分；跨 Task 通过 TaskEpisodeView、ReusableSubagent Knowledge、workspace context_files 与 commit/path 传递结论。不要把其他 Task 的 artifacts:// 交给子任务 read_artifact；Coordinator 也不要用 read_transcript / search_transcript / read_artifact 展开其他 Task 的 transcript；",
             "可连续多次调用 spawn_subagent 以并行启动多个独立的子智能体，各子任务异步执行；",
             "支持传入结构化 Task Contract 字段 (如 expected_effects, acceptance_criteria, context_files, scope_include)；",
             "派发任务时，根据任务真实目标填写 expected_effects（例如 Verifier 核查分析填 ['analysis'] 或 ['test_execution']，Developer 实现代码填 ['code_change']）；",
@@ -823,42 +823,20 @@ export function createCoordinatorExtension(
         }),
       );
 
-      // 6. Coordinator 输出同样遵循 raw-first：先持久化，再投影有界 preview。
-      const takeMetadata = trackToolOutputMetadata(pi);
-      pi.on("tool_result", async (event) => {
-        const details = takeMetadata(event.toolCallId, event.details);
-        const { activeRole, parentSessionId } = getSessionContext();
-        if (activeRole !== "coordinator" || (event.toolName !== "read" && event.toolName !== "bash")) {
-          return;
-        }
-        const projected = persistAndVirtualizeToolResult({
-          runId: parentSessionId || "coordinator",
-          taskId: "coordinator",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          content: event.content,
-          details,
-          input: event.input,
-          isError: event.isError,
-          maxBytes: COORDINATOR_TOOL_OUTPUT_LIMIT,
-        });
-        if (!projected.virtualized) return;
-        return {
-          content: projected.content,
-          details: {
-            ...(details && typeof details === "object" ? details : {}),
-            artifactRef: projected.pointer.artifactRef,
-            completeness: projected.pointer.completeness,
-          },
-          isError: event.isError,
-        };
-      });
+      // 6. Task context owns raw-first tool-result persistence and virtualization for every role.
 
       // 7. 拦截 before_agent_start 动态注入当前活跃角色的分层系统提示词与首轮 Workspace Context
       pi.on("before_agent_start", async (event, ctx) => {
         const sessionCtx = getSessionContext();
         const role = sessionCtx.activeRole || "coordinator";
         const currentCwd = sessionCtx.parentCwd || ctx.cwd;
+        const productDesignAvailable = canUseProductDesign(
+          sessionCtx.getMainSessionCapabilities?.() ?? {
+            productDesign: false,
+            imageInput: false,
+            imageGeneration: false,
+          },
+        );
 
         let systemPromptStr: string;
 
@@ -871,7 +849,7 @@ export function createCoordinatorExtension(
           }
           const adjustedNativePrompt = adjustSkillsInBasePrompt(
             nativePrompt,
-            def?.allowedSkills ?? [],
+            filterProductDesignSkills(def?.allowedSkills, productDesignAvailable),
             currentCwd,
           );
           systemPromptStr = behaviorPrompt
@@ -882,6 +860,7 @@ export function createCoordinatorExtension(
             role,
             cwd: currentCwd,
             isGitRepo: true,
+            allowProductDesign: productDesignAvailable,
             parentModel: sessionCtx.parentModel
               ? { provider: sessionCtx.parentModel.provider, modelId: sessionCtx.parentModel.id }
               : null,

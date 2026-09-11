@@ -13,8 +13,20 @@ import type { AgentRole } from "../../shared/protocol.ts";
 import {
   PromptAssembler,
   type EffectiveContext,
+  type SubagentExecutionOptions,
 } from "../contracts/index.ts";
+import {
+  getCompactionInstructions,
+  type CompactionMode,
+} from "../compact.ts";
+import { getOrCreateRecoveryTracker } from "../compaction-telemetry.ts";
+import {
+  readArtifactByRef,
+  readTranscriptEntries,
+  searchTranscriptEntries,
+} from "../runtime-artifacts.ts";
 import { installTurnRecorderOnSession } from "../turn-recorder.ts";
+import { createWebSearchExtension } from "../web-search-extension.ts";
 import {
   createTaskContextExtension,
   type TaskContextRuntimeState,
@@ -29,8 +41,100 @@ export interface CreateSubagentRuntimeOptions {
   modelRuntime: ModelRuntime;
   parentModel?: { provider: string; id: string } | null;
   customSession?: any;
-  onReportBlocker?: (message: string, severity?: string, context?: string) => void;
+  customTools?: any[];
+  executionOptions?: SubagentExecutionOptions;
+  onReportBlocker?: (message: string, severity?: "info" | "warning" | "blocking", context?: string) => void;
   onCompaction?: (count: number) => void;
+  compactionMode?: CompactionMode;
+}
+
+export function createRecoveryTools(getScope: () => { runId: string; taskId: string }): any[] {
+  return [
+    defineTool({
+      name: "read_transcript",
+      label: "按范围读取历史 transcript",
+      description:
+        "Read a small slice of this task's durable transcript from before compaction. Use only when the Pi continuation summary is not enough. firstEntryId = recovery_manifest.firstCompactedEntryId. firstKeptEntryId is the first uncompacted entry; it is not lastEntryId (lastEntryId is inclusive). Current run/task only.",
+      promptSnippet: "按 recovery_manifest.firstCompactedEntryId 读取当前任务压缩前的少量 transcript",
+      promptGuidelines: [
+        "read_transcript: Pi continuation summary is a continuation hint. firstEntryId = recovery_manifest.firstCompactedEntryId; firstKeptEntryId is not lastEntryId.",
+        "read_transcript covers the current run/task only.",
+        "read_transcript: keep limit small; do not use it for a full-history investigation.",
+      ],
+      parameters: Type.Object({
+        firstEntryId: Type.Optional(Type.String()),
+        lastEntryId: Type.Optional(Type.String()),
+        limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })),
+      }),
+      async execute(_toolCallId, params) {
+        const scope = getScope();
+        const entries = readTranscriptEntries(scope.runId, scope.taskId, params);
+        try {
+          getOrCreateRecoveryTracker(scope.taskId).recordTranscriptRecovery();
+        } catch {
+          // fail-open
+        }
+        return { content: [{ type: "text", text: JSON.stringify(entries) }], details: {} };
+      },
+    }),
+    defineTool({
+      name: "search_transcript",
+      label: "搜索历史 transcript",
+      description:
+        "Search this task's durable transcript by keyword for a small number of matching records. Targeted lookup only, not a full-history investigation. Current run/task only.",
+      promptSnippet: "在当前任务 durable transcript 中做定向关键词查找",
+      promptGuidelines: [
+        "search_transcript is for targeted keyword lookup, not a large-volume investigation.",
+        "search_transcript covers the current run/task only.",
+      ],
+      parameters: Type.Object({
+        query: Type.String({ minLength: 1 }),
+        limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
+      }),
+      async execute(_toolCallId, params) {
+        const scope = getScope();
+        const entries = searchTranscriptEntries(scope.runId, scope.taskId, params.query, params.limit);
+        try {
+          getOrCreateRecoveryTracker(scope.taskId).recordTranscriptRecovery();
+        } catch {
+          // fail-open
+        }
+        return { content: [{ type: "text", text: JSON.stringify(entries) }], details: {} };
+      },
+    }),
+    defineTool({
+      name: "read_artifact",
+      label: "按引用读取 artifact",
+      description:
+        "Read a bounded durable artifact by artifacts:// from this task's recovery_manifest transcriptRef / criticalArtifactRefs, or from a pointer in this session's tool preview. preview_only is not complete raw output. Covers the current run/task only; foreign artifacts:// refs are rejected.",
+      promptSnippet: "按 artifacts:// 读取当前任务 recovery_manifest 中的 artifact",
+      promptGuidelines: [
+        "read_artifact: Pi continuation summary is a continuation hint; prefer the durable artifact when they conflict.",
+        "read_artifact covers the current run/task only. Do not pass another Task's artifacts:// ref.",
+      ],
+      parameters: Type.Object({
+        artifactRef: Type.String({ minLength: 1 }),
+        maxBytes: Type.Optional(Type.Number({ minimum: 1, maximum: 32 * 1024 })),
+      }),
+      async execute(_toolCallId, params) {
+        const scope = getScope();
+        const content = readArtifactByRef(params.artifactRef, scope.runId, scope.taskId, params.maxBytes);
+        if (content !== null) {
+          try {
+            getOrCreateRecoveryTracker(scope.taskId).recordArtifactRecovery();
+          } catch {
+            // fail-open
+          }
+        }
+        return {
+          content: [{ type: "text", text: content ?? "Artifact unavailable." }],
+          details: {},
+          isError: content === null,
+        };
+      },
+    }),
+  ];
+
 }
 
 function createAuthoritativePromptExtension(options: {
@@ -78,6 +182,10 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
   const taskContextState: TaskContextRuntimeState = { compactionCount: 0 };
 
   const customTools: any[] = [];
+  customTools.push(
+    ...createRecoveryTools(() => ({ runId: effectiveRunId, taskId }))
+      .filter((tool) => effectiveContext.runtime.activeTools.includes(tool.name)),
+  );
   if (effectiveContext.runtime.activeTools.includes("report_blocker")) {
     customTools.push(
       defineTool({
@@ -152,13 +260,22 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
                   role,
                   state: taskContextState,
                   onCompaction,
+                  getSettingsManager: () => services.settingsManager,
+                  getModel: () => runtimeModelRef.current,
                 }),
                 createAuthoritativePromptExtension({
                   taskId,
                   effectiveContext,
                   runtimeModelRef,
                 }),
+                createWebSearchExtension(),
               ],
+            },
+          });
+          services.settingsManager.applyOverrides({
+            compaction: {
+              triggerRatio: 0.8,
+              customInstructions: getCompactionInstructions(options.compactionMode),
             },
           });
           return {
@@ -219,7 +336,7 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
   }
 
   if (typeof session.setActiveToolsByName === "function") {
-    session.setActiveToolsByName([...effectiveContext.runtime.activeTools]);
+      session.setActiveToolsByName([...effectiveContext.runtime.activeTools]);
   }
 
   installTurnRecorderOnSession(session, () => taskId);

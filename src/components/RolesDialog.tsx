@@ -1,7 +1,8 @@
 import { Dialog } from "@base-ui-components/react/dialog";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentRole, RoleConfig, RoleDefinition, UIThinkingLevel } from "../../shared/protocol";
-import { saveRolesConfig, useAllTools, useInvalidateRoles, useModels, useRolesConfig, useSkills } from "../lib/api";
+import { saveRolesConfig, useAllTools, useInvalidateRoles, useRoleModels, useRolesConfig, useSkills } from "../lib/api";
+import { useChat } from "../lib/chat";
 import { useT } from "../lib/i18n";
 
 const inputClass =
@@ -62,9 +63,10 @@ export function RolesDialog({
 }) {
   const t = useT();
   const { data, refetch } = useRolesConfig(open);
-  const { data: models = [] } = useModels();
+  const { data: models = [] } = useRoleModels(open);
   const { data: allTools = [] } = useAllTools();
   const { data: allSkills = [] } = useSkills(undefined, open);
+  const { snapshot } = useChat();
   const invalidateRoles = useInvalidateRoles();
 
   const [draft, setDraft] = useState<RoleConfig[] | null>(null);
@@ -166,6 +168,17 @@ export function RolesDialog({
   };
 
   const currentAllowedSkills = activeRoleConfig?.allowedSkills ?? [];
+  const productDesignAvailable = snapshot?.productDesignAvailable ?? false;
+  const visibleSkills = useMemo(
+    () => allSkills.filter((skill) => productDesignAvailable || skill.name !== "product-design"),
+    [allSkills, productDesignAvailable],
+  );
+  const hiddenSkillNames = useMemo(
+    () => allSkills
+      .filter((skill) => !visibleSkills.some((visible) => visible.name === skill.name))
+      .map((skill) => skill.name),
+    [allSkills, visibleSkills],
+  );
   const currentAllowedTools =
     activeRoleConfig?.allowedTools ??
     ["read", "bash", "edit", "write", "report_blocker"];
@@ -537,21 +550,21 @@ export function RolesDialog({
                         <div className="text-[11px] font-bold text-ink flex items-center gap-1.5">
                           <span>⚡ 该角色专有业务技能 (Assigned Skills)</span>
                           <span className="text-[10px] text-accent font-normal">
-                            (已选 {currentAllowedSkills.length} / {allSkills.length} 个)
+                            (已选 {currentAllowedSkills.filter((name) => visibleSkills.some((skill) => skill.name === name)).length} / {visibleSkills.length} 个)
                           </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 text-[10px]">
                         <button
                           type="button"
-                          onClick={() => updateActiveRole({ allowedSkills: allSkills.map((s) => s.name) })}
+                          onClick={() => updateActiveRole({ allowedSkills: [...new Set([...currentAllowedSkills.filter((name) => hiddenSkillNames.includes(name)), ...visibleSkills.map((s) => s.name)])] })}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-ink transition-colors"
                         >
                           全选
                         </button>
                         <button
                           type="button"
-                          onClick={() => updateActiveRole({ allowedSkills: [] })}
+                          onClick={() => updateActiveRole({ allowedSkills: currentAllowedSkills.filter((name) => hiddenSkillNames.includes(name)) })}
                           className="px-2 py-0.5 border border-line bg-card hover:bg-canvas text-ink transition-colors"
                         >
                           清空
@@ -559,9 +572,9 @@ export function RolesDialog({
                       </div>
                     </div>
 
-                    {allSkills.length > 0 ? (
+                    {visibleSkills.length > 0 ? (
                       <div className="grid grid-cols-1 gap-2 pt-1">
-                        {allSkills.map((skill) => {
+                        {visibleSkills.map((skill) => {
                           const isChecked = currentAllowedSkills.includes(skill.name);
                           return (
                             <label

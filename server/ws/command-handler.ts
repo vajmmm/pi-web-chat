@@ -16,7 +16,7 @@ import { applyRoleToSession } from "../session/role-binding.ts";
 import { sessionIdOf, type SessionEntry, type SessionRegistry } from "../session/session-registry.ts";
 import type { SubagentManager } from "../subagent-manager.ts";
 import { getCurrentGitBranch, resolveGitRepoRoot } from "../worktree.ts";
-import { bindSessionEvents } from "./session-binding.ts";
+import { bindSessionEvents, extractUserMessageTexts } from "./session-binding.ts";
 import { broadcastSnapshot, publishEntry, sendTo } from "./websocket-server.ts";
 
 import { isPendingDeletion } from "../session/deletion-tombstone.ts";
@@ -65,11 +65,16 @@ export async function handleCommand(
         // Agent 正在流式/运行中：进入 followUp 消息队列排队等待当前轮次自然结束后执行
         const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         if (!entry.queuedMessages) entry.queuedMessages = [];
+        const userMsgCount = extractUserMessageTexts(
+          (session as { messages?: unknown[] }).messages,
+        ).length;
         entry.queuedMessages.push({
           id,
           text,
           mode: "followUp",
           createdAt: new Date().toISOString(),
+          // Ignore transcript user turns that already existed before this enqueue.
+          deliverAfterUserMsgCount: userMsgCount,
         });
         await session.followUp(text, images.length > 0 ? images : undefined);
         broadcastSnapshot(entry, subagentManager);
@@ -98,14 +103,17 @@ export async function handleCommand(
         return;
       }
       await sessionRegistry.trackInFlightOp(entry.id, async () => {
-        await runtime.session.setModel(model);
+        await runtime.session.setModel(model, { persist: true });
+        // Rebind the Main Session against the live active model. This updates the
+        // capability-gated tools and the next-turn prompt without touching subagents.
+        applyRoleToSession(entry, entry.activeRole);
         broadcastSnapshot(entry, subagentManager);
       });
       break;
     }
     case "set_thinking_level":
       await sessionRegistry.trackInFlightOp(entry.id, async () => {
-        session.setThinkingLevel(cmd.level);
+        session.setThinkingLevel(cmd.level, { persist: true });
         broadcastSnapshot(entry, subagentManager);
       });
       break;
@@ -175,7 +183,7 @@ export async function handleCommand(
         entry.gitBranch = gitBranch;
         sessionRegistry.rekey(entry);
 
-        bindSessionEvents(entry, subagentManager);
+        bindSessionEvents(entry, subagentManager, ctx.getModelRuntime);
         broadcastSnapshot(entry, subagentManager);
       });
       break;
@@ -254,6 +262,8 @@ export async function handleCommand(
       const target = entry.queuedMessages.find((m) => m.id === cmd.id);
       if (!target) break;
       target.text = cmd.text.trim();
+      // Text changed; previous expanded sessionText is stale until re-queued/expanded.
+      delete target.sessionText;
 
       const itemsToRequeue = [...entry.queuedMessages];
       session.clearQueue();

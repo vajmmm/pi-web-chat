@@ -781,15 +781,19 @@ describe("In-Flight Quiescence, Legacy Role Hardening & Mutation Guard Regressio
       {
         id: "developer",
         schemaVersion: 2,
-        roleDefinitionVersion: 2,
+        roleDefinitionVersion: 3,
         name: "Custom Developer",
         definition: {
           id: "developer",
-          definitionVersion: 2,
+          definitionVersion: 3,
           name: "Custom Developer",
           description: "Custom dev description",
           responsibilities: ["Develop code"],
           strictProhibitions: ["Do not break"],
+          // Include the recovery-guidance marker so the one-time recovery-tool
+          // migration does not fire; this keeps the custom allowedTools exact and
+          // isolates what this test verifies (reload atomicity).
+          instructions: "Custom developer instructions.\n\n#### Context recovery\nUse the transcript tools.",
         },
         allowedTools: ["read", "write"],
       },

@@ -30,6 +30,15 @@ export class CoordinatorStateTracker {
     state.isExecuting = false;
   }
 
+  /** All session ids with an in-flight coordinator turn (busy parents). */
+  public activeSessionIds(): string[] {
+    const ids: string[] = [];
+    for (const [sessionId, state] of this.states) {
+      if (state.isExecuting) ids.push(sessionId);
+    }
+    return ids;
+  }
+
   public clear(sessionId?: string): void {
     if (sessionId) {
       this.states.delete(sessionId);

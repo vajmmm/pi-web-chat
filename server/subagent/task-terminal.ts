@@ -491,7 +491,12 @@ export async function executeSubagentCompletion(mgr: SubagentManagerHost, instan
         const continuationPrompt =
           "上一轮因达到模型输出 Token 上限而被截断。\n\n不要重新进行完整分析。\n从未完成的位置继续。\n优先执行必要工具调用和实际任务。\n控制思考长度，尽快完成任务并给出最终结果。";
 
-        instance.runtime.session.prompt(continuationPrompt).catch((err: unknown) => {
+        const session = instance.runtime.session;
+        const sendContinuation = (session.isStreaming || !session.isIdle)
+          ? session.followUp(continuationPrompt)
+          : session.prompt(continuationPrompt);
+
+        sendContinuation.catch((err: unknown) => {
           console.error(`[SubagentManager] Subagent ${taskId} continuation error:`, err);
           void mgr.finalizeIncomplete(
             instance,

@@ -32,6 +32,12 @@ export interface UIModel {
   reasoning?: boolean;
 }
 
+export interface MainModelCapabilities {
+  productDesign: boolean;
+  imageInput: boolean;
+  imageGeneration: boolean;
+}
+
 export type UIThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export type AgentRole =
@@ -323,8 +329,19 @@ export interface UITokenUsageStats {
 
 export interface UIQueuedMessage {
   id: string;
+  /** User-facing queue text (original input; preserved across skill/template expansion). */
   text: string;
   mode: "followUp" | "steer";
+  /**
+   * Last known text as stored in the agent session queue after expansion.
+   * Used for queue_update reconciliation and delivery detection; not required for UI display.
+   */
+  sessionText?: string;
+  /**
+   * Only transcript user messages at index >= this count may count as delivery for this row.
+   * Prevents historical same-text user turns from removing a newly queued item.
+   */
+  deliverAfterUserMsgCount?: number;
   createdAt?: string;
   source?: "user" | "subagent";
   taskId?: string;
@@ -339,6 +356,8 @@ export interface UISnapshot {
   isStreaming: boolean;
   isCompacting?: boolean;
   model: UIModel | null;
+  capabilities: MainModelCapabilities;
+  productDesignAvailable: boolean;
   thinkingLevel: UIThinkingLevel;
   thinkingLevels: UIThinkingLevel[];
   sessionFile?: string;
@@ -369,6 +388,20 @@ export interface UISessionInfo {
   relativeTime?: string;
   messageCount: number;
   cwd?: string;
+}
+
+export interface UIRunningSessionsResponse {
+  /** Session ids whose main turn or subagent/coordinator work is currently active. */
+  sessionIds: string[];
+}
+
+export interface UIBatchDeleteSessionsResult {
+  ok: boolean;
+  deletedCount: number;
+  deletedSessionIds: string[];
+  failedSessionIds: string[];
+  error?: string;
+  details?: string[];
 }
 
 export interface UIProjectFolder {
@@ -612,6 +645,7 @@ export type UISubscriptionModelAction =
 export type ServerEvent =
   | { type: "snapshot"; snapshot: UISnapshot }
   | { type: "session_bound"; sessionId: string }
+  | { type: "session_name_changed"; sessionId: string; name: string }
   | { type: "delta"; kind: "text" | "thinking"; delta: string }
   | { type: "tool_start"; toolCallId: string; toolName: string }
   | { type: "tool_end"; toolCallId: string; toolName: string; isError: boolean }

@@ -11,6 +11,13 @@ import { serializeMessages } from "../serialize.ts";
 import type { SessionEntry } from "../session/session-registry.ts";
 import { buildSnapshot } from "../session/snapshot.ts";
 import { discoverAllSkills } from "../skills.ts";
+import {
+  canUseProductDesign,
+  getMainSessionCapabilities,
+  PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME,
+  PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME,
+  PRODUCT_DESIGN_SKILL_NAME,
+} from "../session/capabilities.ts";
 import { resolveProjectRoot } from "../worktree.ts";
 import type { ServerContext } from "./context.ts";
 
@@ -66,7 +73,16 @@ export async function handleDiagnosticsRoutes(
 
     // 如果有运行中的 session，收集所有动态注册的扩展工具
     if (anyEntry) {
+      const productDesignAvailable = canUseProductDesign(
+        getMainSessionCapabilities(anyEntry.runtime.session.model),
+      );
       for (const t of anyEntry.runtime.session.getAllTools()) {
+        if (
+          !productDesignAvailable &&
+          (t.name === PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME || t.name === PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME)
+        ) {
+          continue;
+        }
         if (!toolsMap.has(t.name)) {
           toolsMap.set(t.name, {
             name: t.name,
@@ -86,7 +102,12 @@ export async function handleDiagnosticsRoutes(
   if (url.pathname === "/api/skills") {
     const anyEntry = entries.values().next().value as SessionEntry | undefined;
     const cwd = url.searchParams.get("cwd") || anyEntry?.cwd;
-    const skills = discoverAllSkills(cwd);
+    const productDesignAvailable = anyEntry
+      ? canUseProductDesign(getMainSessionCapabilities(anyEntry.runtime.session.model))
+      : false;
+    const skills = discoverAllSkills(cwd).filter(
+      (skill) => productDesignAvailable || skill.name !== PRODUCT_DESIGN_SKILL_NAME,
+    );
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ skills }));
     return true;

@@ -267,3 +267,57 @@ export function readToolExecutionFacts(runId: string, taskId: string): ToolExecu
       }
     });
 }
+
+export function readTranscriptEntries(
+  runId: string,
+  taskId: string,
+  options?: { firstEntryId?: string; lastEntryId?: string; limit?: number },
+): unknown[] {
+  const path = resolveArtifactRef(artifactRefFor(runId, taskId, "transcript.jsonl"));
+  if (!path || !existsSync(path)) return [];
+  const entries = readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try { return [JSON.parse(line) as { entryId?: string }]; } catch { return []; }
+    });
+  const start = options?.firstEntryId
+    ? entries.findIndex((entry) => entry.entryId === options.firstEntryId)
+    : 0;
+  if (options?.firstEntryId && start < 0) {
+    throw new Error(`Transcript entry not found: ${options.firstEntryId}`);
+  }
+  const boundedStart = start;
+  const endIndex = options?.lastEntryId
+    ? entries.findIndex((entry) => entry.entryId === options.lastEntryId)
+    : -1;
+  if (options?.lastEntryId && endIndex < 0) {
+    throw new Error(`Transcript entry not found: ${options.lastEntryId}`);
+  }
+  if (endIndex >= 0 && endIndex < boundedStart) {
+    throw new Error("Transcript range is reversed");
+  }
+  const end = endIndex >= boundedStart ? endIndex + 1 : entries.length;
+  return entries.slice(boundedStart, end).slice(0, Math.max(1, options?.limit ?? 50));
+}
+
+export function searchTranscriptEntries(
+  runId: string,
+  taskId: string,
+  query: string,
+  limit = 20,
+): unknown[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [];
+  return readTranscriptEntries(runId, taskId, { limit: Number.MAX_SAFE_INTEGER })
+    .filter((entry) => JSON.stringify(entry).toLowerCase().includes(normalized))
+    .slice(0, Math.max(1, limit));
+}
+
+export function readArtifactByRef(ref: string, runId: string, taskId: string, maxBytes = 32 * 1024): string | null {
+  if (!ref.startsWith(artifactRefFor(runId, taskId, ""))) return null;
+  const path = resolveArtifactRef(ref);
+  if (!path || !existsSync(path) || !statSync(path).isFile()) return null;
+  const content = readFileSync(path);
+  return content.subarray(0, Math.max(0, maxBytes)).toString("utf8");
+}

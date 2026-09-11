@@ -128,6 +128,31 @@ describe("Model catalog refresh (standalone web catalog)", () => {
     });
   });
 
+  it("keeps AGY models out of the main catalog but exposes them to role scope", async () => {
+    const mock = makeModelRuntimeMock([
+      ...ALPHA,
+      { provider: "agy", id: "gemini-test", name: "Gemini test", reasoning: true },
+    ]);
+
+    await withServer(makeCtx(mock.runtime), async (baseUrl) => {
+      const mainResponse = await fetch(`${baseUrl}/api/models`);
+      assert.equal(mainResponse.status, 200);
+      const mainModels = (await mainResponse.json()) as MockModel[];
+      assert.equal(mainModels.some((model) => model.provider === "agy"), false);
+
+      const refreshResponse = await fetch(`${baseUrl}/api/models/refresh`, { method: "POST" });
+      assert.equal(refreshResponse.status, 200);
+      const refreshedModels = (await refreshResponse.json()) as MockModel[];
+      assert.equal(refreshedModels.some((model) => model.provider === "agy"), false);
+
+      const roleResponse = await fetch(`${baseUrl}/api/models?scope=role`);
+      assert.equal(roleResponse.status, 200);
+      const roleModels = (await roleResponse.json()) as MockModel[];
+      assert.equal(roleModels.some((model) => model.provider === "agy"), true);
+      assert.equal(roleModels.some((model) => model.provider === "mock-prov"), true);
+    });
+  });
+
   it("POST /api/models/refresh forces a network refresh and returns the same list shape as GET", async () => {
     const mock = makeModelRuntimeMock(ALPHA);
 

@@ -9,7 +9,7 @@ const roleNameMap: Record<string, string> = {
   coordinator: "统筹者 (Coordinator)",
   developer: "开发工程师 (Developer)",
   verifier: "验证者 (Verifier)",
-  researcher: "调研员 (Researcher)",
+  researcher: "探子 (Scout)",
   default: "普通智能体",
 };
 

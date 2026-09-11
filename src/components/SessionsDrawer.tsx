@@ -1,14 +1,16 @@
 import { Dialog } from "@base-ui-components/react/dialog";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIProjectFolder, UIProjectItem, UISessionInfo } from "../../shared/protocol";
 import {
   deleteFolderApi,
   deleteProjectApi,
   deleteSessionApi,
+  deleteSessionsBatchApi,
   useInvalidateProjects,
   useInvalidateSessions,
   useProjects,
+  useRunningSessions,
   useSessions,
 } from "../lib/api";
 import { chatClient, useChat } from "../lib/chat";
@@ -16,6 +18,8 @@ import { onRequestOpenSessionsDrawer } from "../lib/drawer";
 import { useT } from "../lib/i18n";
 import { setSidebarPinned, useSidebarPinned } from "../lib/sidebar";
 import { CwdSelector } from "./CwdSelector";
+import { LLMTurnsModal } from "./LLMTurnsModal";
+import { PromptInspectorModal } from "./PromptInspectorModal";
 
 const EXPANDED_PROJECTS_KEY = "pi_expanded_projects";
 
@@ -81,52 +85,107 @@ function TrashIcon() {
   );
 }
 
+function ChecklistIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-3.5 fill-none stroke-current stroke-[1.8]">
+      <path d="M3.5 6.5l2 2 3-3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3.5 15.5l2 2 3-3" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="12" y1="7" x2="20" y2="7" strokeLinecap="round" />
+      <line x1="12" y1="16" x2="20" y2="16" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <span
+      className="inline-block size-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent"
+      aria-hidden
+    />
+  );
+}
+
+function SelectCheckbox({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`flex size-3.5 shrink-0 items-center justify-center rounded-sm border transition-colors ${
+        checked ? "border-accent bg-accent" : "border-line-bright bg-canvas"
+      }`}
+      aria-hidden
+    >
+      {checked && (
+        <svg viewBox="0 0 24 24" className="size-2.5 fill-none stroke-white stroke-[3]">
+          <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 function SessionItemRow({
   session,
   active,
+  running,
+  selectMode,
+  selected,
   onSelect,
   onDelete,
+  onToggleSelect,
 }: {
   session: UISessionInfo;
   active: boolean;
+  running: boolean;
+  selectMode: boolean;
+  selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  onToggleSelect: () => void;
 }) {
   const title = session.name ?? session.firstMessage ?? "新会话";
   return (
     <div
       className={`group relative flex w-full items-center justify-between gap-1.5 border px-2 py-1.5 font-mono transition-colors rounded ${
-        active
-          ? "border-accent bg-canvas font-bold text-ink shadow-[1px_1px_0_var(--color-line)]"
-          : "border-transparent text-muted hover:border-line-bright/60 hover:bg-hover hover:text-ink"
+        selected
+          ? "border-accent bg-accent/10 text-ink"
+          : active
+            ? "border-accent bg-canvas font-bold text-ink shadow-[1px_1px_0_var(--color-line)]"
+            : "border-transparent text-muted hover:border-line-bright/60 hover:bg-hover hover:text-ink"
       }`}
     >
       <button
         type="button"
-        onClick={onSelect}
-        title={`${title}\n${session.modified}`}
-        className="min-w-0 flex-1 text-left"
+        onClick={selectMode ? onToggleSelect : onSelect}
+        title={selectMode ? title : `${title}\n${session.modified}`}
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
       >
-        <div className="truncate text-xs">{title}</div>
+        {selectMode && <SelectCheckbox checked={selected} />}
+        <span className="truncate text-xs">{title}</span>
       </button>
 
       <div className="flex items-center gap-1 shrink-0">
-        {session.relativeTime && (
+        {running && (
+          <span title="运行中" aria-label="运行中" className="flex items-center">
+            <SpinnerIcon />
+          </span>
+        )}
+        {!selectMode && session.relativeTime && (
           <span className="text-[10px] text-faint group-hover:hidden">
             {session.relativeTime}
           </span>
         )}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          title="删除此会话记录"
-          className="hidden size-5 items-center justify-center rounded text-faint hover:bg-red-500/10 hover:text-red-500 group-hover:flex"
-        >
-          <TrashIcon />
-        </button>
+        {!selectMode && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            title="删除此会话记录"
+            className="hidden size-5 items-center justify-center rounded text-faint hover:bg-red-500/10 hover:text-red-500 group-hover:flex"
+          >
+            <TrashIcon />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -143,6 +202,10 @@ function ProjectAccordionItem({
   onDeleteSession,
   onDeleteProject,
   onDeleteFolder,
+  runningSessions,
+  selectMode,
+  selectedIds,
+  onToggleSelect,
 }: {
   project: UIProjectItem;
   expanded: boolean;
@@ -154,6 +217,10 @@ function ProjectAccordionItem({
   onDeleteSession: (session: UISessionInfo) => void;
   onDeleteProject: (project: UIProjectItem) => void;
   onDeleteFolder: (folderPath: string, folderName: string) => void;
+  runningSessions?: Set<string>;
+  selectMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (session: UISessionInfo) => void;
 }) {
   const isCurrentProject = currentCwd === project.projectRoot || project.folders.some((f) => f.path === currentCwd);
   const hasMultipleFolders = project.folders.length > 1;
@@ -265,8 +332,12 @@ function ProjectAccordionItem({
                           key={s.path}
                           session={s}
                           active={s.path === currentSessionFile}
+                          running={runningSessions?.has(s.id) ?? false}
+                          selectMode={!!selectMode}
+                          selected={selectedIds?.has(s.id) ?? false}
                           onSelect={() => onSelectSession(s, folder.path)}
                           onDelete={() => onDeleteSession(s)}
+                          onToggleSelect={() => onToggleSelect?.(s)}
                         />
                       ))
                     ) : (
@@ -286,8 +357,12 @@ function ProjectAccordionItem({
                   key={s.path}
                   session={s}
                   active={s.path === currentSessionFile}
+                  running={runningSessions?.has(s.id) ?? false}
+                  selectMode={!!selectMode}
+                  selected={selectedIds?.has(s.id) ?? false}
                   onSelect={() => onSelectSession(s, project.projectRoot)}
                   onDelete={() => onDeleteSession(s)}
+                  onToggleSelect={() => onToggleSelect?.(s)}
                 />
               ))
             ) : (
@@ -304,7 +379,7 @@ function ProjectAccordionItem({
 
 function useSessionListSync(enabled: boolean) {
   const invalidate = useInvalidateSessions();
-  const { snapshot } = useChat();
+  const { snapshot, sessionNameToken } = useChat();
   const sessionFile = snapshot?.sessionFile;
   const isStreaming = snapshot?.isStreaming ?? false;
   const prevStreaming = useRef(isStreaming);
@@ -313,6 +388,13 @@ function useSessionListSync(enabled: boolean) {
     if (!enabled || !sessionFile) return;
     void invalidate();
   }, [enabled, sessionFile, invalidate]);
+
+  // Auto-generated session titles arrive asynchronously; refresh the
+  // projects/sessions lists so the sidebar stops showing the raw first message.
+  useEffect(() => {
+    if (!enabled) return;
+    void invalidate();
+  }, [enabled, sessionNameToken, invalidate]);
 
   useEffect(() => {
     if (!enabled) {
@@ -344,17 +426,31 @@ function SessionsPanel({
   const t = useT();
   const navigate = useNavigate();
   const sidebarPinned = useSidebarPinned();
-  const { snapshot } = useChat();
+  const { snapshot, sessionId } = useChat();
   const currentCwd = snapshot?.cwd;
 
   const { data: projects = [], refetch: refetchProjects } = useProjects(active);
   const { data: recentSessions = [], refetch: refetchSessions } = useSessions(active, currentCwd);
+  const { data: runningSessions } = useRunningSessions(active, active ? 3000 : false);
   useSessionListSync(active);
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => getStoredExpandedProjects());
   const [cwdSelectorOpen, setCwdSelectorOpen] = useState(false);
+  const [llmTurnsOpen, setLlmTurnsOpen] = useState(false);
+  const [promptInspectorOpen, setPromptInspectorOpen] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Map<string, { id: string; cwd?: string }>>(new Map());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+
+  const snapshotStreaming = snapshot?.isStreaming ?? false;
+  const runningIdSet = useMemo(() => {
+    const set = new Set<string>(runningSessions?.sessionIds ?? []);
+    if (sessionId && snapshotStreaming) set.add(sessionId);
+    return set;
+  }, [runningSessions, sessionId, snapshotStreaming]);
+  const selectedIdSet = useMemo(() => new Set(selected.keys()), [selected]);
 
   // 默认展开当前项目及前两个项目
   useEffect(() => {
@@ -463,6 +559,26 @@ function SessionsPanel({
     }
   };
 
+  const toggleSelectMode = () => {
+    if (selectMode) {
+      setSelectMode(false);
+      setSelected(new Map());
+    } else {
+      setSelectMode(true);
+    }
+  };
+
+  const toggleSelectSession = (s: UISessionInfo) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(s.id)) next.delete(s.id);
+      else next.set(s.id, { id: s.id, cwd: s.cwd });
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Map());
+
   const filteredProjects = projects.filter((p) => {
     if (!filterQuery.trim()) return true;
     const q = filterQuery.toLowerCase();
@@ -473,6 +589,53 @@ function SessionsPanel({
       p.sessions.some((s) => (s.name || s.firstMessage).toLowerCase().includes(q))
     );
   });
+
+  const allVisibleSessions = (() => {
+    const map = new Map<string, UISessionInfo>();
+    for (const p of filteredProjects) for (const s of p.sessions) map.set(s.id, s);
+    for (const s of recentSessions) if (!map.has(s.id)) map.set(s.id, s);
+    return Array.from(map.values());
+  })();
+
+  const selectAllVisible = () => {
+    setSelected(new Map(allVisibleSessions.map((s) => [s.id, { id: s.id, cwd: s.cwd }])));
+  };
+
+  const handleBatchDelete = async () => {
+    const targets = Array.from(selected.values());
+    if (targets.length === 0) return;
+    if (
+      !window.confirm(
+        `确定删除选中的 ${targets.length} 个会话吗？\n\n（注意：仅清理会话历史，不会删除您的实际源码）`,
+      )
+    )
+      return;
+    setBatchDeleting(true);
+    try {
+      const result = await deleteSessionsBatchApi(targets);
+      void refetchProjects();
+      void refetchSessions();
+      if (sessionId && result.deletedSessionIds.includes(sessionId)) {
+        void navigate({ to: "/" });
+        chatClient.connect(null, { force: true });
+      }
+      if (!result.ok) {
+        const details = (result.details ?? []).slice(0, 5).join("\n");
+        alert(
+          `部分会话删除失败（${result.failedSessionIds.length} 个）：\n${details || result.error || ""}`,
+        );
+        const failed = new Set(result.failedSessionIds);
+        setSelected(new Map(targets.filter((t) => failed.has(t.id)).map((t) => [t.id, t])));
+      } else {
+        setSelected(new Map());
+        setSelectMode(false);
+      }
+    } catch (err) {
+      alert(`批量删除失败: ${String(err)}`);
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
 
   return (
     <>
@@ -510,6 +673,26 @@ function SessionsPanel({
         </div>
       </div>
 
+      {/* 侧边栏顶部工具区: LLM TURNS / CONTEXT（从顶栏下放以减压） */}
+      <div className="flex items-center gap-1.5 border-b-2 border-line px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setLlmTurnsOpen(true)}
+          className="flex h-7.5 flex-1 items-center justify-center gap-1 border-2 border-line-bright bg-card px-2 font-mono text-[11px] font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
+          title="实时查看与监视每次 Turn 真实发往大模型（LLM）的全量 Payload、SystemPrompt、Messages 与 Tools"
+        >
+          <span>🧠 LLM TURNS</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setPromptInspectorOpen(true)}
+          className="flex h-7.5 flex-1 items-center justify-center gap-1 border-2 border-line-bright bg-card px-2 font-mono text-[11px] font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
+          title="查看当前会话上下文估算（不等于真正发往 Provider 的最终 Request）"
+        >
+          <span>👁️ CONTEXT</span>
+        </button>
+      </div>
+
       {/* Projects 标题栏与操作按钮 */}
       <div className="flex items-center justify-between px-3 pt-3 pb-1.5 font-mono text-xs text-faint">
         <span className="font-bold tracking-wider text-ink uppercase">Projects</span>
@@ -526,6 +709,17 @@ function SessionsPanel({
           </button>
           <button
             type="button"
+            onClick={toggleSelectMode}
+            title={selectMode ? "退出批量选择" : "批量选择会话"}
+            aria-pressed={selectMode}
+            className={`flex size-6 items-center justify-center rounded border transition-colors ${
+              selectMode ? "border-accent bg-canvas text-accent" : "border-transparent hover:bg-hover hover:text-ink"
+            }`}
+          >
+            <ChecklistIcon />
+          </button>
+          <button
+            type="button"
             onClick={() => setCwdSelectorOpen(true)}
             title="添加/打开新项目目录"
             className="flex size-6 items-center justify-center rounded border border-transparent transition-colors hover:bg-hover hover:text-accent"
@@ -534,6 +728,38 @@ function SessionsPanel({
           </button>
         </div>
       </div>
+
+      {/* 批量选择操作栏 */}
+      {selectMode && (
+        <div className="flex items-center justify-between gap-2 border-y border-line bg-canvas px-3 py-1.5 font-mono text-[11px]">
+          <span className="text-muted">已选 {selected.size} 项</span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={selectAllVisible}
+              className="rounded border border-line-bright bg-card px-1.5 py-0.5 text-muted transition-colors hover:border-accent hover:text-ink"
+            >
+              全选
+            </button>
+            <button
+              type="button"
+              onClick={clearSelection}
+              disabled={selected.size === 0}
+              className="rounded border border-line-bright bg-card px-1.5 py-0.5 text-muted transition-colors hover:border-accent hover:text-ink disabled:opacity-40"
+            >
+              清空
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleBatchDelete()}
+              disabled={selected.size === 0 || batchDeleting}
+              className="rounded border border-red-400 bg-red-500/10 px-1.5 py-0.5 font-bold text-red-500 transition-colors hover:bg-red-500/20 disabled:opacity-40"
+            >
+              {batchDeleting ? "删除中…" : `删除选中 (${selected.size})`}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 搜索框 */}
       {filterOpen && (
@@ -565,6 +791,10 @@ function SessionsPanel({
               onDeleteSession={handleDeleteSession}
               onDeleteProject={handleDeleteProject}
               onDeleteFolder={handleDeleteFolder}
+              runningSessions={runningIdSet}
+              selectMode={selectMode}
+              selectedIds={selectedIdSet}
+              onToggleSelect={toggleSelectSession}
             />
           ))
         ) : (
@@ -590,32 +820,48 @@ function SessionsPanel({
           <div className="space-y-0.5">
             {recentSessions.slice(0, 8).map((s) => {
               const active = s.path === currentSessionFile;
+              const running = runningIdSet.has(s.id);
+              const selectedRow = selectedIdSet.has(s.id);
               return (
                 <div
                   key={s.path}
                   className={`group flex w-full items-center justify-between px-2 py-1.5 font-mono text-xs transition-colors rounded ${
-                    active ? "bg-canvas font-bold text-ink border border-line shadow-[1px_1px_0_var(--color-line)]" : "text-muted hover:bg-hover hover:text-ink"
+                    selectedRow
+                      ? "border border-accent bg-accent/10 text-ink"
+                      : active
+                        ? "bg-canvas font-bold text-ink border border-line shadow-[1px_1px_0_var(--color-line)]"
+                        : "text-muted hover:bg-hover hover:text-ink"
                   }`}
                 >
                   <button
                     type="button"
-                    onClick={() => handleSelectSession(s, currentCwd || "")}
-                    className="min-w-0 flex-1 text-left"
+                    onClick={() =>
+                      selectMode ? toggleSelectSession(s) : handleSelectSession(s, currentCwd || "")
+                    }
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                   >
+                    {selectMode && <SelectCheckbox checked={selectedRow} />}
                     <span className="truncate block">{s.name || s.firstMessage || "对话"}</span>
                   </button>
                   <div className="flex items-center gap-1 shrink-0 ml-1.5">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleDeleteSession(s);
-                      }}
-                      title="删除此会话记录"
-                      className="hidden size-4 items-center justify-center rounded text-faint hover:bg-red-500/10 hover:text-red-500 group-hover:flex"
-                    >
-                      <TrashIcon />
-                    </button>
+                    {running && (
+                      <span title="运行中" aria-label="运行中" className="flex items-center">
+                        <SpinnerIcon />
+                      </span>
+                    )}
+                    {!selectMode && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteSession(s);
+                        }}
+                        title="删除此会话记录"
+                        className="hidden size-4 items-center justify-center rounded text-faint hover:bg-red-500/10 hover:text-red-500 group-hover:flex"
+                      >
+                        <TrashIcon />
+                      </button>
+                    )}
                     <span
                       className={`size-1.5 rounded-full shrink-0 ${
                         active ? "bg-accent" : "bg-faint/40"
@@ -644,6 +890,13 @@ function SessionsPanel({
           void refetchProjects();
           void refetchSessions();
         }}
+      />
+
+      <LLMTurnsModal open={llmTurnsOpen} onOpenChange={setLlmTurnsOpen} sessionId={sessionId} />
+      <PromptInspectorModal
+        open={promptInspectorOpen}
+        onOpenChange={setPromptInspectorOpen}
+        sessionId={sessionId}
       />
     </>
   );

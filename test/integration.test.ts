@@ -109,12 +109,13 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
     it("should fail-closed when targetCwd attempts to escape the root boundary", async () => {
       const mockModelRuntime = {} as any;
       const manager = new SubagentManager(mockModelRuntime);
+      const sessionId = `session-cwd-escape-${Date.now()}`;
 
       await assert.rejects(
         async () => {
           await manager.spawn({
-            parentSessionId: "session-test",
-            role: "default",
+            parentSessionId: sessionId,
+            role: "researcher",
             taskTitle: "通用任务",
             taskPrompt: "做测试",
             parentCwd: "/tmp/project",
@@ -123,6 +124,14 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
         },
         /escapes the assigned worktree\/repo boundary/i,
       );
+
+      const leftover = manager.getTasksForParent(sessionId);
+      assert.equal(
+        leftover.filter((t) => t.status === "running").length,
+        0,
+        "escaped cwd must not leave a RUNNING zombie task",
+      );
+      assert.ok(leftover.every((t) => t.status === "failed"));
     });
 
     it("should fail-closed and reject invalid roles without silent fallback", async () => {

@@ -2,6 +2,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, relative } from "node:path";
 import type { UIExtensionInfo } from "../../shared/protocol.ts";
 import type { SessionEntry } from "../session/session-registry.ts";
+import {
+  canUseProductDesign,
+  getMainSessionCapabilities,
+  PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME,
+  PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME,
+} from "../session/capabilities.ts";
 import type { ServerContext } from "./context.ts";
 
 export async function handleExtensionsRoutes(
@@ -21,6 +27,9 @@ export async function handleExtensionsRoutes(
       return true;
     }
     const { extensions, errors } = anyEntry.runtime.session.resourceLoader.getExtensions();
+    const productDesignAvailable = canUseProductDesign(
+      getMainSessionCapabilities(anyEntry.runtime.session.model),
+    );
     const shorten = (p: string) => (p.startsWith(HOME) ? `~${p.slice(HOME.length)}` : p);
     const list: UIExtensionInfo[] = extensions.map((ext) => {
       const { sourceInfo } = ext;
@@ -37,12 +46,17 @@ export async function handleExtensionsRoutes(
       } else {
         name = basename(ext.path).replace(/\.(ts|js|mjs|cjs)$/, "");
       }
+      const tools = [...ext.tools.keys()].filter(
+        (tool) =>
+          productDesignAvailable ||
+          (tool !== PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME && tool !== PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME),
+      );
       return {
         name,
         packageName,
         path: shorten(ext.path),
         scope: sourceInfo.scope,
-        tools: [...ext.tools.keys()],
+        tools,
         commands: [...ext.commands.keys()],
         flags: [...ext.flags.keys()],
         events: [...ext.handlers.keys()],

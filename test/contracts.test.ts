@@ -68,7 +68,19 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(SHARED_DEFAULTS.some((d) => d.includes("针对修复型任务") && d.includes("Baseline")));
       assert.ok(SHARED_DEFAULTS.some((d) => d.includes("简明交付报告")));
       assert.ok(SHARED_DEFAULTS.some((d) => d.includes("file + class + method/symbol") && d.includes("行号仅作辅助参考")));
-      assert.ok(SHARED_DEFAULTS.some((d) => d.includes("Evidence Index") && d.includes("ArtifactRef")));
+      assert.ok(
+        SHARED_DEFAULTS.some(
+          (d) =>
+            d.includes("recovery_manifest") &&
+            d.includes("read_artifact") &&
+            d.includes("continuation hint"),
+        ),
+      );
+      assert.equal(
+        SHARED_DEFAULTS.some((d) => d.includes("Evidence Index")),
+        false,
+        "request-time recovery is recovery_manifest, not Evidence Index",
+      );
     });
   });
 
@@ -95,6 +107,16 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         assert.ok(def.description.length > 0, `${def.id} must have non-empty description`);
         assert.ok(def.responsibilities.length >= 1, `${def.id} must have at least 1 responsibility`);
         assert.ok(typeof def.instructions === "string" && def.instructions.length > 0, `${def.id} must have non-empty instructions`);
+        assert.match(
+          def.instructions ?? "",
+          /#### Context recovery/,
+          `${def.id} instructions must teach request-time recovery_manifest`,
+        );
+        assert.doesNotMatch(
+          def.instructions ?? "",
+          /recovery_manifest\.boundary/,
+          `${def.id} must not teach a nested recovery_manifest.boundary field`,
+        );
       }
     });
 
@@ -212,6 +234,24 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(coordinatorCfg.allowedTools?.includes("spawn_subagent"));
       assert.ok(coordinatorCfg.allowedTools?.includes("edit"), "Coordinator must have edit for Direct Path");
       assert.ok(coordinatorCfg.allowedTools?.includes("write"), "Coordinator must have write for Direct Path");
+      assert.ok(coordinatorCfg.allowedTools?.includes("web_search"), "Coordinator must have web_search");
+      assert.equal(coordinatorCfg.allowedTools?.includes("url_context"), false);
+      assert.match(coordinator.instructions ?? "", /#### Web search/);
+      assert.match(coordinator.instructions ?? "", /#### Context recovery/);
+      assert.match(coordinator.instructions ?? "", /firstCompactedEntryId/);
+      assert.doesNotMatch(coordinator.instructions ?? "", /recovery_manifest\.boundary/);
+      assert.match(coordinator.instructions ?? "", /get_task_summary/);
+      assert.match(coordinator.instructions ?? "", /TaskEpisodeView/);
+      assert.match(coordinator.instructions ?? "", /current run\/task only/);
+      assert.doesNotMatch(
+        coordinator.instructions ?? "",
+        /pass ArtifactRef via the new Task Contract|由执行角色在其任务范围内用 read_artifact/,
+      );
+      assert.ok(
+        coordinator.strictProhibitions.some((p) =>
+          p.includes("read_artifact") && p.includes("其他 Task"),
+        ),
+      );
     });
 
     it("6. Developer Role handles frontend, backend, and debug tasks with root cause and baseline evidence", () => {
@@ -221,11 +261,13 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.equal(developer.name, "开发工程师 (Developer)");
       assert.equal(developer.requiresWorktree, true, "Developer requires isolated worktree");
       assert.equal((developer as any).allowedTools, undefined);
-      assert.deepEqual(developerCfg.allowedTools, ["read", "bash", "edit", "write", "report_blocker"]);
+      assert.deepEqual(developerCfg.allowedTools, ["read", "bash", "edit", "write", "report_blocker", "read_transcript", "search_transcript", "read_artifact"]);
       assert.ok(developer.responsibilities.some((r) => r.includes("前端、后端或全栈")));
       assert.ok(developer.responsibilities.some((r) => r.includes("Baseline")));
       assert.ok(developer.instructions?.includes("Contract → Root Cause → Minimal Change → Verification → Evidence"));
       assert.ok(developer.instructions?.includes("Baseline"));
+      assert.match(developer.instructions ?? "", /#### Context recovery/);
+      assert.match(developer.instructions ?? "", /firstCompactedEntryId/);
       assert.ok(developer.strictProhibitions.some((p) => p.includes("禁止在没有复现或代码证据的情况下盲目猜测修改")));
     });
 
@@ -236,26 +278,30 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.equal(verifier.name, "验证者 (Verifier)");
       assert.equal(verifier.requiresWorktree, false, "Verifier does not require separate task worktree");
       assert.equal((verifier as any).allowedTools, undefined);
-      assert.deepEqual(verifierCfg.allowedTools, ["read", "bash", "report_blocker"]);
+      assert.deepEqual(verifierCfg.allowedTools, ["read", "bash", "report_blocker", "read_transcript", "search_transcript", "read_artifact"]);
       assert.ok(verifier.strictProhibitions.some((p) => p.includes("默认禁止直接修改业务代码或替 Developer 修复问题")));
       assert.ok(verifier.instructions?.includes("PASS"));
       assert.ok(verifier.instructions?.includes("REWORK"));
       assert.ok(verifier.instructions?.includes("verdict"));
+      assert.match(verifier.instructions ?? "", /#### Context recovery/);
     });
 
     it("8. Researcher Role performs technical research without implementation", () => {
       const researcher = getRoleDefinition("researcher");
       const researcherCfg = getRoleConfig("researcher");
       assert.equal(researcher.id, "researcher");
-      assert.equal(researcher.name, "调研员 (Researcher)");
+      assert.equal(researcher.name, "探子 (Scout)");
       assert.equal(researcher.requiresWorktree, false, "Researcher does not require worktree");
       assert.equal((researcher as any).allowedTools, undefined);
-      assert.deepEqual(researcherCfg.allowedTools, ["read", "bash", "report_blocker"]);
-      assert.ok(researcher.strictProhibitions.some((p) => p.includes("默认禁止编写业务生产代码或承担主实现工作")));
-      assert.ok(researcher.instructions?.includes("Findings"));
-      assert.ok(researcher.instructions?.includes("Evidence"));
-      assert.ok(researcher.instructions?.includes("Recommendation"));
-      assert.ok(researcher.instructions?.includes("Uncertainties"));
+      assert.deepEqual(researcherCfg.allowedTools, ["read", "bash", "report_blocker", "read_transcript", "search_transcript", "read_artifact", "web_search"]);
+      assert.equal(researcherCfg.allowedTools?.includes("url_context"), false);
+      assert.match(researcher.instructions ?? "", /#### Web search/);
+      assert.ok(researcher.strictProhibitions.some((p) => p.includes("禁止改动任何文件或项目状态")));
+      assert.ok(researcher.strictProhibitions.some((p) => p.includes("禁止做方案取舍")));
+      assert.match(researcher.instructions ?? "", /只读/);
+      assert.match(researcher.instructions ?? "", /file:line/);
+      assert.match(researcher.instructions ?? "", /探子/);
+      assert.match(researcher.instructions ?? "", /#### Context recovery/);
     });
   });
 
@@ -281,7 +327,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       });
 
       assert.equal(context.role.id, "verifier");
-      assert.deepEqual(context.runtime.activeTools, ["read", "bash", "report_blocker"]);
+      assert.deepEqual(context.runtime.activeTools, ["read", "bash", "report_blocker", "read_transcript", "search_transcript", "read_artifact"]);
       assert.equal(context.runtime.requiresWorktree, false);
       assert.deepEqual(context.taskContract?.constraints, contract.constraints);
     });
@@ -398,7 +444,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         role: "default",
         cwd: "/tmp/project",
       });
-      assert.deepEqual(context.runtime.activeTools, ["read", "bash", "edit", "write"]);
+      assert.deepEqual(context.runtime.activeTools, ["read", "bash", "edit", "write", "read_transcript", "search_transcript", "read_artifact"]);
       assert.equal(context.runtime.activeTools.includes("report_blocker"), false);
     });
 

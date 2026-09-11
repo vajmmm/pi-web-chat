@@ -7,15 +7,10 @@ import { useSidebarPinned } from "../lib/sidebar";
 import { useLeftEdgeSwipe } from "../lib/useEdgeSwipe";
 import { Composer } from "./Composer";
 import { CwdSelector } from "./CwdSelector";
-import { LLMTurnsModal } from "./LLMTurnsModal";
 import { MessageList } from "./MessageList";
-import { ModelMenu } from "./ModelMenu";
-import { PromptInspectorModal } from "./PromptInspectorModal";
-import { RoleSelector } from "./RoleSelector";
 import { SessionsDrawer, SessionsSidebar } from "./SessionsDrawer";
 import { SettingsMenu } from "./SettingsMenu";
 import { SubagentDrawer } from "./SubagentDrawer";
-import { ThinkingMenu } from "./ThinkingMenu";
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 
 function connectionDotClass(connection: "connecting" | "connected" | "disconnected"): string {
@@ -57,8 +52,6 @@ export function ChatPage() {
   } = useChat();
 
   const [subagentsOpen, setSubagentsOpen] = useState(false);
-  const [promptInspectorOpen, setPromptInspectorOpen] = useState(false);
-  const [llmTurnsOpen, setLlmTurnsOpen] = useState(false);
   const isStreaming = snapshot?.isStreaming ?? false;
   const showConnectingOverlay = connection === "disconnected";
   const sidebarPinned = useSidebarPinned();
@@ -125,25 +118,6 @@ export function ChatPage() {
                 chatClient.send({ type: "set_session_cwd", cwd: newCwd });
               }}
             />
-            <RoleSelector />
-
-            <button
-              type="button"
-              onClick={() => setLlmTurnsOpen(true)}
-              className="flex h-7.5 items-center gap-1 border-2 border-line-bright bg-card px-2 font-mono text-xs font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
-              title="实时查看与监视每次 Turn 真实发往大模型（LLM）的全量 Payload、SystemPrompt、Messages 与 Tools"
-            >
-              <span>🧠 LLM TURNS</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPromptInspectorOpen(true)}
-              className="flex h-7.5 items-center gap-1 border-2 border-line-bright bg-card px-2 font-mono text-xs font-bold text-ink shadow-[var(--pixel-shadow-sm)] hover:translate-x-[1px] hover:translate-y-[1px] hover:border-accent"
-              title="查看当前会话上下文估算（不等于真正发往 Provider 的最终 Request）"
-            >
-              <span>👁️ CONTEXT</span>
-            </button>
 
             <button
               type="button"
@@ -163,26 +137,11 @@ export function ChatPage() {
               ) : null}
             </button>
 
-            <ThinkingMenu
-              current={snapshot?.thinkingLevel ?? "off"}
-              levels={snapshot?.thinkingLevels ?? ["off"]}
-            />
-            <ModelMenu current={snapshot?.model ?? null} />
             <SettingsMenu />
           </div>
         </header>
 
         <SubagentDrawer open={subagentsOpen} onOpenChange={setSubagentsOpen} />
-        <LLMTurnsModal
-          open={llmTurnsOpen}
-          onOpenChange={setLlmTurnsOpen}
-          sessionId={sessionId}
-        />
-        <PromptInspectorModal
-          open={promptInspectorOpen}
-          onOpenChange={setPromptInspectorOpen}
-          sessionId={sessionId}
-        />
 
         {showConnectingOverlay ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">

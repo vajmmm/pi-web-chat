@@ -226,6 +226,28 @@ export class SubagentManager implements SubagentManagerHost {
     return false;
   }
 
+  /**
+   * All parent session ids that currently own active work of any kind:
+   * non-terminal subagent tasks, streaming subagent runtimes, or an in-flight
+   * coordinator turn. Used by the session list to render a "busy" indicator.
+   */
+  public getActiveParentSessionIds(): string[] {
+    const activeStates: TaskExecutionStatus[] = ["ready", "running", "blocked"];
+    const ids = new Set<string>();
+    for (const inst of subagentTasks.values()) {
+      if (
+        activeStates.includes(inst.task.status) ||
+        Boolean(inst.runtime?.session?.isStreaming)
+      ) {
+        ids.add(inst.task.parentSessionId);
+      }
+    }
+    for (const sessionId of this.coordinatorState.activeSessionIds()) {
+      ids.add(sessionId);
+    }
+    return Array.from(ids);
+  }
+
   public isRunFinalized(parentSessionId: string): boolean {
     return this.finalizedRuns.has(parentSessionId);
   }

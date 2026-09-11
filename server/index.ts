@@ -18,6 +18,20 @@ import type {
   UICustomProvider,
 } from "../shared/protocol.ts";
 import { createCoordinatorExtension } from "./coordinator-tools.ts";
+import { createCodexImagegenExtension } from "./codex-imagegen-extension.ts";
+import { createProductDesignExtension } from "./product-design-extension.ts";
+import { createWebSearchExtension } from "./web-search-extension.ts";
+import { getCompactionInstructions } from "./compact.ts";
+import {
+  createRecoveryTools,
+} from "./subagent/agent-runtime.ts";
+import {
+  createTaskContextExtension,
+  restoreLatestRecoveryManifest,
+  type TaskContextRuntimeState,
+} from "./subagent/compaction-evidence-index.ts";
+import { initializeTaskFactStore } from "./runtime-artifacts.ts";
+import { createShadowTranscriptRecorder } from "./subagent/shadow-transcript.ts";
 import { installTurnRecorderOnSession } from "./turn-recorder.ts";
 import { readCustomModels } from "./models-config.ts";
 import { sanitizeEmptyAvailableModelIds } from "./auth-config.ts";
@@ -43,6 +57,7 @@ import {
 } from "./ws/index.ts";
 import { buildSnapshot } from "./session/snapshot.ts";
 import { handleHttpRequest, type ServerContext } from "./http/index.ts";
+import { getMainSessionCapabilities } from "./session/capabilities.ts";
 
 const PORT = Number(process.env.PORT ?? 3141);
 // Default to loopback — this server has no auth and can drive a coding agent.
@@ -100,11 +115,35 @@ try {
 }
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+  // A runtime exists before switchSession() reveals the canonical session ID. Never
+  // invent a temporary artifact scope: event handlers resolve this bound scope only.
+  let recoveryScope: { runId: string; taskId: string } | undefined;
+  const taskContextState: TaskContextRuntimeState = { compactionCount: 0 };
+  const bindRecoveryScope = (scope: { runId: string; taskId: string }) => {
+    recoveryScope = scope;
+    initializeTaskFactStore(scope.runId, scope.taskId);
+    restoreLatestRecoveryManifest(taskContextState, scope.runId, scope.taskId);
+  };
   const services = await createAgentSessionServices({
     cwd,
     resourceLoaderOptions: {
       appendSystemPromptOverride: () => [],
       extensionFactories: [
+        createTaskContextExtension({
+          getScope: () => recoveryScope,
+          role: "coordinator",
+          state: taskContextState,
+          getSettingsManager: () => services.settingsManager,
+          getModel: () => {
+            const currentEntry = Array.from(entries.values()).find(
+              (e) => e.runtime.session.sessionManager === sessionManager,
+            );
+            return currentEntry?.runtime.session.model;
+          },
+        }),
+        createCodexImagegenExtension(),
+        createProductDesignExtension(),
+        createWebSearchExtension(),
         createCoordinatorExtension(subagentManager, () => {
           const currentEntry = Array.from(entries.values()).find(
             (e) => e.runtime.session.sessionManager === sessionManager,
@@ -114,6 +153,8 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
             parentSessionId: currentEntry?.id ?? "",
             parentCwd: cwd,
             parentModel: model ? { provider: model.provider, id: model.id } : null,
+            getMainSessionCapabilities: () =>
+              getMainSessionCapabilities(currentEntry?.runtime.session.model),
             activeRole: currentEntry?.activeRole ?? "coordinator",
             onUpdate: (task) => {
               if (currentEntry) {
@@ -172,8 +213,24 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
       ],
     },
   });
+  services.settingsManager.applyOverrides({
+    compaction: {
+      triggerRatio: 0.8,
+      customInstructions: getCompactionInstructions(),
+    },
+  });
+  const result = await createAgentSessionFromServices({
+    services,
+    sessionManager,
+    sessionStartEvent,
+    customTools: createRecoveryTools(() => {
+      if (!recoveryScope) throw new Error("Coordinator recovery scope is not bound");
+      return recoveryScope;
+    }),
+  });
+  (result.session as any).__bindRecoveryScope = bindRecoveryScope;
   return {
-    ...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent })),
+    ...result,
     services,
     diagnostics: services.diagnostics,
   };
@@ -229,11 +286,23 @@ async function createEntry(id: string | null, customCwd?: string): Promise<Sessi
     gitBranch,
     queuedMessages: [],
   };
+  const bindRecoveryScope = (runtime.session as any).__bindRecoveryScope as
+    | ((scope: { runId: string; taskId: string }) => void)
+    | undefined;
+  if (!bindRecoveryScope) throw new Error("Coordinator recovery scope binder is unavailable");
+  bindRecoveryScope({ runId: entry.id, taskId: "coordinator" });
   applyRoleToSession(entry, entry.activeRole);
   installTurnRecorderOnSession(runtime.session, () => entry.id);
+  const recoveryScope = { runId: entry.id, taskId: "coordinator" };
+  const flushTranscript = createShadowTranscriptRecorder(recoveryScope.runId, recoveryScope.taskId);
+  runtime.session.subscribe((event: any) => {
+    if (["message_end", "turn_end", "agent_end", "compaction_start"].includes(event.type)) {
+      flushTranscript(runtime.session);
+    }
+  });
 
   sessionRegistry.set(entry.id, entry);
-  bindSessionEvents(entry, subagentManager);
+  bindSessionEvents(entry, subagentManager, () => modelRuntime);
   return entry;
 }
 
