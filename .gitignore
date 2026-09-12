@@ -5,3 +5,6 @@ dist/
 .env
 .worktrees/
 .runtime/
+
+# local backup archives
+归档.zip
