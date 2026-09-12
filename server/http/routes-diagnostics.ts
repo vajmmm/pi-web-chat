@@ -30,8 +30,13 @@ export async function handleDiagnosticsRoutes(
   const { sessionRegistry, subagentManager } = ctx;
   const entries = sessionRegistry.entries;
 
+  const requestedSessionId = url.searchParams.get("session");
+  const requestedEntry = requestedSessionId ? entries.get(requestedSessionId) : undefined;
+  const activeEntry = requestedSessionId
+    ? requestedEntry
+    : (entries.values().next().value as SessionEntry | undefined);
+
   if (url.pathname === "/api/tools") {
-    const anyEntry = entries.values().next().value as SessionEntry | undefined;
     const toolsMap = new Map<string, UIToolItem>();
 
     // 核心基础工具 (Pi 官方内置)
@@ -72,11 +77,11 @@ export async function handleDiagnosticsRoutes(
     });
 
     // 如果有运行中的 session，收集所有动态注册的扩展工具
-    if (anyEntry) {
+    if (activeEntry) {
       const productDesignAvailable = canUseProductDesign(
-        getMainSessionCapabilities(anyEntry.runtime.session.model),
+        getMainSessionCapabilities(activeEntry.runtime.session.model),
       );
-      for (const t of anyEntry.runtime.session.getAllTools()) {
+      for (const t of activeEntry.runtime.session.getAllTools()) {
         if (
           !productDesignAvailable &&
           (t.name === PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME || t.name === PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME)
@@ -100,10 +105,9 @@ export async function handleDiagnosticsRoutes(
   }
 
   if (url.pathname === "/api/skills") {
-    const anyEntry = entries.values().next().value as SessionEntry | undefined;
-    const cwd = url.searchParams.get("cwd") || anyEntry?.cwd;
-    const productDesignAvailable = anyEntry
-      ? canUseProductDesign(getMainSessionCapabilities(anyEntry.runtime.session.model))
+    const cwd = url.searchParams.get("cwd") || activeEntry?.cwd;
+    const productDesignAvailable = activeEntry
+      ? canUseProductDesign(getMainSessionCapabilities(activeEntry.runtime.session.model))
       : false;
     const skills = discoverAllSkills(cwd).filter(
       (skill) => productDesignAvailable || skill.name !== PRODUCT_DESIGN_SKILL_NAME,

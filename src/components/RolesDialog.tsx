@@ -4,6 +4,10 @@ import type { AgentRole, RoleConfig, RoleDefinition, UIThinkingLevel } from "../
 import { saveRolesConfig, useAllTools, useInvalidateRoles, useRoleModels, useRolesConfig, useSkills } from "../lib/api";
 import { useChat } from "../lib/chat";
 import { useT } from "../lib/i18n";
+import {
+  PRODUCT_DESIGN_SKILL_NAME,
+  syncProductDesignSkillAuthorization,
+} from "../lib/role-config";
 
 const inputClass =
   "w-full border-2 border-line bg-canvas px-2.5 py-1.5 font-mono text-xs text-ink outline-none placeholder:text-faint focus:border-accent";
@@ -64,9 +68,9 @@ export function RolesDialog({
   const t = useT();
   const { data, refetch } = useRolesConfig(open);
   const { data: models = [] } = useRoleModels(open);
-  const { data: allTools = [] } = useAllTools();
-  const { data: allSkills = [] } = useSkills(undefined, open);
   const { snapshot } = useChat();
+  const { data: allTools = [] } = useAllTools(snapshot?.sessionId);
+  const { data: allSkills = [] } = useSkills(undefined, open, snapshot?.sessionId);
   const invalidateRoles = useInvalidateRoles();
 
   const [draft, setDraft] = useState<RoleConfig[] | null>(null);
@@ -170,7 +174,7 @@ export function RolesDialog({
   const currentAllowedSkills = activeRoleConfig?.allowedSkills ?? [];
   const productDesignAvailable = snapshot?.productDesignAvailable ?? false;
   const visibleSkills = useMemo(
-    () => allSkills.filter((skill) => productDesignAvailable || skill.name !== "product-design"),
+    () => allSkills.filter((skill) => productDesignAvailable || skill.name !== PRODUCT_DESIGN_SKILL_NAME),
     [allSkills, productDesignAvailable],
   );
   const hiddenSkillNames = useMemo(
@@ -194,13 +198,18 @@ export function RolesDialog({
   };
 
   const toggleSkill = (skillName: string) => {
-    let next: string[];
-    if (currentAllowedSkills.includes(skillName)) {
-      next = currentAllowedSkills.filter((s) => s !== skillName);
-    } else {
-      next = [...currentAllowedSkills, skillName];
+    const enabled = !currentAllowedSkills.includes(skillName);
+    if (skillName === PRODUCT_DESIGN_SKILL_NAME) {
+      updateActiveRole(
+        syncProductDesignSkillAuthorization(currentAllowedSkills, currentAllowedTools, enabled),
+      );
+      return;
     }
-    updateActiveRole({ allowedSkills: next });
+    updateActiveRole({
+      allowedSkills: enabled
+        ? [...currentAllowedSkills, skillName]
+        : currentAllowedSkills.filter((s) => s !== skillName),
+    });
   };
 
   const save = async () => {

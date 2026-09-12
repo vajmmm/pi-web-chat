@@ -1,9 +1,24 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { getAgentDir, withFileMutationQueue, type ExtensionAPI, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import {
+  detectSupportedImageMimeTypeFromFile,
+  getAgentDir,
+  withFileMutationQueue,
+  type ExtensionAPI,
+  type InlineExtension,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { resolveArtifactRef } from "./runtime-artifacts.ts";
+import type {
+  ProductDesignImageBackend,
+  ProductDesignImageGenerationContext,
+  ProductDesignImageGenerationParams,
+  ProductDesignImageGenerationResult,
+  ProductDesignImageGenerationUpdate,
+  ProductDesignImageReference,
+} from "./product-design-image-backend.ts";
 
 export const CODEX_IMAGEGEN_TOOL_NAME = "codex_imagegen";
 export const CODEX_PROVIDER = "openai-codex";
@@ -12,6 +27,18 @@ export const CODEX_IMAGEGEN_BACKEND_ID = "codex-imagegen";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const IMAGE_MODEL = "gpt-image-2";
 const DEFAULT_RESPONSE_MODEL = "gpt-5.5";
+const MAX_REFERENCE_IMAGE_BYTES = 20 * 1024 * 1024;
+
+const REFERENCE_IMAGE_PARAMETERS = Type.Union([
+  Type.Object({
+    path: Type.String({ minLength: 1, description: "本地图片文件路径。" }),
+    mimeType: Type.Optional(Type.String({ minLength: 1 })),
+  }),
+  Type.Object({
+    artifactRef: Type.String({ minLength: 1, description: "可解析为图片文件的 artifact 引用。" }),
+    mimeType: Type.Optional(Type.String({ minLength: 1 })),
+  }),
+]);
 
 const IMAGEGEN_PARAMETERS = Type.Object({
   prompt: Type.String({ description: "要生成的图片描述。" }),
@@ -46,23 +73,10 @@ const IMAGEGEN_PARAMETERS = Type.Object({
       Type.Literal("high"),
     ]),
   ),
+  referenceImages: Type.Optional(Type.Array(REFERENCE_IMAGE_PARAMETERS, { maxItems: 4 })),
 });
 
 export type CodexImagegenParams = Static<typeof IMAGEGEN_PARAMETERS>;
-
-interface CodexImageDetails {
-  provider: typeof CODEX_PROVIDER;
-  imageModel: typeof IMAGE_MODEL;
-  responseModel: string;
-  imageId: string;
-  savedPath: string;
-  mimeType: string;
-  size: string;
-  quality: string;
-  background: string;
-  outputFormat: string;
-  thinking: string;
-}
 
 interface CodexAccountClaims {
   "https://api.openai.com/auth"?: {
@@ -76,7 +90,7 @@ interface CodexImageResult {
   revisedPrompt?: string;
 }
 
-type ToolUpdate = (result: { content: Array<{ type: "text"; text: string }>; details?: unknown }) => void;
+type ToolUpdate = ProductDesignImageGenerationUpdate;
 
 function decodeJwtPayload(token: string): CodexAccountClaims {
   const parts = token.split(".");
@@ -129,7 +143,60 @@ async function saveImage(path: string, base64: string): Promise<void> {
   });
 }
 
-function buildRequest(params: CodexImagegenParams, responseModel: string, sessionId: string): Record<string, unknown> {
+interface PreparedReferenceImage {
+  mimeType: string;
+  base64: string;
+}
+
+async function prepareReferenceImages(
+  references: readonly ProductDesignImageReference[] | undefined,
+  ctx: ProductDesignImageGenerationContext,
+): Promise<PreparedReferenceImage[]> {
+  if (!references || references.length === 0) return [];
+
+  const prepared: PreparedReferenceImage[] = [];
+  for (const reference of references) {
+    const sourcePath = "path" in reference
+      ? resolve(ctx.cwd, reference.path)
+      : reference.artifactRef && ctx.resolveArtifactPath
+        ? ctx.resolveArtifactPath(reference.artifactRef)
+        : null;
+    if (!sourcePath) {
+      throw new Error(
+        "Product Design reference image 必须是可解析的本地 path 或当前运行时可解析的 artifactRef。",
+      );
+    }
+
+    const fileStats = await stat(sourcePath);
+    if (!fileStats.isFile()) {
+      throw new Error(`Product Design reference image 不是文件：${sourcePath}`);
+    }
+    if (fileStats.size > MAX_REFERENCE_IMAGE_BYTES) {
+      throw new Error(`Product Design reference image 超过 20 MiB 限制：${sourcePath}`);
+    }
+
+    const detectedMimeType = await detectSupportedImageMimeTypeFromFile(sourcePath);
+    if (!detectedMimeType) {
+      throw new Error(`Product Design reference image 格式不受支持：${sourcePath}`);
+    }
+    if (reference.mimeType && reference.mimeType !== detectedMimeType) {
+      throw new Error(
+        `Product Design reference image MIME 类型与文件内容不一致：${sourcePath}`,
+      );
+    }
+
+    const image = await readFile(sourcePath);
+    prepared.push({ mimeType: detectedMimeType, base64: image.toString("base64") });
+  }
+  return prepared;
+}
+
+export function buildCodexImageRequest(
+  params: ProductDesignImageGenerationParams,
+  responseModel: string,
+  sessionId: string,
+  referenceImages: readonly PreparedReferenceImage[] = [],
+): Record<string, unknown> {
   const size = params.size ?? "auto";
   const quality = params.quality ?? "auto";
   const background = params.background ?? "auto";
@@ -142,12 +209,16 @@ function buildRequest(params: CodexImagegenParams, responseModel: string, sessio
     stream: true,
     instructions:
       "You are an image generation dispatcher. Use the image_generation tool to create exactly the image requested by the user. Do not write code.",
-    input: [
-      {
-        role: "user",
-        content: [{ type: "input_text", text: `Generate this image: ${params.prompt}` }],
-      },
-    ],
+    input: [{
+      role: "user",
+      content: [
+        { type: "input_text", text: `Generate this image: ${params.prompt}` },
+        ...referenceImages.map((reference) => ({
+          type: "input_image",
+          image_url: `data:${reference.mimeType};base64,${reference.base64}`,
+        })),
+      ],
+    }],
     text: { verbosity: "low" },
     prompt_cache_key: sessionId,
     tool_choice: { type: "image_generation" },
@@ -243,25 +314,17 @@ export async function parseCodexImageSse(
   throw new Error("Codex 响应中没有找到 image_generation 结果。");
 }
 
-export interface CodexImageGenerationContext {
-  cwd: string;
-  model?: { provider: string; id: string };
-  modelRegistry: {
-    getApiKeyForProvider: (provider: string) => Promise<string | undefined>;
-  };
-}
-
 export async function generateCodexImage(
-  params: CodexImagegenParams,
+  params: ProductDesignImageGenerationParams,
   signal: AbortSignal | undefined,
   onUpdate: ToolUpdate | undefined,
-  ctx: CodexImageGenerationContext,
-) {
+  ctx: ProductDesignImageGenerationContext,
+): Promise<ProductDesignImageGenerationResult> {
   if (ctx.model?.provider !== CODEX_PROVIDER) {
     throw new Error("codex_imagegen 仅允许 openai-codex 模型调用。");
   }
 
-  const token = await ctx.modelRegistry.getApiKeyForProvider(CODEX_PROVIDER);
+  const token = await ctx.getApiKeyForProvider(CODEX_PROVIDER);
   if (!token) {
     throw new Error("未找到 Codex OAuth 凭证，请先登录 Codex 订阅账号。");
   }
@@ -271,6 +334,7 @@ export async function generateCodexImage(
   const sessionId = randomUUID();
   const outputFormat = params.outputFormat ?? "png";
   const mimeType = mimeFromFormat(outputFormat);
+  const referenceImages = await prepareReferenceImages(params.referenceImages, ctx);
 
   onUpdate?.({
     content: [{ type: "text", text: `正在通过 Codex/${IMAGE_MODEL} 生成图片…` }],
@@ -290,7 +354,7 @@ export async function generateCodexImage(
       "x-client-request-id": sessionId,
       "User-Agent": `pi-web-chat (${process.platform}; ${process.arch})`,
     },
-    body: JSON.stringify(buildRequest(params, responseModel, sessionId)),
+    body: JSON.stringify(buildCodexImageRequest(params, responseModel, sessionId, referenceImages)),
     signal,
   });
 
@@ -303,7 +367,7 @@ export async function generateCodexImage(
   const savedPath = defaultOutputPath(image.id, outputFormat);
   await saveImage(savedPath, image.base64);
 
-  const details: CodexImageDetails = {
+  const details: Record<string, unknown> = {
     provider: CODEX_PROVIDER,
     imageModel: IMAGE_MODEL,
     responseModel,
@@ -319,6 +383,8 @@ export async function generateCodexImage(
 
   return {
     image,
+    savedPath,
+    mimeType,
     details,
     text: [
       `已通过 Codex/${IMAGE_MODEL} 生成图片。`,
@@ -329,6 +395,11 @@ export async function generateCodexImage(
       .join("\n"),
   };
 }
+
+export const codexImageBackend: ProductDesignImageBackend = {
+  id: CODEX_IMAGEGEN_BACKEND_ID,
+  generate: generateCodexImage,
+};
 
 function syncToolAvailability(pi: ExtensionAPI, model: { provider?: string } | undefined): void {
   const active = pi.getActiveTools();
@@ -358,16 +429,23 @@ export function createCodexImagegenExtension(): InlineExtension {
         ],
         parameters: IMAGEGEN_PARAMETERS,
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
-          const result = await generateCodexImage(
+          const result = await codexImageBackend.generate(
             params,
             signal,
             onUpdate as ToolUpdate | undefined,
-            ctx,
+            {
+              cwd: ctx.cwd,
+              model: ctx.model
+                ? { provider: ctx.model.provider, id: ctx.model.id }
+                : undefined,
+              getApiKeyForProvider: (provider) => ctx.modelRegistry.getApiKeyForProvider(provider),
+              resolveArtifactPath: resolveArtifactRef,
+            },
           );
           return {
             content: [
               { type: "text", text: result.text },
-              { type: "image", data: result.image.base64, mimeType: result.details.mimeType },
+              { type: "image", data: result.image.base64, mimeType: result.mimeType },
             ],
             details: result.details,
           };

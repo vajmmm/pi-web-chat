@@ -2,10 +2,9 @@ import type { MainModelCapabilities } from "../../shared/protocol.ts";
 import {
   CODEX_IMAGEGEN_BACKEND_ID,
   CODEX_PROVIDER,
-  generateCodexImage,
-  type CodexImagegenParams,
-  type CodexImageGenerationContext,
+  codexImageBackend,
 } from "../codex-imagegen-extension.ts";
+import type { ProductDesignImageBackend } from "../product-design-image-backend.ts";
 
 export const PRODUCT_DESIGN_SKILL_NAME = "product-design";
 export const PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME = "product_design_imagegen";
@@ -16,17 +15,6 @@ export type MainModelIdentity = {
   id: string;
 };
 
-export type ProductDesignImageGenerationContext = CodexImageGenerationContext;
-export type ProductDesignImageGenerationParams = CodexImagegenParams;
-export type ProductDesignImageGenerationResult = Awaited<ReturnType<typeof generateCodexImage>>;
-export type ProductDesignImageGeneration = (
-  params: ProductDesignImageGenerationParams,
-  signal: AbortSignal | undefined,
-  onUpdate:
-    | ((result: { content: Array<{ type: "text"; text: string }>; details?: unknown }) => void)
-    | undefined,
-  ctx: ProductDesignImageGenerationContext,
-) => Promise<ProductDesignImageGenerationResult>;
 
 export interface MainModelCapabilityBinding {
   id: string;
@@ -35,9 +23,8 @@ export interface MainModelCapabilityBinding {
     modelIds?: readonly string[];
   };
   capabilities: MainModelCapabilities;
-  imageGenerationBackend?: string;
   nativeImageGenerationTool?: string;
-  imageGeneration?: ProductDesignImageGeneration;
+  imageGeneration?: ProductDesignImageBackend;
 }
 
 const bindings: MainModelCapabilityBinding[] = [];
@@ -103,7 +90,6 @@ registerMainModelCapabilityBinding({
     imageInput: true,
     imageGeneration: true,
   },
-  imageGenerationBackend: CODEX_IMAGEGEN_BACKEND_ID,
   nativeImageGenerationTool: "codex_imagegen",
-  imageGeneration: generateCodexImage,
+  imageGeneration: codexImageBackend,
 });

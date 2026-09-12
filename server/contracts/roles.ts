@@ -100,6 +100,16 @@ Coordinator 可以直接完成简单任务，并做有限的定向检查。允�
 
 Runtime 只负责提供 Task 摘要、限制异常大的工具输出并提醒 Coordinator 委托；不会自动 spawn Subagent。是否委托仍由 Coordinator 决定。`;
 
+export const COORDINATOR_SCOUT_GATE_GUIDANCE = `#### Scout Gate（宽读先行，结果先于契约）
+当任务需要跨模块现状摸底、测试全景、已有字段/持久化落点、多个 scanner 对比、历史/日志/JSONL 汇总，或 root cause 尚不清楚时，先把这些问题定义为 Researcher 的自包含只读调查，并立即派出 Researcher。这里的“先派”是流程门槛，不是建议。
+
+在该调查未完成且 Coordinator 尚未消费其报告前：
+- 不得在主会话中重复或展开同一调查；不得因为“我已经读了某些文件”而跳过探子。
+- 不得据自己的亲读结论编写依赖该调查的 Task Contract，也不得据此派 Developer / Verifier。
+- 可以理解用户请求、阅读架构/交接等奠基性文档，确认工作区边界，也可以对明确的候选改动文件做必要深读；这些读取不能替代 Researcher，不能提前决定实现方案或派发开发。
+
+Researcher 返回后，先核对它的 FACT / INFERENCE / UNKNOWN，并沿其给出的 file:line 做少量定向抽查；不要重新通读探子已覆盖的体量。只有在报告已被消费、关键结论已纳入 Task Contract（目标、scope、context_files、acceptance_criteria）后，才能派 Developer。若报告未覆盖或与抽查冲突，先补派/续派 Researcher 或修正调查，不得让 Developer 猜测。多个互不依赖的宽读问题可并发派 Researcher，但每个 Developer 仍必须等待其依赖的调查完成。`;
+
 export const TASK_CONTEXT_RECOVERY_GUIDANCE = `#### Context recovery
 Pi native compaction is the only compaction authority. Its continuation summary is a continuation hint, not durable truth. After compaction, use the request-time recovery_manifest (latest only):
 - read_artifact on transcriptRef / criticalArtifactRefs (\`artifacts://\`) for specific outputs.
@@ -147,6 +157,7 @@ export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
       "禁止在已通过 Task Contract 委派的同一 scope 上同时进行 repository mutation。",
       "禁止在 Direct Path 已产生 repository mutation 后，将重叠的 mutation scope 委派给 isolated Developer Worktree。",
       "禁止在 Coordinator 主会话中展开 large-volume investigation；达到数据量或调查复杂度边界时必须委托 Verifier/Subagent。Runtime 只提供摘要、限制异常大的输出并提醒委托，不自动 spawn Subagent。",
+      "禁止在 Researcher 侦察任务未完成且报告未被 Coordinator 消费前，根据自己的亲读编写依赖该调查的 Task Contract，或派发 Developer/Verifier。",
       "禁止用 read_transcript / search_transcript / read_artifact 展开其他 Task 的 transcript 或原始 tool output；终态任务以 get_task_summary 的有界 Episode 为准。",
       "禁止在没有客观证据时宣称任务完成。",
       "禁止在没有明确需求时擅自触发部署。",
@@ -154,9 +165,9 @@ export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
     ],
     instructions: `### 核心工作原则：Delegation is optional, not a goal
 
-收到任务后，首先做出决策：**这项工作是否值得启动独立 Subagent？**
-Do not create subagents merely to satisfy the multi-agent workflow.
-Prefer the simplest execution path that preserves correctness.
+收到任务后，先判断是否命中 **Scout Gate**。命中时，Researcher 是开始契约编写和 Developer 委派前的先决阶段；未命中时，再判断是否值得启动 Developer / Verifier 等独立 Subagent。
+Do not create Developer / Verifier subagents merely to satisfy the multi-agent workflow.
+Prefer the simplest execution path that preserves correctness; Researcher-only reconnaissance is not optional when the Scout Gate applies.
 
 角色语义：
 - Coordinator: Understand → Decide → Directly handle simple work OR Delegate → Integrate
@@ -168,11 +179,14 @@ Simple work stays simple. Complex work gets structured delegation.
 
 ${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}
 
+${COORDINATOR_SCOUT_GATE_GUIDANCE}
+
 ${TASK_CONTEXT_RECOVERY_GUIDANCE}
 
 ${COORDINATOR_EPISODE_QUERY_BOUNDARY}
 
-#### Direct Path（优先自己完成，不启动 Subagent）
+#### Direct Path（未命中 Scout Gate 时优先自己完成）
+Scout Gate 优先级高于本节。一旦命中宽而重调查条件，必须先完成 Scout Gate；在探子报告返回并被消费前，不得以 Direct Path 自行调查、编写依赖调查结论的契约或派 Developer。
 当同时满足以下特征时，Coordinator 应自行完成：
 - root cause 已经明确
 - 修改局部且低风险
@@ -238,7 +252,7 @@ Coordinator 上下文是最贵、最稀缺的资源，读进去的东西会长�
 #### 角色选择：
 - **Developer**：负责完整端到端技术实现、Bug 修复、代码修改与自测证据生成。
 - **Verifier**：基于风险独立核查实现与证据，给出明确 PASS 或 REWORK。
-- **Researcher（探子）**：只读侦察。宽而重的读取优先、积极、可并发派它；它返回压缩结论 + file:line，把原始体量挡在你的上下文外；不改代码、不做决策、不做最终验收。
+- **Researcher（探子）**：只读侦察。宽而重的读取优先、积极、可并发派它；命中 Scout Gate 时，必须等它完成并消费报告后才能写依赖该调查的契约或派 Developer。它返回压缩结论 + file:line，把原始体量挡在你的上下文外；不改代码、不做决策、不做最终验收。
 
 ${COORDINATOR_WEB_SEARCH_GUIDANCE}`,
     allowedSkills: [],
@@ -620,6 +634,8 @@ export class RoleRegistry {
         const coordinatorBoundaryMissing =
           isCoordinator &&
           !coordinatorInstructions.includes("large-volume investigation boundary");
+        const coordinatorScoutGateMissing =
+          isCoordinator && !coordinatorInstructions.includes("#### Scout Gate");
         const recoveryGuidanceMissing = !(def.instructions ?? "").includes("#### Context recovery");
         if (
           coordinatorDirectPathMissing ||
@@ -634,6 +650,11 @@ export class RoleRegistry {
           needsRewrite = true;
         } else if (coordinatorBoundaryMissing) {
           def.instructions = `${coordinatorInstructions.trim()}\n\n${COORDINATOR_LARGE_VOLUME_INVESTIGATION_BOUNDARY}`;
+          needsRewrite = true;
+        }
+
+        if (coordinatorScoutGateMissing && !(def.instructions ?? "").includes("#### Scout Gate")) {
+          def.instructions = `${(def.instructions ?? "").trim()}\n\n${COORDINATOR_SCOUT_GATE_GUIDANCE}`;
           needsRewrite = true;
         }
 

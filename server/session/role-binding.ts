@@ -46,13 +46,18 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
       PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME,
     ]);
     const nativeImageTool = resolveMainModelCapabilityBinding(session.model)?.nativeImageGenerationTool;
-    const activeTools = effectiveContext.runtime.activeTools.filter(
-      (toolName) => toolName !== nativeImageTool && !productDesignTools.has(toolName),
+    const hasAssignedProductDesignSkill = hasProductDesignSkill(
+      effectiveContext.assignedSkills.map((s) => s.name),
     );
-    if (nativeImageTool) activeTools.push(nativeImageTool);
-    if (productDesignAvailable && hasProductDesignSkill(effectiveContext.assignedSkills.map((s) => s.name))) {
-      activeTools.push(PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME, PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME);
-    }
+    const activeTools = effectiveContext.runtime.activeTools.filter((toolName) => {
+      if (toolName === nativeImageTool) {
+        return capabilities.imageGeneration;
+      }
+      if (productDesignTools.has(toolName)) {
+        return productDesignAvailable && hasAssignedProductDesignSkill;
+      }
+      return true;
+    });
     session.setActiveToolsByName(activeTools);
   }
 

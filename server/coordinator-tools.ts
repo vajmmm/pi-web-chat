@@ -371,6 +371,8 @@ export function createCoordinatorExtension(
             "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具列表（核心角色为 developer、verifier、researcher）；",
             "【任务粒度与拆分原则】遵循“Prefer fewer, larger, behavior-complete tasks”，避免机械拆解缺乏独立验证与闭环的微任务。能独立调查、独立验证、独立交付的完整行为闭环拆为 Subagent Task（例如派发给 Developer 或 Researcher）；高度耦合需共享深入上下文的子目标保持单任务，不拆分；跨 Task 通过 TaskEpisodeView、ReusableSubagent Knowledge、workspace context_files 与 commit/path 传递结论。不要把其他 Task 的 artifacts:// 交给子任务 read_artifact；Coordinator 也不要用 read_transcript / search_transcript / read_artifact 展开其他 Task 的 transcript；",
             "可连续多次调用 spawn_subagent 以并行启动多个独立的子智能体，各子任务异步执行；",
+            "【Scout Gate】如果任务需要跨模块摸底、测试全景、字段/持久化落点、多个 scanner 对比或大量历史/日志分析，先派 Researcher 探子；探子完成且 Coordinator 消费报告前，不得重复同一调查、编写依赖调查结论的 Task Contract，或派 Developer / Verifier。可以在等待期间阅读奠基性文档和明确候选改动文件，但不得用这些亲读替代探子结论。",
+            "【Scout Gate 流转】探子报告返回后，先按 FACT / INFERENCE / UNKNOWN 核对，并沿 file:line 做少量抽查；把关键结论写入目标、scope、context_files、acceptance_criteria 后，才能派 Developer。互不依赖的 Researcher 调查可以并发，但有依赖的 Developer 必须等待对应探子完成。",
             "支持传入结构化 Task Contract 字段 (如 expected_effects, acceptance_criteria, context_files, scope_include)；",
             "派发任务时，根据任务真实目标填写 expected_effects（例如 Verifier 核查分析填 ['analysis'] 或 ['test_execution']，Developer 实现代码填 ['code_change']）；",
             "【Inbox 暂存与流转】派发后无需阻塞等待，严禁使用 bash (如 sleep、轮询脚本、死循环检查 git log) 阻塞等待子任务！子任务完成后的 report 仅在 Coordinator Inbox 暂存，不自动打断或唤醒 Coordinator；用户可编辑、引导或取消；只有用户在界面点击引导后，才会在合法的下一 Coordinator Turn 注入；",

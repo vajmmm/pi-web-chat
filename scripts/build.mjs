@@ -5,7 +5,7 @@
  *   dist/index.js   — bundled Node server
  */
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -34,6 +34,9 @@ await esbuild.build({
   logLevel: "info",
 });
 
+console.log("▸ copying bundled Product Design skills…");
+cpSync(join(root, ".pi", "skills"), join(dist, ".pi", "skills"), { recursive: true });
+
 // Helpful marker for package consumers / debugging installs
 writeFileSync(
   join(dist, "package-meta.json"),
@@ -56,5 +59,9 @@ if (!existsSync(join(dist, "index.js"))) {
   console.error("build failed: dist/index.js missing");
   process.exit(1);
 }
+if (!existsSync(join(dist, ".pi", "skills", "product-design", "SKILL.md"))) {
+  console.error("build failed: bundled Product Design skill missing");
+  process.exit(1);
+}
 
-console.log("✓ build complete → dist/index.js + dist/public/");
+console.log("✓ build complete → dist/index.js + dist/public/ + dist/.pi/skills/");

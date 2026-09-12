@@ -1,9 +1,18 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { UISkillItem } from "../shared/protocol.ts";
 
 const HOME = homedir();
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+
+function bundledSkillDirectories(): string[] {
+  return [
+    join(MODULE_DIR, ".pi", "skills"),
+    join(MODULE_DIR, "..", ".pi", "skills"),
+  ];
+}
 
 function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -90,7 +99,14 @@ export function discoverAllSkills(cwd?: string): UISkillItem[] {
     }
   }
 
-  // 2. 项目级 skills (cwd/.agents/skills, cwd/.pi/skills)
+  // 2. 随 pi-web-chat 分发的 bundled skills。项目级 skill 随后覆盖它们。
+  for (const bundledPath of bundledSkillDirectories()) {
+    for (const s of scanSkillDirectory(bundledPath, "project")) {
+      map.set(s.name, s);
+    }
+  }
+
+  // 3. 项目级 skills (cwd/.agents/skills, cwd/.pi/skills)
   if (cwd) {
     const projectPaths = [
       join(cwd, ".agents", "skills"),
@@ -209,4 +225,3 @@ export function adjustSkillsInBasePrompt(basePrompt: string, allowedSkills: stri
   const xml = formatSelectedSkillsXml(allowedSkills, cwd);
   return xml ? `${cleaned}\n${xml}` : cleaned;
 }
-

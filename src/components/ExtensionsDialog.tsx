@@ -1,6 +1,7 @@
 import { Dialog } from "@base-ui-components/react/dialog";
 import type { UIExtensionInfo } from "../../shared/protocol";
 import { useExtensions } from "../lib/api";
+import { useChat } from "../lib/chat";
 import { useT } from "../lib/i18n";
 
 function DetailRow({ label, items }: { label: string; items: string[] }) {
@@ -23,7 +24,8 @@ export function ExtensionsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT();
-  const { data, refetch } = useExtensions(open);
+  const { snapshot } = useChat();
+  const { data, refetch } = useExtensions(open, snapshot?.sessionId);
   const extensions = data?.extensions ?? [];
   const errors = data?.errors ?? [];
 

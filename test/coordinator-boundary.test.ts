@@ -118,6 +118,8 @@ describe("Coordinator large-volume investigation boundary", () => {
     ].join("\n");
     assert.match(spawnText, /TaskEpisodeView/);
     assert.match(spawnText, /context_files/);
+    assert.match(spawnText, /Scout Gate/);
+    assert.match(spawnText, /探子完成且 Coordinator 消费报告前/);
     assert.doesNotMatch(spawnText, /由执行角色在其任务范围内用 read_artifact/);
     assert.doesNotMatch(spawnText, /read_artifact them/);
   });
@@ -128,6 +130,9 @@ describe("Coordinator large-volume investigation boundary", () => {
     assert.match(coordinator.instructions, /少量状态、错误摘要、短日志片段/);
     assert.match(coordinator.instructions, /大量日志\/JSONL\/历史记录/);
     assert.match(coordinator.instructions, /Verifier\/Subagent/);
+    assert.match(coordinator.instructions, /#### Scout Gate/);
+    assert.match(coordinator.instructions, /报告已被消费/);
+    assert.match(coordinator.instructions, /不得据自己的亲读结论编写依赖该调查的 Task Contract/);
     assert.doesNotMatch(coordinator.instructions, /禁止读取日志/);
     assert.ok(getRoleConfig("coordinator").allowedTools?.includes("get_task_summary"));
   });
@@ -330,6 +335,7 @@ describe("Coordinator large-volume investigation boundary", () => {
     RoleRegistry.getInstance().reload();
     const migrated = getRoleConfig("coordinator");
     assert.match(migrated.definition.instructions ?? "", /large-volume investigation boundary/);
+    assert.match(migrated.definition.instructions ?? "", /#### Scout Gate/);
     assert.match(migrated.definition.instructions ?? "", /Mutation Ownership/);
     assert.match(migrated.definition.instructions ?? "", /Direct Path/);
     assert.match(migrated.definition.instructions ?? "", /recovery_manifest/);
@@ -482,6 +488,8 @@ describe("Coordinator large-volume investigation boundary", () => {
     const migratedCoordinator = getRoleConfig("coordinator");
     const migratedDeveloper = getRoleConfig("developer");
     assert.match(migratedCoordinator.definition.instructions ?? "", /#### Context recovery/);
+    assert.match(migratedCoordinator.definition.instructions ?? "", /#### Scout Gate/);
+    assert.match(migratedCoordinator.definition.instructions ?? "", /报告已被消费/);
     assert.match(migratedCoordinator.definition.instructions ?? "", /get_task_summary/);
     assert.match(migratedCoordinator.definition.instructions ?? "", /TaskEpisodeView/);
     assert.doesNotMatch(migratedCoordinator.definition.instructions ?? "", /recovery_manifest\.boundary/);

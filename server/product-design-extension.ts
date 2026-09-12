@@ -10,6 +10,8 @@ import {
   PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME,
   resolveMainModelCapabilityBinding,
 } from "./session/capabilities.ts";
+import { resolveArtifactRef } from "./runtime-artifacts.ts";
+import type { ProductDesignImageGenerationUpdate } from "./product-design-image-backend.ts";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const DEFAULT_VIEWPORT = { width: 1440, height: 1000 };
@@ -20,6 +22,17 @@ const SCREENSHOT_PARAMETERS = Type.Object({
   height: Type.Optional(Type.Integer({ minimum: 240, maximum: 2400 })),
   fullPage: Type.Optional(Type.Boolean()),
 });
+
+const IMAGE_REFERENCE_PARAMETERS = Type.Union([
+  Type.Object({
+    path: Type.String({ minLength: 1, description: "本地图片文件路径。" }),
+    mimeType: Type.Optional(Type.String({ minLength: 1 })),
+  }),
+  Type.Object({
+    artifactRef: Type.String({ minLength: 1, description: "可解析为图片文件的 artifact 引用。" }),
+    mimeType: Type.Optional(Type.String({ minLength: 1 })),
+  }),
+]);
 
 function normalizeHostname(hostname: string): string {
   return hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -150,6 +163,7 @@ export function createProductDesignExtension(): InlineExtension {
             Type.Literal("medium"),
             Type.Literal("high"),
           ])),
+          referenceImages: Type.Optional(Type.Array(IMAGE_REFERENCE_PARAMETERS, { maxItems: 4 })),
         }),
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
           const capabilities = getMainSessionCapabilities(ctx.model);
@@ -169,21 +183,30 @@ export function createProductDesignExtension(): InlineExtension {
             };
           }
 
-          const result = await binding.imageGeneration(
-            params as any,
+          const result = await binding.imageGeneration.generate(
+            params,
             signal,
-            onUpdate as any,
-            ctx as any,
+            onUpdate as ProductDesignImageGenerationUpdate | undefined,
+            {
+              cwd: ctx.cwd,
+              model: ctx.model
+                ? { provider: ctx.model.provider, id: ctx.model.id }
+                : undefined,
+              getApiKeyForProvider: (provider) => ctx.modelRegistry.getApiKeyForProvider(provider),
+              resolveArtifactPath: resolveArtifactRef,
+            },
           );
           return {
             content: [
               { type: "text", text: result.text },
-              { type: "image", data: result.image.base64, mimeType: result.details.mimeType },
+              { type: "image", data: result.image.base64, mimeType: result.mimeType },
             ],
             details: {
               ...result.details,
+              savedPath: result.savedPath,
+              mimeType: result.mimeType,
               productDesign: true,
-              imageGenerationBackend: binding.imageGenerationBackend,
+              imageGenerationBackend: binding.imageGeneration.id,
             },
           };
         },

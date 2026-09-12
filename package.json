@@ -26,6 +26,7 @@
   "files": [
     "bin",
     "dist",
+    ".pi",
     "extensions",
     "patches",
     "LICENSE",

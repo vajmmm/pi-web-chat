@@ -135,10 +135,12 @@ export function useForkPoints(sessionId: string | null, enabled = true) {
   });
 }
 
-export function useExtensions(enabled = true) {
+export function useExtensions(enabled = true, sessionId?: string | null) {
   return useQuery({
-    queryKey: ["extensions"],
-    queryFn: () => fetchJson<UIExtensionsResponse>("/api/extensions"),
+    queryKey: ["extensions", sessionId ?? "current"],
+    queryFn: () => fetchJson<UIExtensionsResponse>(
+      `/api/extensions${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`,
+    ),
     enabled,
     staleTime: 0,
   });
@@ -289,19 +291,25 @@ export function usePromptInspection(sessionId?: string | null, enabled = true) {
   });
 }
 
-export function useAllTools() {
+export function useAllTools(sessionId?: string | null) {
   return useQuery({
-    queryKey: ["all-tools"],
-    queryFn: () => fetchJson<UIToolItem[]>("/api/tools"),
+    queryKey: ["all-tools", sessionId ?? "current"],
+    queryFn: () => fetchJson<UIToolItem[]>(
+      `/api/tools${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`,
+    ),
     staleTime: 10_000,
   });
 }
 
-export function useSkills(cwd?: string, enabled = true) {
+export function useSkills(cwd?: string, enabled = true, sessionId?: string | null) {
   return useQuery({
-    queryKey: ["skills", cwd ?? ""],
+    queryKey: ["skills", cwd ?? "", sessionId ?? "current"],
     queryFn: async () => {
-      const res = await fetch(`/api/skills${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
+      const params = new URLSearchParams();
+      if (cwd) params.set("cwd", cwd);
+      if (sessionId) params.set("session", sessionId);
+      const query = params.toString();
+      const res = await fetch(`/api/skills${query ? `?${query}` : ""}`);
       if (!res.ok) throw new Error("Failed to fetch skills");
       const data = (await res.json()) as UISkillsResponse;
       return data.skills ?? [];

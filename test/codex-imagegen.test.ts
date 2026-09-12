@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   CODEX_IMAGEGEN_TOOL_NAME,
   CODEX_PROVIDER,
   createCodexImagegenExtension,
+  generateCodexImage,
   parseCodexImageSse,
 } from "../server/codex-imagegen-extension.ts";
 import { serializeMessages } from "../server/serialize.ts";
@@ -103,5 +108,63 @@ describe("Codex image generation", () => {
     assert.deepEqual(messages[1]?.content, [
       { type: "image", dataUrl: "data:image/png;base64,aGVsbG8=" },
     ]);
+  });
+
+  it("将 Product Design reference image 作为 input_image 发送到 Codex backend", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-codex-reference-image-"));
+    const referencePath = join(root, "reference.png");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const originalFetch = globalThis.fetch;
+    const referenceBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    let requestBody: any;
+
+    writeFileSync(referencePath, Buffer.from(referenceBase64, "base64"));
+    process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(
+        `data: ${JSON.stringify({
+          type: "response.output_item.done",
+          item: { type: "image_generation_call", id: "img_reference_test", result: "aGVsbG8=" },
+        })}\n\n`,
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+
+    const token = `header.${Buffer.from(JSON.stringify({
+      "https://api.openai.com/auth": { chatgpt_account_id: "test-account" },
+    })).toString("base64url")}.signature`;
+    try {
+      const result = await generateCodexImage(
+        {
+          prompt: "redesign this interface",
+          thinking: "off",
+          referenceImages: [{ path: referencePath }, { artifactRef: "artifacts://reference.png" }],
+        },
+        undefined,
+        undefined,
+        {
+          cwd: root,
+          model: { provider: CODEX_PROVIDER, id: "gpt-5.5" },
+          getApiKeyForProvider: async () => token,
+          resolveArtifactPath: (ref) => ref === "artifacts://reference.png" ? referencePath : null,
+        },
+      );
+
+      const content = requestBody.input[0].content;
+      assert.equal(content[0].type, "input_text");
+      assert.deepEqual(content[1], {
+        type: "input_image",
+        image_url: `data:image/png;base64,${referenceBase64}`,
+      });
+      assert.deepEqual(content[2], content[1], "artifact reference 也必须进入 backend request");
+      assert.equal(result.savedPath.endsWith("img_reference_test.png"), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

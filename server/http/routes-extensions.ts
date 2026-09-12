@@ -20,15 +20,19 @@ export async function handleExtensionsRoutes(
   const entries = sessionRegistry.entries;
 
   if (url.pathname === "/api/extensions") {
-    const anyEntry = entries.values().next().value as SessionEntry | undefined;
-    if (!anyEntry) {
+    const requestedSessionId = url.searchParams.get("session");
+    const activeEntry =
+      requestedSessionId
+        ? entries.get(requestedSessionId)
+        : (entries.values().next().value as SessionEntry | undefined);
+    if (!activeEntry) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ extensions: [], errors: [] }));
       return true;
     }
-    const { extensions, errors } = anyEntry.runtime.session.resourceLoader.getExtensions();
+    const { extensions, errors } = activeEntry.runtime.session.resourceLoader.getExtensions();
     const productDesignAvailable = canUseProductDesign(
-      getMainSessionCapabilities(anyEntry.runtime.session.model),
+      getMainSessionCapabilities(activeEntry.runtime.session.model),
     );
     const shorten = (p: string) => (p.startsWith(HOME) ? `~${p.slice(HOME.length)}` : p);
     const list: UIExtensionInfo[] = extensions.map((ext) => {

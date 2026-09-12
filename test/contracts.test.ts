@@ -196,6 +196,18 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         "Coordinator instructions must define risk-based verification rather than mandatory verifier",
       );
       assert.ok(
+        coordinator.instructions?.includes("#### Scout Gate"),
+        "Coordinator instructions must define the Researcher-first gate",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("报告已被消费"),
+        "Coordinator must consume the Researcher report before contract/developer dispatch",
+      );
+      assert.ok(
+        coordinator.instructions?.includes("不得据自己的亲读结论编写依赖该调查的 Task Contract"),
+        "Coordinator must not use overlapping self-investigation to bypass the Scout Gate",
+      );
+      assert.ok(
         coordinator.responsibilities.some((r) => r.includes("Delegation is optional")),
         "Coordinator responsibilities must include 'Delegation is optional'",
       );
