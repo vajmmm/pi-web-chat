@@ -9,6 +9,7 @@ process.env.PI_CODING_AGENT_DIR = testAgentDir;
 
 import {
   canonicalizePath,
+  CHINESE_LANGUAGE_GUIDANCE,
   ConstraintResolver,
   getRoleDefinition,
   isPathContained,
@@ -291,6 +292,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       assert.ok(resCoordinator.systemPrompt);
       const parsed = JSON.parse(resCoordinator.systemPrompt);
       assert.equal(parsed.role, "coordinator");
+      assert.ok(parsed.shared_invariants.includes(CHINESE_LANGUAGE_GUIDANCE));
       assert.ok(parsed.role_constraint.responsibilities.length > 0);
       assert.ok(parsed.role_constraint.instructions.includes("Delegation is optional"));
 
@@ -304,6 +306,7 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       // 3. Switch to default role (Standard Mode)
       capturedRole = "default";
       const resDefault = await beforeStart({ systemPrompt: "base" });
+      assert.ok(resDefault.systemPrompt.includes(CHINESE_LANGUAGE_GUIDANCE));
       assert.ok(resDefault.systemPrompt.includes("You are the primary software engineering agent in Pi Standard Mode"));
       assert.ok(resDefault.systemPrompt.includes("base"));
     });
@@ -342,6 +345,8 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       const targetPhrase = "You are the primary software engineering agent in Pi Standard Mode";
       const matches = turn3.systemPrompt.split(targetPhrase).length - 1;
       assert.equal(matches, 1, `Expected target phrase to appear exactly 1 time in systemPrompt, but found ${matches} times`);
+      const languageGuidanceMatches = turn3.systemPrompt.split(CHINESE_LANGUAGE_GUIDANCE).length - 1;
+      assert.equal(languageGuidanceMatches, 1, "Expected language guidance to appear exactly once in systemPrompt");
       assert.ok(turn3.systemPrompt.includes("Pi Native Base Prompt\nTools & Guidelines"));
     });
   });

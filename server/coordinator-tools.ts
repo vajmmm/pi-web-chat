@@ -8,6 +8,7 @@ import {
 import type { AgentRole, MainModelCapabilities, UISubagentTask } from "../shared/protocol.ts";
 import {
   ConstraintResolver,
+  ensureChineseLanguageGuidance,
   formatWorkspaceContext,
   getAllRoleDefinitions,
   getRoleConfig,
@@ -303,7 +304,7 @@ export function createCoordinatorExtension(
           name: "get_task_summary",
           label: "获取 Task 摘要",
           description:
-            "按 taskId 获取一个属于当前 Coordinator 会话的有界 Task 状态视图。终态任务优先返回 TaskEpisodeView（Physical/Verification/Artifact Pointers/非权威 Agent 报告），不返回完整消息历史、stdout、JSONL 或 tool call history。",
+            "按 taskId 获取一个属于当前 Coordinator 会话的有界 Task 状态视图。终态任务优先返回 TaskEpisodeView（Physical/Verification/Artifact Pointers/非权威 Agent 报告），不返回完整消息历史、stdout、JSONL 或 tool call history。仅用于回顾已结束任务或跨任务交接，严禁用于轮询探测运行中的子任务状态。",
           promptSnippet: "获取单个 Task 的有界 Episode / 状态视图（终态优先），不是完整 transcript",
           parameters: Type.Object({
             taskId: Type.String({
@@ -365,7 +366,7 @@ export function createCoordinatorExtension(
           name: "spawn_subagent",
           label: "派发子任务",
           description:
-            "派发一个结构化契约子智能体任务。后台异步非阻塞执行（Developer / Verifier 在独立 Git 分支 Worktree 隔离运行，Researcher 在只读工作区执行）。子任务完成后成果将进入 Coordinator Inbox 暂存，不会打断当前对话，用户确认引导后由系统在后续轮次接入。跨 Task 传递 TaskEpisodeView 结论、workspace context_files 与 commit/path，不要把其他 Task 的 artifacts:// 交给子任务 read_artifact。",
+            "派发一个结构化契约子智能体任务。后台异步执行（Developer / Verifier 在独立 Git 分支 Worktree 隔离运行，Researcher 在只读工作区执行）。子任务完成后成果将由系统自动打断当前会话并强制直接注入主会话，无需且严禁手动轮询或探测子任务状态。跨 Task 传递 TaskEpisodeView 结论、workspace context_files 与 commit/path，不要把其他 Task 的 artifacts:// 交给子任务 read_artifact。",
           promptSnippet: "派发一个独立的异步子智能体任务。派发前可调用 list_available_roles 查看可用角色",
           promptGuidelines: [
             "派发子任务前可先调用 list_available_roles 查询系统可用角色与工具列表（核心角色为 developer、verifier、researcher）；",
@@ -375,7 +376,7 @@ export function createCoordinatorExtension(
             "【Scout Gate 流转】探子报告返回后，先按 FACT / INFERENCE / UNKNOWN 核对，并沿 file:line 做少量抽查；把关键结论写入目标、scope、context_files、acceptance_criteria 后，才能派 Developer。互不依赖的 Researcher 调查可以并发，但有依赖的 Developer 必须等待对应探子完成。",
             "支持传入结构化 Task Contract 字段 (如 expected_effects, acceptance_criteria, context_files, scope_include)；",
             "派发任务时，根据任务真实目标填写 expected_effects（例如 Verifier 核查分析填 ['analysis'] 或 ['test_execution']，Developer 实现代码填 ['code_change']）；",
-            "【Inbox 暂存与流转】派发后无需阻塞等待，严禁使用 bash (如 sleep、轮询脚本、死循环检查 git log) 阻塞等待子任务！子任务完成后的 report 仅在 Coordinator Inbox 暂存，不自动打断或唤醒 Coordinator；用户可编辑、引导或取消；只有用户在界面点击引导后，才会在合法的下一 Coordinator Turn 注入；",
+            "【自动注入与严禁探测】派发后无需且严禁使用 bash (如 sleep、轮询脚本、检查 git log) 或调用 get_task_summary / list_subagents 探测等待子任务结果！子任务执行完毕后，系统会自动打断当前会话并将子任务结果强制直接注入主会话。派发完毕后应立即结束当前轮次发言，等待系统自动注入结果；",
             "Prefer promotion before the first repository mutation。已经委派给 Subagent 的明确 scope，其 repository mutation ownership 属于该 Subagent；Coordinator 不得再同时对该 scope 做 edit/write。若 Direct Path 已产生 repository mutation，不得把重叠 scope 委派给 isolated Developer Worktree。",
             "子智能体默认继承主会话模型，除非角色配置或任务执行选项中显式指定了专属模型。",
           ],
@@ -521,7 +522,7 @@ export function createCoordinatorExtension(
                         message:
                           task.status === "blocked"
                             ? `子任务 [${task.taskId}] 已派发，因前置依赖尚未完成处于 blocked 挂起状态。前置依赖全部完成后将自动解除挂起。`
-                            : `子任务 [${task.taskId}] 已成功启动（异步执行中）。执行完毕后成果将进入 Coordinator Inbox 暂存，等待用户确认引导后在下一轮次注入，请勿使用 bash 轮询等待。`,
+                            : `子任务 [${task.taskId}] 已成功启动（异步执行中）。执行完毕后成果将由系统自动打断当前会话并强制直接注入主会话，请勿使用 bash、get_task_summary 或 list_subagents 探测轮询，请直接结束当前发言等待结果注入。`,
                       },
                       null,
                       2,
@@ -551,7 +552,7 @@ export function createCoordinatorExtension(
           name: "list_subagents",
           label: "列出子任务与可复用 Agent",
           description:
-            "列出当前主会话下的子任务状态（支持 status / limit 过滤），以及可 continue_subagent 的 Reusable Agents（含 topics / reuseCount / knowledge preview）。复用决策由 Coordinator 显式做出，Runtime 不做自动匹配。",
+            "列出当前主会话下的子任务状态（支持 status / limit 过滤），以及可 continue_subagent 的 Reusable Agents（含 topics / reuseCount / knowledge preview）。复用决策由 Coordinator 显式做出，Runtime 不做自动匹配。仅用于决策复用 Agent 或总结历史，严禁用于轮询探测运行中的子任务状态。",
           promptSnippet: "列出子任务状态（支持 status / limit 过滤）与可复用 Agent",
           parameters: Type.Object({
             status: Type.Optional(
@@ -678,7 +679,7 @@ export function createCoordinatorExtension(
           name: "continue_subagent",
           label: "复用智能体执行新任务",
           description:
-            "复用处于 idle_reusable 状态的 Subagent 知识执行新任务（新 Worktree + 新 Session + Knowledge 注入）。若仅是继续推进相关独立新任务，不要传入 rework_of_task_id；仅当本 Task 明确用于修复/重做某个历史失败 Task 时填写 rework_of_task_id。",
+            "复用处于 idle_reusable 状态的 Subagent 知识执行新任务（新 Worktree + 新 Session + Knowledge 注入）。执行完毕后成果由系统自动打断当前会话并强制直接注入主会话。若仅是继续推进相关独立新任务，不要传入 rework_of_task_id；仅当本 Task 明确用于修复/重做某个历史失败 Task 时填写 rework_of_task_id。",
           promptSnippet:
             "复用 idle_reusable Agent 执行新 Task（新 Worktree/Session + 注入短期知识）",
           parameters: Type.Object({
@@ -769,7 +770,7 @@ export function createCoordinatorExtension(
                         role: task.role,
                         branch: task.branchName,
                         worktree: task.worktreePath ?? null,
-                        message: `已复用 Agent [${task.agentId}] 启动新任务 [${task.taskId}]（新 Worktree + 新 Session + Knowledge 注入）。`,
+                        message: `已复用 Agent [${task.agentId}] 启动新任务 [${task.taskId}]（新 Worktree + 新 Session + Knowledge 注入）。执行完毕后成果将由系统自动打断当前会话并直接注入主会话，请直接结束当前发言等待结果注入。`,
                       },
                       null,
                       2,
@@ -844,7 +845,7 @@ export function createCoordinatorExtension(
 
         if (role === "default") {
           const def = getAllRoleDefinitions().find((r) => r.id === "default");
-          const behaviorPrompt = def?.instructions?.trim() || "";
+          const behaviorPrompt = ensureChineseLanguageGuidance(def?.instructions?.trim() || "");
           let nativePrompt = event.systemPrompt || "";
           if (behaviorPrompt && nativePrompt.startsWith(behaviorPrompt)) {
             nativePrompt = nativePrompt.slice(behaviorPrompt.length).trimStart();

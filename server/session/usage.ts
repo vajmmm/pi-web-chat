@@ -29,6 +29,54 @@ export function supportedThinkingLevels(model: unknown): UIThinkingLevel[] {
   });
 }
 
+const ESTIMATED_IMAGE_TOKENS = 1200;
+
+export function estimateMessageTokens(m: unknown): number {
+  if (!m || typeof m !== "object") return 0;
+  const msg = m as any;
+  if (
+    typeof msg.summary === "string" &&
+    (msg.role === "compactionSummary" || msg.role === "branchSummary")
+  ) {
+    return Math.ceil(msg.summary.length / 3.5);
+  }
+  if (msg.role === "bashExecution") {
+    const cmd = typeof msg.command === "string" ? msg.command : "";
+    const out = typeof msg.output === "string" ? msg.output : "";
+    return Math.ceil((cmd.length + out.length) / 3.5);
+  }
+
+  const content = msg.content;
+  if (typeof content === "string") {
+    return Math.ceil(content.length / 3.5);
+  }
+  if (Array.isArray(content)) {
+    let tokens = 0;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      if (part.type === "image") {
+        tokens += ESTIMATED_IMAGE_TOKENS;
+      } else if (part.type === "text" && typeof part.text === "string") {
+        tokens += Math.ceil(part.text.length / 3.5);
+      } else if (part.type === "thinking" && typeof part.thinking === "string") {
+        tokens += Math.ceil(part.thinking.length / 3.5);
+      } else if (part.type === "toolCall" || part.type === "tool_call") {
+        const name = typeof part.name === "string" ? part.name : "";
+        const args = part.arguments ? JSON.stringify(part.arguments) : "";
+        tokens += Math.ceil((name.length + args.length) / 3.5);
+      } else {
+        const clone = { ...part };
+        if ("data" in clone && typeof clone.data === "string" && clone.data.length > 500) {
+          clone.data = "[image/binary data]";
+        }
+        tokens += Math.ceil(JSON.stringify(clone).length / 3.5);
+      }
+    }
+    return tokens;
+  }
+  return Math.ceil(JSON.stringify(content ?? "").length / 3.5);
+}
+
 export function accumulateUsageFromMessages(messages: unknown[]): {
   input: number;
   output: number;
@@ -49,16 +97,27 @@ export function accumulateUsageFromMessages(messages: unknown[]): {
   let contextTokens = 0;
 
   let estimatedContextTokens = 0;
+  let latestCompactionTimestamp = 0;
+
   for (const m of messages as any[]) {
     if (!m || typeof m !== "object") continue;
-    // compactionSummary stores content in 'summary', not 'content'
-    const str =
-      typeof m.summary === "string" && m.role === "compactionSummary"
-        ? m.summary
-        : typeof m.content === "string"
-          ? m.content
-          : JSON.stringify(m.content ?? "");
-    estimatedContextTokens += Math.ceil(str.length / 3.5);
+
+    if (m.role === "compactionSummary") {
+      estimatedContextTokens = 0;
+      contextTokens = 0;
+      latestTurnTokens = 0;
+      const ts =
+        typeof m.timestamp === "number"
+          ? m.timestamp
+          : m.timestamp
+            ? new Date(m.timestamp).getTime()
+            : 0;
+      if (ts > latestCompactionTimestamp) {
+        latestCompactionTimestamp = ts;
+      }
+    }
+
+    estimatedContextTokens += estimateMessageTokens(m);
 
     const u = m.usage;
     if (!u || typeof u !== "object") continue;
@@ -74,17 +133,30 @@ export function accumulateUsageFromMessages(messages: unknown[]): {
     cacheRead += cr;
     cacheWrite += cw;
     cost += c;
-    latestTurnTokens = i + cr + o;
+
     // Only assistant messages carry meaningful context window occupancy (input + cacheRead).
-    // toolResult messages have usage from tool execution where input/cacheRead are 0,
-    // which would incorrectly overwrite the real context size.
-    if (m.role === "assistant") {
-      contextTokens = i + cr;
+    // ToolResult messages have usage from tool execution where input/cacheRead are 0.
+    // Error responses (stopReason === 'error') or zero-token responses must not wipe previously known valid context size.
+    const isValidUsage = (i + cr) > 0 && m.stopReason !== "error" && m.stopReason !== "aborted";
+    if (m.role === "assistant" && isValidUsage) {
+      const msgTs =
+        typeof m.timestamp === "number"
+          ? m.timestamp
+          : m.timestamp
+            ? new Date(m.timestamp).getTime()
+            : 0;
+      // When compaction has occurred, kept pre-compaction assistant messages carry stale
+      // pre-compaction usage and must not overwrite post-compaction context.
+      const isPostCompaction =
+        latestCompactionTimestamp === 0 || msgTs === 0 || msgTs > latestCompactionTimestamp;
+      if (isPostCompaction) {
+        contextTokens = i + cr;
+        latestTurnTokens = i + cr + o;
+      }
     }
   }
 
-  const hasCompaction = (messages as any[]).some((m) => m?.role === "compactionSummary");
-  if (hasCompaction && (contextTokens === 0 || estimatedContextTokens < contextTokens)) {
+  if (contextTokens === 0 && estimatedContextTokens > 0) {
     contextTokens = estimatedContextTokens;
   }
 

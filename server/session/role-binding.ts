@@ -3,6 +3,7 @@ import {
   CANONICAL_ROLES,
   ConstraintResolver,
   DEFAULT_ROLES_V2,
+  ensureChineseLanguageGuidance,
   isCanonicalRole,
   PromptAssembler,
 } from "../contracts/index.ts";
@@ -70,10 +71,11 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
     // 标准模式：Standard Mode Behavior + Pi Native System Prompt (含 skills 过滤)
     (session as any)._systemPromptOverride = undefined;
     const basePrompt = (session as any)._baseSystemPrompt || "";
-    const standardBehaviorPrompt =
+    const standardBehaviorPrompt = ensureChineseLanguageGuidance(
       effectiveContext.role.instructions?.trim() ||
-      DEFAULT_ROLES_V2.default.instructions?.trim() ||
-      "";
+        DEFAULT_ROLES_V2.default.instructions?.trim() ||
+        "",
+    );
 
     let cleanBasePrompt = basePrompt;
     if (standardBehaviorPrompt && cleanBasePrompt.startsWith(standardBehaviorPrompt)) {

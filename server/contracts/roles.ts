@@ -8,6 +8,7 @@ import type {
   RoleDefinition,
   UIThinkingLevel,
 } from "../../shared/protocol.ts";
+import { CHINESE_LANGUAGE_GUIDANCE, ensureChineseLanguageGuidance } from "./rules.ts";
 
 export type { RoleDefinition } from "../../shared/protocol.ts";
 
@@ -162,6 +163,7 @@ export const DEFAULT_ROLES_V2: Record<string, RoleDefinition> = {
       "禁止在没有客观证据时宣称任务完成。",
       "禁止在没有明确需求时擅自触发部署。",
       "禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree。",
+      "禁止在派发 Subagent 后使用 bash、list_subagents 或 get_task_summary 轮询探测子任务执行状态（子任务完成后系统会自动打断主会话并强制注入结果；派发后应立即结束当前发言等待系统唤醒）。",
     ],
     instructions: `### 核心工作原则：Delegation is optional, not a goal
 
@@ -399,7 +401,9 @@ ${RESEARCHER_WEB_SEARCH_GUIDANCE}`,
       "根据用户需求自主进行代码阅读、编辑、命令执行、测试验证与端到端交付。",
     ],
     strictProhibitions: [],
-    instructions: `You are the primary software engineering agent in Pi Standard Mode.
+    instructions: `${CHINESE_LANGUAGE_GUIDANCE}
+
+You are the primary software engineering agent in Pi Standard Mode.
 
 Own the user's task end-to-end within the current workspace. Work autonomously
 within the requested scope, use available evidence and tools, make changes when
@@ -523,13 +527,15 @@ export function convertDefinitionToConfig(
     definitionVersion: def.definitionVersion ?? CURRENT_ROLE_DEFINITION_VERSION,
   };
 
+  const compatibilitySystemPrompt = `${def.description}\n\n[Responsibilities]\n${(def.responsibilities || []).map((r) => `- ${r}`).join("\n")}\n\n[Strict Prohibitions]\n${(def.strictProhibitions || []).map((p) => `- ${p}`).join("\n")}${def.instructions ? `\n\n[Instructions]\n${def.instructions}` : ""}`;
+
   return {
     schemaVersion: 2,
     roleDefinitionVersion: cleanDef.definitionVersion ?? CURRENT_ROLE_DEFINITION_VERSION,
     id: def.id,
     name: def.name,
     description: def.description,
-    systemPrompt: `${def.description}\n\n[Responsibilities]\n${(def.responsibilities || []).map((r) => `- ${r}`).join("\n")}\n\n[Strict Prohibitions]\n${(def.strictProhibitions || []).map((p) => `- ${p}`).join("\n")}${def.instructions ? `\n\n[Instructions]\n${def.instructions}` : ""}`,
+    systemPrompt: ensureChineseLanguageGuidance(compatibilitySystemPrompt),
     model: def.defaultModel,
     allowedTools: resolvedTools,
     allowedSkills: def.allowedSkills ? [...def.allowedSkills] : [],

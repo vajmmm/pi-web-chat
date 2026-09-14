@@ -10,6 +10,7 @@ process.env.PI_CODING_AGENT_DIR = testAgentDir;
 
 import {
   canonicalizePath,
+  CHINESE_LANGUAGE_GUIDANCE,
   ConstraintResolver,
   DEFAULT_ROLES_V2,
   convertDefinitionToConfig,
@@ -55,10 +56,25 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
 
   describe("1. Shared Invariants & Defaults", () => {
     it("should provide immutable non-overridable core invariants", () => {
-      assert.ok(SHARED_INVARIANTS.length === 4);
+      assert.ok(SHARED_INVARIANTS.length >= 5);
+      assert.ok(SHARED_INVARIANTS.includes(CHINESE_LANGUAGE_GUIDANCE));
+      assert.match(CHINESE_LANGUAGE_GUIDANCE, /中文回答/);
+      assert.match(CHINESE_LANGUAGE_GUIDANCE, /thinking/);
       assert.ok(SHARED_INVARIANTS.some((i) => i.includes("不得伪造文件内容")));
       assert.ok(SHARED_INVARIANTS.some((i) => i.includes("不得破坏、静默覆盖")));
       assert.ok(SHARED_INVARIANTS.some((i) => i.includes("不得在代码、提交信息、日志或回复中泄露 Secret")));
+    });
+
+    it("should include the Chinese language constraint in every role prompt projection", () => {
+      for (const role of CANONICAL_ROLES) {
+        const config = getRoleConfig(role);
+        assert.ok(config.systemPrompt.includes(CHINESE_LANGUAGE_GUIDANCE), `${role} config prompt must include language guidance`);
+
+        const context = ConstraintResolver.resolve({ role, cwd: "/tmp/project" });
+        const assembled = PromptAssembler.assemble(context);
+        const parsed = JSON.parse(assembled.systemPrompt);
+        assert.ok(parsed.shared_invariants.includes(CHINESE_LANGUAGE_GUIDANCE), `${role} runtime prompt must include language guidance`);
+      }
     });
 
     it("should provide concise engineering defaults including baseline-first for fixing tasks and symbol-first evidence", () => {

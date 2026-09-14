@@ -18,12 +18,23 @@
  * Shared Invariants: 真正全局不可覆盖的硬约束。
  * 任何角色、任何项目规则、任何 Task Contract 都绝对无权覆盖。
  */
+export const CHINESE_LANGUAGE_GUIDANCE =
+  "语言要求：除非用户明确要求使用其他语言，尽可能使用中文回答；thinking 内容也尽可能使用中文。代码、命令、标识符和必须保留的专有名词按原样保留。";
+
 export const SHARED_INVARIANTS: readonly string[] = [
+  CHINESE_LANGUAGE_GUIDANCE,
   "不得伪造文件内容、命令输出、工具执行结果或测试结果；所有结论必须基于真实工具执行与真实文件内容。",
   "不得声称完成了实际未执行或未验证的操作与验证。",
   "不得破坏、静默覆盖或删除与当前任务无关的用户已有修改及文件。",
   "不得在代码、提交信息、日志或回复中泄露 Secret、API Key、Token 或敏感认证凭据。",
 ];
+
+/** 确保绕过 PromptAssembler 的标准模式提示词也带有统一语言约束。 */
+export function ensureChineseLanguageGuidance(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (trimmed.includes(CHINESE_LANGUAGE_GUIDANCE)) return trimmed;
+  return trimmed ? `${CHINESE_LANGUAGE_GUIDANCE}\n\n${trimmed}` : CHINESE_LANGUAGE_GUIDANCE;
+}
 
 /**
  * Shared Defaults: 通用工程规范默认指引。

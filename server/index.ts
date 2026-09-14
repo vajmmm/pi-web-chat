@@ -58,6 +58,7 @@ import {
 import { buildSnapshot } from "./session/snapshot.ts";
 import { handleHttpRequest, type ServerContext } from "./http/index.ts";
 import { getMainSessionCapabilities } from "./session/capabilities.ts";
+import { SubagentReportDispatcher } from "./subagent/report-dispatcher.ts";
 
 const PORT = Number(process.env.PORT ?? 3141);
 // Default to loopback — this server has no auth and can drive a coding agent.
@@ -114,6 +115,31 @@ try {
   /* best effort on startup */
 }
 
+const sessionRegistry = new SessionRegistry();
+const entries = sessionRegistry.entries;
+const wsEntry = sessionRegistry.wsEntry;
+sessionRegistry.isDeleting = (id) => subagentManager.isDeleting(id) || isPendingDeletion(id);
+
+sessionRegistry.startIdlePruning((sessionId) => {
+  if (isPendingDeletion(sessionId) || subagentManager.isDeleting(sessionId)) return false;
+  if (subagentManager.hasActiveTasksForParent(sessionId)) return false;
+  if (subagentManager.isCoordinatorActive(sessionId)) return false;
+  const entry = sessionRegistry.get(sessionId);
+  if (entry?.queuedMessages && entry.queuedMessages.length > 0) return false;
+  return true;
+});
+
+function broadcastSnapshot(entry: SessionEntry) {
+  broadcastEntrySnapshot(entry, subagentManager);
+}
+
+const subagentReportDispatcher = new SubagentReportDispatcher({
+  sessionRegistry,
+  subagentManager,
+  isPendingDeletion,
+  broadcastSnapshot,
+});
+
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   // A runtime exists before switchSession() reveals the canonical session ID. Never
   // invent a temporary artifact scope: event handlers resolve this bound scope only.
@@ -167,46 +193,7 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
               metadata?: { kind?: "terminal" | "blocker" },
             ) => {
               if (!currentEntry) return;
-              broadcastTo(currentEntry, { type: "subagent_reported", task, reportText });
-
-              if (subagentManager.isDeleting(currentEntry.id) || isPendingDeletion(currentEntry.id)) {
-                return;
-              }
-
-              const session = currentEntry.runtime.session;
-              const isBlocker = metadata?.kind === "blocker";
-              const mode = isBlocker ? "steer" : "followUp";
-
-              if (session.isStreaming) {
-                const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                if (!currentEntry.queuedMessages) currentEntry.queuedMessages = [];
-                currentEntry.queuedMessages.push({
-                  id,
-                  text: reportText,
-                  mode,
-                  createdAt: new Date().toISOString(),
-                  source: "subagent",
-                  taskId: task.taskId,
-                  taskTitle: task.taskTitle,
-                  role: task.role,
-                  taskStatus: task.status,
-                  kind: isBlocker ? "subagent_blocker" : "subagent_terminal",
-                });
-                if (isBlocker) {
-                  await session.steer(reportText);
-                } else {
-                  await session.followUp(reportText);
-                }
-                broadcastSnapshot(currentEntry);
-              } else {
-                sessionRegistry.trackInFlightOp(currentEntry.id, async () => {
-                  try {
-                    await session.prompt(reportText);
-                  } catch (err) {
-                    console.error(`[onReport] Failed to prompt report for ${currentEntry.id}:`, err);
-                  }
-                });
-              }
+              await subagentReportDispatcher.handleReport(currentEntry, task, reportText, metadata);
             },
           };
         }),
@@ -235,24 +222,6 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
     diagnostics: services.diagnostics,
   };
 };
-
-const sessionRegistry = new SessionRegistry();
-const entries = sessionRegistry.entries;
-const wsEntry = sessionRegistry.wsEntry;
-sessionRegistry.isDeleting = (id) => subagentManager.isDeleting(id) || isPendingDeletion(id);
-
-sessionRegistry.startIdlePruning((sessionId) => {
-  if (isPendingDeletion(sessionId) || subagentManager.isDeleting(sessionId)) return false;
-  if (subagentManager.hasActiveTasksForParent(sessionId)) return false;
-  if (subagentManager.isCoordinatorActive(sessionId)) return false;
-  const entry = sessionRegistry.get(sessionId);
-  if (entry?.queuedMessages && entry.queuedMessages.length > 0) return false;
-  return true;
-});
-
-function broadcastSnapshot(entry: SessionEntry) {
-  broadcastEntrySnapshot(entry, subagentManager);
-}
 
 async function createEntry(id: string | null, customCwd?: string): Promise<SessionEntry> {
   let effectiveCwd: string;
