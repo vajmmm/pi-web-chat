@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,7 @@ import {
 } from "./ws/index.ts";
 import { buildSnapshot } from "./session/snapshot.ts";
 import { handleHttpRequest, type ServerContext } from "./http/index.ts";
+import { isTrustedHost, isTrustedOrigin } from "./http/origin-guard.ts";
 import { getMainSessionCapabilities } from "./session/capabilities.ts";
 import { SubagentReportDispatcher } from "./subagent/report-dispatcher.ts";
 
@@ -68,6 +69,17 @@ const HOME = homedir();
 const DEFAULT_AGENT_CWD = join(HOME, ".pi", "web-chat");
 const AGENT_CWD = resolve(process.env.PI_WEB_CWD ?? DEFAULT_AGENT_CWD);
 mkdirSync(AGENT_CWD, { recursive: true });
+
+// Process-level safety net (S2): a single bad WebSocket frame, a missing
+// 'error' listener, or a rejected promise deep in a handler must never take the
+// whole coding-agent server down. Log and keep serving other connections
+// instead of exiting. Registered before any async work at import time.
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaughtException (kept alive):", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandledRejection (kept alive):", reason);
+});
 
 // Resolve static assets for both layouts:
 //   production package: <pkg>/dist/index.js  + <pkg>/dist/public/
@@ -352,9 +364,30 @@ const httpServer = createServer(async (req, res) => {
   await handleHttpRequest(req, res, serverContext);
 });
 
-const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: "/ws",
+  // CSWSH + DNS-rebinding guard at the handshake (S1): reject cross-site
+  // Origins and untrusted Host headers before the socket is established.
+  // Non-browser clients send no Origin and are allowed (isTrustedOrigin).
+  verifyClient: (info: { req: IncomingMessage }) =>
+    isTrustedOrigin(info.req) && isTrustedHost(info.req),
+});
+
+// Server-level error sink (S2): errors emitted on the WebSocketServer itself
+// (e.g. during upgrade) must not become an uncaughtException.
+wss.on("error", (err) => {
+  console.error("[server] WebSocketServer error:", err);
+});
 
 wss.on("connection", (ws, req) => {
+  // Per-socket error sink (S2): `ws` is an EventEmitter; an unhandled 'error'
+  // event would propagate as an uncaughtException and crash the process. Log
+  // and let the 'close' handler clean up.
+  ws.on("error", (err) => {
+    console.error("[server] WebSocket connection error:", err);
+  });
+
   const urlObj = new URL(req.url ?? "/ws", "http://localhost");
   const requested = urlObj.searchParams.get("session");
   const requestedCwd = urlObj.searchParams.get("cwd") || undefined;

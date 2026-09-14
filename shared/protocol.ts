@@ -468,6 +468,12 @@ export interface UICustomProvider {
   baseUrl: string;
   api: UICustomApi;
   apiKey?: string;
+  /**
+   * Set on outbound GET responses (apiKey is redacted server-side). Indicates
+   * whether a secret is configured so the UI can show an "already configured"
+   * state without ever receiving the value. Not consumed on write.
+   */
+  hasApiKey?: boolean;
   models: UICustomModel[];
 }
 

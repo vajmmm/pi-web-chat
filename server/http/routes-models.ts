@@ -15,6 +15,7 @@ import {
 import {
   probeCustomModels,
   readCustomModels,
+  sanitizeCustomModelsResponse,
   validateProviders,
   writeCustomModels,
 } from "../models-config.ts";
@@ -388,7 +389,8 @@ export async function handleModelsRoutes(
   if (url.pathname === "/api/custom-models") {
     if (req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-      res.end(JSON.stringify(readCustomModels()));
+      // Redact apiKey before it leaves the process (see sanitizeCustomModelsResponse).
+      res.end(JSON.stringify(sanitizeCustomModelsResponse(readCustomModels())));
       return true;
     }
     if (req.method === "PUT") {
@@ -408,8 +410,15 @@ export async function handleModelsRoutes(
         return true;
       }
       writeCustomModels(providers);
-      const warning = await ctx.reloadModelProviders(providers);
-      const result: UICustomModelsResponse = { ...readCustomModels(), warning };
+      // Reload from the persisted config (real keys, incl. any preserved on
+      // omit) rather than the request body, whose apiKey may be empty for
+      // untouched providers after GET redaction.
+      const persisted = readCustomModels();
+      const warning = await ctx.reloadModelProviders(persisted.providers);
+      const result: UICustomModelsResponse = {
+        ...sanitizeCustomModelsResponse(persisted),
+        warning,
+      };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(result));
       return true;

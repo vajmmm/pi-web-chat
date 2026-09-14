@@ -73,6 +73,25 @@ export function readCustomModels(): UICustomModelsResponse {
   return { path: shorten(modelsPath()), providers, parseError };
 }
 
+/**
+ * Redact provider secrets for outbound HTTP responses. The raw config retains
+ * `apiKey` for internal runtime/probe use; clients only need to know whether a
+ * key is configured (to render an "已配置" hint), never the value itself.
+ *
+ * Each provider's `apiKey` is dropped and replaced with `hasApiKey: boolean`.
+ */
+export function sanitizeCustomModelsResponse(
+  res: UICustomModelsResponse,
+): UICustomModelsResponse {
+  return {
+    ...res,
+    providers: res.providers.map((p) => {
+      const { apiKey, ...rest } = p;
+      return { ...rest, hasApiKey: Boolean(apiKey && apiKey.trim()) };
+    }),
+  };
+}
+
 export function validateProviders(providers: unknown): string | null {
   if (!Array.isArray(providers)) return "providers must be an array";
   const seen = new Set<string>();
@@ -134,8 +153,12 @@ export function writeCustomModels(providers: UICustomProvider[]): void {
     const entry: Json = { ...(prev ?? {}) };
     entry.baseUrl = p.baseUrl.trim();
     entry.api = p.api;
+    // Preserve a previously configured key when the request omits one. GET now
+    // redacts apiKey (sanitizeCustomModelsResponse), so the edit form submits an
+    // empty value for untouched providers — clearing it here would silently drop
+    // the stored secret. `entry` already carries prev.apiKey via the spread
+    // above, so we only overwrite when a non-empty key is provided.
     if (p.apiKey?.trim()) entry.apiKey = p.apiKey.trim();
-    else delete entry.apiKey;
     entry.models = p.models.map((m) =>
       mergeModel(
         prevModels.find((pm) => typeof pm?.id === "string" && pm.id === m.id.trim()),
