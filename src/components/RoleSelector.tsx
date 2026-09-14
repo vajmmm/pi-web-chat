@@ -1,8 +1,9 @@
 import { Menu } from "@base-ui-components/react/menu";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import type { AgentRole } from "../../shared/protocol";
 import { chatClient, useChat } from "../lib/chat";
-import { RolesDialog } from "./RolesDialog";
+import { useMountedOnce } from "../lib/useMountedOnce";
+import { LazyRolesDialog } from "./lazy-modals";
 
 const ROLES: { id: AgentRole; name: string; tag: string; description: string }[] = [
   {
@@ -22,6 +23,7 @@ const ROLES: { id: AgentRole; name: string; tag: string; description: string }[]
 export function RoleSelector() {
   const { snapshot } = useChat();
   const [rolesOpen, setRolesOpen] = useState(false);
+  const rolesMounted = useMountedOnce(rolesOpen);
   const activeRole: AgentRole = snapshot?.activeRole ?? "coordinator";
   const current = ROLES.find((r) => r.id === activeRole) ?? ROLES[0];
 
@@ -91,7 +93,11 @@ export function RoleSelector() {
         </Menu.Portal>
       </Menu.Root>
 
-      <RolesDialog open={rolesOpen} onOpenChange={setRolesOpen} />
+      {rolesMounted && (
+        <Suspense fallback={null}>
+          <LazyRolesDialog open={rolesOpen} onOpenChange={setRolesOpen} />
+        </Suspense>
+      )}
     </>
   );
 }

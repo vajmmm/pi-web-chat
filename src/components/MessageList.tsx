@@ -8,7 +8,7 @@ import {
 } from "../../shared/provider-error";
 import type { ActiveTool } from "../lib/chat";
 import { useT } from "../lib/i18n";
-import { Markdown } from "./Markdown";
+import { LazyMarkdown } from "./LazyMarkdown";
 
 export function ToolCallCard({ block }: { block: Extract<UIContentBlock, { type: "toolCall" }> }) {
   const args = block.args ? JSON.stringify(block.args, null, 2) : "";
@@ -84,7 +84,7 @@ export function Blocks({ blocks, markdown }: { blocks: UIContentBlock[]; markdow
               );
             }
             return markdown ? (
-              <Markdown key={i} text={b.text} />
+              <LazyMarkdown key={i} text={b.text} />
             ) : (
               <div key={i} className="whitespace-pre-wrap leading-relaxed break-words [overflow-wrap:anywhere]">
                 {b.text}
@@ -297,7 +297,7 @@ export function MessageList({
         )}
         {streamText && !looksLikeHtmlErrorPage(streamText) && (
           <div className="text-[15px]">
-            <Markdown text={streamText} />
+            <LazyMarkdown text={streamText} />
           </div>
         )}
         {activeTools.map((tool) => (

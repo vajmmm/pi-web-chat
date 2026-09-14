@@ -1,7 +1,7 @@
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { rehypeHighlightLite } from "../lib/rehype-highlight-lite";
 
 function remarkNoStrikethrough(this: unknown) {
   const data = (this as { data?: () => unknown }).data?.() as
@@ -52,7 +52,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     <div className="prose prose-neutral dark:prose-invert max-w-none text-[15px] leading-relaxed prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-pre:my-2 break-words [overflow-wrap:anywhere]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkNoStrikethrough]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={[rehypeHighlightLite]}
         components={{
           table: ({ node: _node, ...props }) => (
             <div className="overflow-x-auto">

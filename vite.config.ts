@@ -17,6 +17,21 @@ export default defineConfig({
   build: {
     outDir: "dist/public",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Split the always-eager vendor libs into cacheable chunks. Note: the
+        // lazily-imported heavy chunks (markdown/highlight stack, base-ui
+        // dialogs) are intentionally NOT listed here so Rollup keeps them out
+        // of the initial graph via their dynamic imports.
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return;
+          if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) {
+            return "vendor-react";
+          }
+          if (/node_modules\/@tanstack\//.test(id)) return "vendor-tanstack";
+        },
+      },
+    },
   },
   plugins: [
     react(),

@@ -1,16 +1,17 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { chatClient, useChat } from "../lib/chat";
 import { requestOpenSessionsDrawer } from "../lib/drawer";
 import { useT } from "../lib/i18n";
 import { useSidebarPinned } from "../lib/sidebar";
 import { useLeftEdgeSwipe } from "../lib/useEdgeSwipe";
+import { useMountedOnce } from "../lib/useMountedOnce";
 import { Composer } from "./Composer";
 import { CwdSelector } from "./CwdSelector";
+import { LazySubagentDrawer } from "./lazy-modals";
 import { MessageList } from "./MessageList";
 import { SessionsDrawer, SessionsSidebar } from "./SessionsDrawer";
 import { SettingsMenu } from "./SettingsMenu";
-import { SubagentDrawer } from "./SubagentDrawer";
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 
 function connectionDotClass(connection: "connecting" | "connected" | "disconnected"): string {
@@ -52,6 +53,7 @@ export function ChatPage() {
   } = useChat();
 
   const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const subagentsMounted = useMountedOnce(subagentsOpen);
   const isStreaming = snapshot?.isStreaming ?? false;
   const showConnectingOverlay = connection === "disconnected";
   const sidebarPinned = useSidebarPinned();
@@ -141,7 +143,11 @@ export function ChatPage() {
           </div>
         </header>
 
-        <SubagentDrawer open={subagentsOpen} onOpenChange={setSubagentsOpen} />
+        {subagentsMounted && (
+          <Suspense fallback={null}>
+            <LazySubagentDrawer open={subagentsOpen} onOpenChange={setSubagentsOpen} />
+          </Suspense>
+        )}
 
         {showConnectingOverlay ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">

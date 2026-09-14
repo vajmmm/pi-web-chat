@@ -1,15 +1,18 @@
 import { Menu } from "@base-ui-components/react/menu";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { isLocale, LOCALES, setLocale, useLocale, useT } from "../lib/i18n";
 import {
   setThemePreference,
   useThemePreference,
   type ThemePreference,
 } from "../lib/theme";
-import { ExtensionsDialog } from "./ExtensionsDialog";
-import { ForkDialog } from "./ForkDialog";
-import { ModelsDialog } from "./ModelsDialog";
-import { RolesDialog } from "./RolesDialog";
+import { useMountedOnce } from "../lib/useMountedOnce";
+import {
+  LazyExtensionsDialog,
+  LazyForkDialog,
+  LazyModelsDialog,
+  LazyRolesDialog,
+} from "./lazy-modals";
 
 const itemClass =
   "flex cursor-pointer items-center gap-2 px-3 py-2 text-xs text-ink outline-none data-[highlighted]:bg-hover";
@@ -22,6 +25,10 @@ export function SettingsMenu() {
   const [extensionsOpen, setExtensionsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [rolesOpen, setRolesOpen] = useState(false);
+  const forkMounted = useMountedOnce(forkOpen);
+  const extensionsMounted = useMountedOnce(extensionsOpen);
+  const modelsMounted = useMountedOnce(modelsOpen);
+  const rolesMounted = useMountedOnce(rolesOpen);
 
   const themeOptions: { value: ThemePreference; label: string }[] = [
     { value: "system", label: t("themeSystem") },
@@ -162,10 +169,26 @@ export function SettingsMenu() {
         </Menu.Portal>
       </Menu.Root>
 
-      <RolesDialog open={rolesOpen} onOpenChange={setRolesOpen} />
-      <ModelsDialog open={modelsOpen} onOpenChange={setModelsOpen} />
-      <ForkDialog open={forkOpen} onOpenChange={setForkOpen} />
-      <ExtensionsDialog open={extensionsOpen} onOpenChange={setExtensionsOpen} />
+      {rolesMounted && (
+        <Suspense fallback={null}>
+          <LazyRolesDialog open={rolesOpen} onOpenChange={setRolesOpen} />
+        </Suspense>
+      )}
+      {modelsMounted && (
+        <Suspense fallback={null}>
+          <LazyModelsDialog open={modelsOpen} onOpenChange={setModelsOpen} />
+        </Suspense>
+      )}
+      {forkMounted && (
+        <Suspense fallback={null}>
+          <LazyForkDialog open={forkOpen} onOpenChange={setForkOpen} />
+        </Suspense>
+      )}
+      {extensionsMounted && (
+        <Suspense fallback={null}>
+          <LazyExtensionsDialog open={extensionsOpen} onOpenChange={setExtensionsOpen} />
+        </Suspense>
+      )}
     </>
   );
 }

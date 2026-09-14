@@ -1,6 +1,5 @@
-import { Dialog } from "@base-ui-components/react/dialog";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UIProjectFolder, UIProjectItem, UISessionInfo } from "../../shared/protocol";
 import {
   deleteFolderApi,
@@ -17,9 +16,13 @@ import { chatClient, useChat } from "../lib/chat";
 import { onRequestOpenSessionsDrawer } from "../lib/drawer";
 import { useT } from "../lib/i18n";
 import { setSidebarPinned, useSidebarPinned } from "../lib/sidebar";
+import { useMountedOnce } from "../lib/useMountedOnce";
 import { CwdSelector } from "./CwdSelector";
-import { LLMTurnsModal } from "./LLMTurnsModal";
-import { PromptInspectorModal } from "./PromptInspectorModal";
+import {
+  LazyLLMTurnsModal,
+  LazyPromptInspectorModal,
+  LazySessionsDrawerDialog,
+} from "./lazy-modals";
 
 const EXPANDED_PROJECTS_KEY = "pi_expanded_projects";
 
@@ -377,7 +380,7 @@ function ProjectAccordionItem({
   );
 }
 
-function useSessionListSync(enabled: boolean) {
+export function useSessionListSync(enabled: boolean) {
   const invalidate = useInvalidateSessions();
   const { snapshot, sessionNameToken } = useChat();
   const sessionFile = snapshot?.sessionFile;
@@ -408,10 +411,11 @@ function useSessionListSync(enabled: boolean) {
   }, [enabled, isStreaming, invalidate]);
 }
 
-function SessionsPanel({
+export function SessionsPanel({
   currentSessionFile,
   docked,
   active = true,
+  title,
   onSelectSession,
   onClose,
   onDock,
@@ -419,6 +423,7 @@ function SessionsPanel({
   currentSessionFile?: string;
   docked?: boolean;
   active?: boolean;
+  title?: ReactNode;
   onSelectSession?: () => void;
   onClose?: () => void;
   onDock?: () => void;
@@ -440,6 +445,8 @@ function SessionsPanel({
   const [cwdSelectorOpen, setCwdSelectorOpen] = useState(false);
   const [llmTurnsOpen, setLlmTurnsOpen] = useState(false);
   const [promptInspectorOpen, setPromptInspectorOpen] = useState(false);
+  const llmTurnsMounted = useMountedOnce(llmTurnsOpen);
+  const promptInspectorMounted = useMountedOnce(promptInspectorOpen);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Map<string, { id: string; cwd?: string }>>(new Map());
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -654,9 +661,11 @@ function SessionsPanel({
               PI // CHAT
             </h2>
           ) : (
-            <Dialog.Title className="font-mono text-sm font-black tracking-widest text-ink">
-              PI // CHAT
-            </Dialog.Title>
+            title ?? (
+              <h2 className="font-mono text-sm font-black tracking-widest text-ink">
+                PI // CHAT
+              </h2>
+            )
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -892,12 +901,24 @@ function SessionsPanel({
         }}
       />
 
-      <LLMTurnsModal open={llmTurnsOpen} onOpenChange={setLlmTurnsOpen} sessionId={sessionId} />
-      <PromptInspectorModal
-        open={promptInspectorOpen}
-        onOpenChange={setPromptInspectorOpen}
-        sessionId={sessionId}
-      />
+      {llmTurnsMounted && (
+        <Suspense fallback={null}>
+          <LazyLLMTurnsModal
+            open={llmTurnsOpen}
+            onOpenChange={setLlmTurnsOpen}
+            sessionId={sessionId}
+          />
+        </Suspense>
+      )}
+      {promptInspectorMounted && (
+        <Suspense fallback={null}>
+          <LazyPromptInspectorModal
+            open={promptInspectorOpen}
+            onOpenChange={setPromptInspectorOpen}
+            sessionId={sessionId}
+          />
+        </Suspense>
+      )}
     </>
   );
 }
@@ -915,6 +936,7 @@ export function SessionsDrawer({ currentSessionFile }: { currentSessionFile?: st
   const [open, setOpen] = useState(false);
   const [instantHide, setInstantHide] = useState(false);
   const sidebarPinned = useSidebarPinned();
+  const dialogMounted = useMountedOnce(open);
 
   const dockFromDrawer = () => {
     setInstantHide(true);
@@ -931,36 +953,37 @@ export function SessionsDrawer({ currentSessionFile }: { currentSessionFile?: st
   }, [sidebarPinned]);
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (next) setInstantHide(false);
-        setOpen(next);
-      }}
-    >
-      <Dialog.Trigger
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setInstantHide(false);
+          setOpen(true);
+        }}
         className={`flex size-9 items-center justify-center rounded-lg text-faint transition-colors hover:bg-hover hover:text-ink ${
           sidebarPinned ? "md:hidden" : ""
         }`}
         aria-label={t("sessionList")}
       >
         <SidebarPanelIcon />
-      </Dialog.Trigger>
-      {!instantHide && (
-        <Dialog.Portal>
-          <Dialog.Backdrop className="fixed inset-0 bg-black/40 transition-opacity data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
-          <Dialog.Popup className="fixed inset-y-0 left-0 flex w-[82vw] max-w-xs flex-col bg-sidebar shadow-2xl outline-none transition-transform data-[starting-style]:-translate-x-full data-[ending-style]:-translate-x-full">
-            <SessionsPanel
-              currentSessionFile={currentSessionFile}
-              active={open}
-              onSelectSession={() => setOpen(false)}
-              onClose={() => setOpen(false)}
-              onDock={dockFromDrawer}
-            />
-          </Dialog.Popup>
-        </Dialog.Portal>
+      </button>
+      {dialogMounted && (
+        <Suspense fallback={null}>
+          <LazySessionsDrawerDialog
+            open={open}
+            onOpenChange={(next) => {
+              if (next) setInstantHide(false);
+              setOpen(next);
+            }}
+            hidePortal={instantHide}
+            currentSessionFile={currentSessionFile}
+            onSelectSession={() => setOpen(false)}
+            onClose={() => setOpen(false)}
+            onDock={dockFromDrawer}
+          />
+        </Suspense>
       )}
-    </Dialog.Root>
+    </>
   );
 }
 

@@ -42,6 +42,9 @@
     "start": "node bin/pi-web-chat.mjs",
     "typecheck": "tsc --noEmit",
     "verify:scroll": "node scripts/verify-scroll-bottom.mjs",
+    "verify:splitting": "node scripts/verify-code-splitting.mjs",
+    "verify:invalidate": "node scripts/verify-invalidate-loop.mjs",
+    "verify:highlight": "tsx scripts/verify-highlight-langs.ts",
     "postinstall": "patch-package",
     "prepack": "npm run build",
     "pack:check": "npm run build && npm pack --dry-run"
@@ -91,6 +94,7 @@
     "concurrently": "^9.0.0",
     "esbuild": "^0.28.1",
     "highlight.js": "^11.11.1",
+    "lowlight": "3.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

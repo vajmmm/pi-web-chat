@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import type {
   RoleConfig,
   UICustomModel,
@@ -43,10 +44,13 @@ export function useProjects(enabled = true) {
 
 export function useInvalidateProjects() {
   const qc = useQueryClient();
-  return () => {
+  // Stable identity across renders: callers put this in effect deps
+  // (e.g. useSessionListSync), so a fresh function per render would retrigger
+  // invalidate -> refetch -> rerender -> invalidate forever.
+  return useCallback(() => {
     qc.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
     qc.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
-  };
+  }, [qc]);
 }
 
 export async function deleteSessionApi(sessionId: string, cwd?: string): Promise<{ ok: boolean }> {
@@ -102,10 +106,12 @@ export function useSessions(enabled = true, cwd?: string) {
 
 export function useInvalidateSessions() {
   const qc = useQueryClient();
-  return () => {
+  // See useInvalidateProjects: must stay referentially stable so effects that
+  // depend on it do not re-run on every render (invalidate/refetch loop).
+  return useCallback(() => {
     qc.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
     qc.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
-  };
+  }, [qc]);
 }
 
 export const RUNNING_SESSIONS_QUERY_KEY = ["running-sessions"] as const;
@@ -227,16 +233,19 @@ export async function saveRolesConfig(
 
 export function useInvalidateRoles() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ROLES_QUERY_KEY });
+  return useCallback(() => qc.invalidateQueries({ queryKey: ROLES_QUERY_KEY }), [qc]);
 }
 
 export function useInvalidateModels() {
   const qc = useQueryClient();
-  return () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: MODELS_QUERY_KEY }),
-      qc.invalidateQueries({ queryKey: ROLE_MODELS_QUERY_KEY }),
-    ]);
+  return useCallback(
+    () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: MODELS_QUERY_KEY }),
+        qc.invalidateQueries({ queryKey: ROLE_MODELS_QUERY_KEY }),
+      ]),
+    [qc],
+  );
 }
 
 export async function validateCwd(cwd: string): Promise<UICwdValidateResponse> {
@@ -369,7 +378,10 @@ export function useSubscriptionModels(enabled = true) {
 
 export function useInvalidateSubscriptionModels() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: SUBSCRIPTION_MODELS_QUERY_KEY });
+  return useCallback(
+    () => qc.invalidateQueries({ queryKey: SUBSCRIPTION_MODELS_QUERY_KEY }),
+    [qc],
+  );
 }
 
 export async function addSubscriptionProvider(

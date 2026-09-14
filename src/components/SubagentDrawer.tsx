@@ -2,7 +2,7 @@ import { Dialog } from "@base-ui-components/react/dialog";
 import { useEffect, useState } from "react";
 import type { UISubagentTask } from "../../shared/protocol";
 import { chatClient, useChat } from "../lib/chat";
-import { Markdown } from "./Markdown";
+import { LazyMarkdown } from "./LazyMarkdown";
 import { Message } from "./MessageList";
 
 const roleNameMap: Record<string, string> = {
@@ -294,7 +294,7 @@ function SubagentConversationDialog({
                   </div>
                 </div>
                 <div className="text-[13px] text-ink leading-relaxed">
-                  <Markdown text={task.summary} />
+                  <LazyMarkdown text={task.summary} />
                 </div>
               </div>
             )}
