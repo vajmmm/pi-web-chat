@@ -41,6 +41,7 @@
     "build:web": "vite build",
     "start": "node bin/pi-web-chat.mjs",
     "typecheck": "tsc --noEmit",
+    "verify:scroll": "node scripts/verify-scroll-bottom.mjs",
     "postinstall": "patch-package",
     "prepack": "npm run build",
     "pack:check": "npm run build && npm pack --dry-run"

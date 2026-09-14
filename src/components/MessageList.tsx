@@ -168,30 +168,76 @@ export function MessageList({
 }) {
   const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
+  /**
+   * 底部跟随 스크롤 (스트리밍 중 "덜덜덜" 흔들림 방지):
+   *
+   * 1. 위로 올리려는 의도는 wheel/touch에서 동기로 해제한다.
+   *    - wheel: deltaY < 0 (ctrl+휠 핀치 줌 제외)
+   *    - touch: 손가락이 시작점보다 아래로 움직인 즉시 (임계값 없음).
+   * 2. 재고정은 진짜 바닥(여유 8px)에서만 한다.
+   * 3. snap 전에 "직전 렌더 시점에 바닥이었는지"를 확인한다. 렌더 이후엔
+   *    DOM이 이미 자랐으므로 직전 scrollHeight와 비교해야 한다.
+   * 4. 재고정을 다시 허용하는 신호는 두 가지뿐이다.
+   *    (a) 아래로 내리려는 동기 입력(wheel down / touch up). scroll 이벤트가
+   *        프레임 단위로 늦게 도착하는 동안에도 먼저 도착한다.
+   *    (b) 진짜 바닥(≤8px)에 닿은 scroll.
+   *    scrollTop이 증가했다는 이유로 재허용하면 안 된다: 직전 snap이 만든
+   *    지연된 scroll 이벤트(scrollTop 증가)가 사용자의 wheel-up 해제 직후
+   *    도착해 다시 고정시켜 버린다(위로 올렸는데 매 프레임 바닥으로 끌림).
+   *    이 경합이 없으면 다음 영구 고착이 생긴다: 사용자가 바닥으로
+   *    되돌아오는 도중 실제 scroll 이벤트는 늦게 도착하는데 그 사이
+   *    스트리밍 렌더가 내용을 먼저 키워버린다. 그러면 onScroll은 (자라난)
+   *    scrollHeight 기준으로 거리 > 8px를 보고 stick을 계속 false로 두고,
+   *    이후 렌더에서도 직전 scrollHeight가 이미 갱신되어 "바닥이었음"을
+   *    복구할 수 없어 바닥에 영영 붙지 못한다. 따라서 재고정 신호는
+   *    (a)의 동기 입력에서도 받아야 한다.
+   * 5. "바닥이었는지" 판정의 기준 높이는 직전 렌더 몇 프레임의 최소값을 쓴다.
+   *    스크롤은 브라우저 스레드에서 처리되므로, 바닥으로 가는 제스처가
+   *    메인 스레드가 이미 키워 둔 최신 레이아웃이 아니라 한두 프레임 전
+   *    레이아웃의 최대치로 clamp될 수 있다. 그 경우 scrollTop은 그 예전
+   *    최대치에 머무는데 직전 scrollHeight와 비교하면 거리가 커 보여 다시
+   *    붙지 못한다. 짧은 히스토리의 최소값과 비교하면 그 lag를 흡수한다.
+   */
   const stickToBottom = useRef(true);
-  const prevScrollHeight = useRef(0);
+  /** 최근 몇 렌더의 scrollHeight (스레드 스크롤 clamp lag 대응) */
+  const recentScrollHeights = useRef<number[]>([]);
+  const lastScrollTop = useRef(0);
   const touchStartY = useRef<number | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const scrollHeight = el.scrollHeight;
+    const history = recentScrollHeights.current;
+    const anchor = history.length > 0 ? Math.min(...history) : 0;
+    history.push(scrollHeight);
+    if (history.length > 3) history.shift();
     const wasAtBottom =
-      el.scrollTop + el.clientHeight >= prevScrollHeight.current - BOTTOM_TOLERANCE;
-    prevScrollHeight.current = el.scrollHeight;
+      el.scrollTop + el.clientHeight >= anchor - BOTTOM_TOLERANCE;
     if (stickToBottom.current && wasAtBottom) {
-      el.scrollTop = el.scrollHeight;
+      el.scrollTop = scrollHeight;
     }
   });
 
   const handleScroll = () => {
     const el = containerRef.current;
     if (!el) return;
-    stickToBottom.current =
+    const atBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_TOLERANCE;
+    if (atBottom) {
+      stickToBottom.current = true;
+    } else if (el.scrollTop < lastScrollTop.current) {
+      // 위로 이동 = 과거 내용 보기 → 해제
+      stickToBottom.current = false;
+    }
+    lastScrollTop.current = el.scrollTop;
   };
 
   const handleWheel = (e: WheelEvent) => {
-    if (!e.ctrlKey && e.deltaY < 0) stickToBottom.current = false;
+    if (e.ctrlKey || e.deltaY === 0) return;
+    // 위로 = 해제, 아래로 = 바닥으로 복귀 의도. 실제 snap은 여전히
+    // wasAtBottom(진짜 바닥)일 때만 일어나므로 과도한 고정은 없다.
+    stickToBottom.current = e.deltaY > 0;
   };
 
   const handleTouchStart = (e: TouchEvent) => {
@@ -201,8 +247,13 @@ export function MessageList({
   const handleTouchMove = (e: TouchEvent) => {
     if (touchStartY.current === null) return;
     const y = e.touches[0]?.clientY;
-    if (y != null && y > touchStartY.current) {
+    if (y == null) return;
+    // 손가락 아래로 = 내용 위로 = 과거 내용 보기. 첫 픽셀부터 해제.
+    // 손가락 위로 = 내용 아래로 = 바닥으로 복귀 의도.
+    if (y > touchStartY.current) {
       stickToBottom.current = false;
+    } else if (y < touchStartY.current) {
+      stickToBottom.current = true;
     }
   };
 
