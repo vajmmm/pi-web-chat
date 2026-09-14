@@ -36,6 +36,7 @@ export interface MainModelCapabilities {
   productDesign: boolean;
   imageInput: boolean;
   imageGeneration: boolean;
+  webSearch: boolean;
 }
 
 export type UIThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";

@@ -10,6 +10,7 @@ import {
 import { adjustSkillsInBasePrompt } from "../skills.ts";
 import {
   canUseProductDesign,
+  filterCapabilityGatedTools,
   getMainSessionCapabilities,
   hasProductDesignSkill,
   PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME,
@@ -50,7 +51,10 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
     const hasAssignedProductDesignSkill = hasProductDesignSkill(
       effectiveContext.assignedSkills.map((s) => s.name),
     );
-    const activeTools = effectiveContext.runtime.activeTools.filter((toolName) => {
+    const activeTools = filterCapabilityGatedTools(
+      effectiveContext.runtime.activeTools,
+      capabilities,
+    ).filter((toolName) => {
       if (toolName === nativeImageTool) {
         return capabilities.imageGeneration;
       }
@@ -98,7 +102,10 @@ export function applyRoleToSession(entry: SessionEntry, role: AgentRole): void {
     const runtimeModel = session.model
       ? { provider: String(session.model.provider), id: String(session.model.id) }
       : undefined;
-    const assembled = PromptAssembler.assemble(effectiveContext, { runtimeModel });
+    const assembled = PromptAssembler.assemble(effectiveContext, {
+      runtimeModel,
+      webSearchAvailable: capabilities.webSearch,
+    });
     (session as any)._systemPromptOverride = assembled.systemPrompt;
     session.agent.state.systemPrompt = assembled.systemPrompt;
   }

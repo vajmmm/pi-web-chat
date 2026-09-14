@@ -31,6 +31,10 @@ import {
   createTaskContextExtension,
   type TaskContextRuntimeState,
 } from "./compaction-evidence-index.ts";
+import {
+  filterCapabilityGatedTools,
+  getMainSessionCapabilities,
+} from "../session/capabilities.ts";
 
 export interface CreateSubagentRuntimeOptions {
   taskId: string;
@@ -140,6 +144,7 @@ function createAuthoritativePromptExtension(options: {
 
         const assembled = PromptAssembler.assemble(options.effectiveContext, {
           runtimeModel,
+          webSearchAvailable: getMainSessionCapabilities(runtimeModel).webSearch,
         });
         return { systemPrompt: assembled.systemPrompt };
       });
@@ -236,6 +241,9 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
               systemPromptOverride: () => {
                 const assembled = PromptAssembler.assemble(effectiveContext, {
                   runtimeModel: runtimeModelRef.current,
+                  webSearchAvailable: runtimeModelRef.current
+                    ? getMainSessionCapabilities(runtimeModelRef.current).webSearch
+                    : false,
                 });
                 return assembled.systemPrompt;
               },
@@ -323,7 +331,10 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
   }
 
   if (typeof session.setActiveToolsByName === "function") {
-      session.setActiveToolsByName([...effectiveContext.runtime.activeTools]);
+    const capabilities = getMainSessionCapabilities(session.model);
+    session.setActiveToolsByName(
+      filterCapabilityGatedTools(effectiveContext.runtime.activeTools, capabilities),
+    );
   }
 
   installTurnRecorderOnSession(session, () => taskId);

@@ -44,6 +44,28 @@ export type ExpectedEffect =
   | "artifact";
 
 /**
+ * 未显式提供 TaskContract 字段时的最小角色默认值。
+ * Researcher 的默认契约必须保持只读分析语义；其它角色沿用既有工程默认值。
+ */
+export function getDefaultTaskContractFields(
+  role: AgentRole,
+  implementationAcceptanceCriteria = ["完成指定实现并自测通过"],
+): Pick<TaskContract, "expectedEffects" | "scope" | "acceptanceCriteria"> {
+  if (role === "researcher") {
+    return {
+      expectedEffects: ["analysis"],
+      scope: { include: [], exclude: [] },
+      acceptanceCriteria: ["返回请求的事实结论、关键证据与出处"],
+    };
+  }
+
+  return {
+    scope: { include: ["*"], exclude: [] },
+    acceptanceCriteria: implementationAcceptanceCriteria,
+  };
+}
+
+/**
  * 任务运行时执行配置 (SubagentExecutionOptions)
  */
 export interface SubagentExecutionOptions {

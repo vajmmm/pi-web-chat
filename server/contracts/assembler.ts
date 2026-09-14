@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type { EffectiveContext } from "./resolver.ts";
+import { WEB_SEARCH_PROMPT_MARKER } from "./roles.ts";
+import { WEB_SEARCH_TOOL_NAME } from "../session/capabilities.ts";
 
 /** Authoritative runtime model after resolution/fallback. Never RoleConfig.defaultModel. */
 export interface RuntimeModelIdentity {
@@ -9,6 +11,8 @@ export interface RuntimeModelIdentity {
 
 export interface AssembleOptions {
   runtimeModel?: RuntimeModelIdentity | null;
+  /** 当前 runtime model 是否支持 web_search；未传时保留角色配置展示语义。 */
+  webSearchAvailable?: boolean;
 }
 
 export interface AssembledPromptResult {
@@ -35,6 +39,25 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function withoutWebSearchGuidance(instructions: string): string {
+  const markerStart = instructions.indexOf(WEB_SEARCH_PROMPT_MARKER);
+  let withoutSection = instructions;
+  if (markerStart >= 0) {
+    const nextHeading = instructions.indexOf(
+      "\n#### ",
+      markerStart + WEB_SEARCH_PROMPT_MARKER.length,
+    );
+    const sectionEnd = nextHeading >= 0 ? nextHeading : instructions.length;
+    withoutSection = `${instructions.slice(0, markerStart)}${instructions.slice(sectionEnd)}`;
+  }
+
+  return withoutSection
+    .split(/\r?\n/)
+    .filter((line) => !line.includes(WEB_SEARCH_TOOL_NAME))
+    .join("\n")
+    .trim();
+}
+
 /**
  * PromptAssembler: 提示词分层组装器
  *
@@ -57,6 +80,10 @@ export class PromptAssembler {
    * 组装高度稳定、跨 Task 可最大化命中 Prompt Cache 的分层系统提示词
    */
   public static assemble(context: EffectiveContext, options?: AssembleOptions): AssembledPromptResult {
+    const roleInstructions =
+      options?.webSearchAvailable === false && context.role.instructions
+        ? withoutWebSearchGuidance(context.role.instructions)
+        : context.role.instructions;
     // 构建纯粹稳定的结构化 JSON Payload
     const globalPayload: Record<string, unknown> = {
       system_runtime: "Pi Multi-Agent Harness",
@@ -69,7 +96,7 @@ export class PromptAssembler {
       role_constraint: {
         responsibilities: context.roleConstraints.responsibilities,
         strict_prohibitions: context.roleConstraints.strictProhibitions,
-        ...(context.role.instructions ? { instructions: context.role.instructions } : {}),
+        ...(roleInstructions ? { instructions: roleInstructions } : {}),
       },
       // Layer 3: 项目规则 (AGENTS.md)
       ...(context.projectRules.length > 0

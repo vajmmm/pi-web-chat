@@ -5,6 +5,7 @@ import type { UISubagentTask } from "../../shared/protocol.ts";
 import {
   CANONICAL_ROLES,
   ConstraintResolver,
+  getDefaultTaskContractFields,
   isCanonicalRole,
   isPathContained,
   resolveWorkspaceMode,
@@ -151,17 +152,19 @@ export async function continueAgent(mgr: SubagentManagerHost, options: ContinueS
 
     const reworkOfTaskId = options.taskContract?.reworkOfTaskId ?? options.reworkOfTaskId;
 
+    const contractDefaults = getDefaultTaskContractFields(agent.role);
     const contract: TaskContract = Object.freeze(structuredClone({
+      ...options.taskContract,
       taskId,
       parentSessionId: options.parentSessionId,
       role: agent.role,
-      goal: options.taskContract?.goal || options.taskPrompt,
-      scope: options.taskContract?.scope ?? { include: ["*"], exclude: [] },
+      goal: options.taskContract?.goal ?? options.taskPrompt,
+      scope: options.taskContract?.scope ?? contractDefaults.scope,
       contextFiles: options.taskContract?.contextFiles ?? [],
       acceptanceCriteria:
-        options.taskContract?.acceptanceCriteria ?? ["完成指定实现并自测通过"],
+        options.taskContract?.acceptanceCriteria ?? contractDefaults.acceptanceCriteria,
       dependsOn: options.taskContract?.dependsOn,
-      expectedEffects: options.taskContract?.expectedEffects,
+      expectedEffects: options.taskContract?.expectedEffects ?? contractDefaults.expectedEffects,
       constraints: options.taskContract?.constraints,
       reworkOfTaskId,
     }));
@@ -283,14 +286,20 @@ export async function spawn(mgr: SubagentManagerHost, options: SpawnSubagentOpti
       if (reworkOfTaskId) {
         validateReworkTarget(mgr, options.parentSessionId, taskId, reworkOfTaskId);
       }
-      let contract: TaskContract = options.taskContract ?? {
+      const contractDefaults = getDefaultTaskContractFields(
+        options.role,
+        ["实现对应需求并通过自测"],
+      );
+      let contract: TaskContract = {
+        ...options.taskContract,
         taskId,
         parentSessionId: options.parentSessionId,
         role: options.role,
-        goal: options.taskPrompt,
-        scope: { include: ["*"], exclude: [] },
-        contextFiles: [],
-        acceptanceCriteria: ["实现对应需求并通过自测"],
+        goal: options.taskContract?.goal ?? options.taskPrompt,
+        scope: options.taskContract?.scope ?? contractDefaults.scope,
+        contextFiles: options.taskContract?.contextFiles ?? [],
+        acceptanceCriteria: options.taskContract?.acceptanceCriteria ?? contractDefaults.acceptanceCriteria,
+        expectedEffects: options.taskContract?.expectedEffects ?? contractDefaults.expectedEffects,
         reworkOfTaskId,
       };
       if (reworkOfTaskId && !contract.reworkOfTaskId) {

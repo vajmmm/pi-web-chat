@@ -114,6 +114,7 @@ describe("Coordinator delegation and task evidence boundaries", () => {
     assert.doesNotMatch(tools.get_task_summary.description, /压缩状态/);
     const spawnText = [
       tools.spawn_subagent.description,
+      tools.spawn_subagent.promptSnippet,
       ...(tools.spawn_subagent.promptGuidelines ?? []),
     ].join("\n");
     const continueText = [
@@ -123,8 +124,15 @@ describe("Coordinator delegation and task evidence boundaries", () => {
     assert.match(spawnText, /异步/);
     assert.match(spawnText, /Runtime/);
     assert.match(spawnText, /不要轮询或探测/);
-    assert.match(spawnText, /goal、scope、context_files 和 acceptance_criteria/);
+    assert.match(spawnText, /Developer\/Verifier/);
+    assert.match(spawnText, /Researcher.*只读|只读.*Researcher/);
+    assert.match(spawnText, /小而明确、自包含/);
+    assert.match(spawnText, /不要求代码实现闭环/);
+    assert.match(spawnText, /减少 Coordinator Context 消耗或带来有价值并行/);
+    assert.doesNotMatch(spawnText, /必须从 list_available_roles 获取|派发前可调用 list_available_roles/);
     assert.doesNotMatch(spawnText, /Scout Gate|Worktree Reclamation|TaskEpisodeView/);
+    assert.match(tools.list_available_roles.description, /按需/);
+    assert.match(tools.list_available_roles.description, /不是调用 spawn_subagent 的强制前置步骤/);
     assert.match(continueText, /异步/);
     assert.match(continueText, /Runtime 会自动回传结果/);
     assert.match(continueText, /不要轮询或探测/);
@@ -132,11 +140,102 @@ describe("Coordinator delegation and task evidence boundaries", () => {
     assert.doesNotMatch(continueText, /新 Worktree|新 Session|Knowledge 注入|Scout Gate|Worktree Reclamation/);
   });
 
-  it("documents a soft Researcher preference and Runtime-owned Integration lifecycle", () => {
+  it("accepts a canonical Researcher probe without a list_available_roles call", async () => {
+    let spawnedRole: string | undefined;
+    const tools: Record<string, any> = {};
+    const manager = {
+      getTask: () => undefined,
+      spawn: async (options: { role: string }) => {
+        spawnedRole = options.role;
+        return makeTask({
+          taskId: "researcher-probe-1",
+          role: "researcher",
+          status: "running",
+          agentId: "agent-researcher-1",
+        });
+      },
+    } as any;
+    const extension = createCoordinatorExtension(manager, () => ({
+      parentSessionId: "parent-1",
+      parentCwd: process.cwd(),
+      activeRole: "coordinator",
+    }));
+    extension.factory({
+      registerTool: (tool: any) => { tools[tool.name] = tool; },
+      on: () => {},
+    } as any);
+
+    const result = await tools.spawn_subagent.execute("call-researcher-probe", {
+      role: "researcher",
+      task_title: "核对调用链入口",
+      prompt: "只读确认该行为的实际调用链并返回 file:line 证据。",
+      goal: "确认调用链入口",
+      expected_effects: ["analysis"],
+      acceptance_criteria: ["返回事实、证据和出处"],
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(spawnedRole, "researcher");
+  });
+
+  it("uses Researcher defaults for a probe and preserves explicit contract fields", async () => {
+    const received: any[] = [];
+    const tools: Record<string, any> = {};
+    const manager = {
+      getTask: () => undefined,
+      spawn: async (options: any) => {
+        received.push(options);
+        return makeTask({ role: options.role, status: "running" });
+      },
+    } as any;
+    createCoordinatorExtension(manager, () => ({
+      parentSessionId: "parent-1",
+      parentCwd: process.cwd(),
+      activeRole: "coordinator",
+    })).factory({
+      registerTool: (tool: any) => { tools[tool.name] = tool; },
+      on: () => {},
+    } as any);
+
+    await tools.spawn_subagent.execute("call-default-researcher", {
+      role: "researcher",
+      task_title: "核对事实",
+      prompt: "只读核对事实并返回出处。",
+    });
+    assert.deepEqual(received[0].taskContract.expectedEffects, ["analysis"]);
+    assert.deepEqual(received[0].taskContract.scope, { include: [], exclude: [] });
+    assert.deepEqual(received[0].taskContract.acceptanceCriteria, ["返回请求的事实结论、关键证据与出处"]);
+
+    await tools.spawn_subagent.execute("call-explicit-researcher", {
+      role: "researcher",
+      task_title: "按显式契约核对",
+      prompt: "只读核对。",
+      expected_effects: [],
+      scope_include: ["docs/**"],
+      scope_exclude: ["docs/private/**"],
+      acceptance_criteria: ["返回指定证据"],
+    });
+    assert.deepEqual(received[1].taskContract.expectedEffects, []);
+    assert.deepEqual(received[1].taskContract.scope, {
+      include: ["docs/**"],
+      exclude: ["docs/private/**"],
+    });
+    assert.deepEqual(received[1].taskContract.acceptanceCriteria, ["返回指定证据"]);
+  });
+
+  it("documents proactive read-only Researcher scouting and Runtime-owned Integration lifecycle", () => {
     const coordinator = getRoleDefinition("coordinator");
-    assert.match(coordinator.instructions, /大量文件、日志、历史记录或跨模块搜索/);
-    assert.match(coordinator.instructions, /Researcher preferred, not required/);
-    assert.match(coordinator.instructions, /少量定向读取可由 Coordinator 直接完成/);
+    assert.match(coordinator.instructions, /Delegation is optional, not a goal/);
+    assert.match(coordinator.instructions, /implementation delegation.*read-only scouting/);
+    assert.match(coordinator.instructions, /Researcher 是 Coordinator 手边低成本、高频、可并行的只读探索工具/);
+    assert.match(coordinator.instructions, /不要等到调查已经变大或变复杂/);
+    assert.match(coordinator.instructions, /preserve Coordinator context or gain useful parallelism/);
+    assert.match(coordinator.instructions, /小而明确、自包含的 factual probe 是合法且鼓励的 Researcher 用途/);
+    assert.match(coordinator.instructions, /简单、明确的一次性定向 read\/grep 仍可由 Coordinator 直接完成/);
+    assert.doesNotMatch(coordinator.instructions, /Researcher preferred, not required/);
+    assert.doesNotMatch(coordinator.instructions, /每次.*(?:必须|至少|固定).*(?:Scout|Researcher)/);
+    assert.doesNotMatch(coordinator.instructions, /(?:至少|固定).*(?:Scout|Researcher)/);
+    assert.doesNotMatch(coordinator.instructions, /比例|调用次数/);
     assert.match(coordinator.instructions, /Worktree \/ runtime branch lifecycle is owned by Runtime/);
     assert.match(coordinator.instructions, /Coordinator does not own Harness worktree cleanup/);
     assert.match(coordinator.instructions, /不要通过 bash\/git 手工清理 Harness 创建的 Task\/Integration Worktree 或 Task\/Integration runtime branch/);
@@ -145,6 +244,10 @@ describe("Coordinator delegation and task evidence boundaries", () => {
     assert.doesNotMatch(
       coordinator.instructions,
       /Scout Gate|Worktree Reclamation|git worktree remove|同步后立即 cleanup|Verifier 完成前不能 cleanup/,
+    );
+    assert.ok(
+      coordinator.strictProhibitions.some((p) => p.includes("不适用于自包含的低成本 Researcher factual probe")),
+      "Researcher factual probes must remain outside the process-only micro-task prohibition",
     );
     assert.ok(getRoleConfig("coordinator").allowedTools?.includes("get_task_summary"));
   });
@@ -382,7 +485,7 @@ describe("Coordinator delegation and task evidence boundaries", () => {
     assert.deepEqual(reloaded.allowedTools, ["read", "bash", "get_task_summary"]);
   });
 
-  it("refreshes a current-version Coordinator definition when the Runtime Contract is missing", () => {
+  it("refreshes a current-version Coordinator definition when the scouting policy is missing", () => {
     const coordinator = getRoleConfig("coordinator");
     const developer = getRoleConfig("developer");
     writeFileSync(
@@ -393,7 +496,7 @@ describe("Coordinator delegation and task evidence boundaries", () => {
           allowedTools: ["read", "bash", "get_task_summary"],
           definition: {
             ...coordinator.definition,
-            instructions: "Legacy Coordinator instructions\n#### Web search",
+            instructions: "Legacy Coordinator instructions\n#### Runtime Contract\n#### Web search",
           },
         },
         developer,
@@ -405,6 +508,7 @@ describe("Coordinator delegation and task evidence boundaries", () => {
     const refreshed = getRoleConfig("coordinator");
     assert.match(refreshed.definition.instructions ?? "", /#### Runtime Contract/);
     assert.match(refreshed.definition.instructions ?? "", /Coordinator does not own Harness worktree cleanup/);
+    assert.match(refreshed.definition.instructions ?? "", /Would cheaply offloading this factual exploration preserve Coordinator context or gain useful parallelism/);
     assert.doesNotMatch(refreshed.definition.instructions ?? "", /Scout Gate|Worktree Reclamation|git worktree remove/);
     assert.equal(refreshed.definition.responsibilities.length, 5);
     assert.deepEqual(refreshed.allowedTools, ["read", "bash", "get_task_summary"]);

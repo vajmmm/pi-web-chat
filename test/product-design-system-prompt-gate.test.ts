@@ -88,7 +88,7 @@ describe("Product Design dynamic final System Prompt gate", () => {
       registerMainModelCapabilityBinding({
         id: bindingId,
         selector: { provider: "openai-codex", modelIds: [minimaxModelId] },
-        capabilities: { productDesign: false, imageInput: false, imageGeneration: false },
+        capabilities: { productDesign: false, imageInput: false, imageGeneration: false, webSearch: false },
       });
 
       const codexModel = modelRuntime.getModel("openai-codex", codexModelId);

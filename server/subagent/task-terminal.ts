@@ -1,4 +1,8 @@
-import type { ReviewResult, TaskResult } from "../contracts/index.ts";
+import {
+  getDefaultTaskContractFields,
+  type ReviewResult,
+  type TaskResult,
+} from "../contracts/index.ts";
 import { getRoleConfig } from "../roles.ts";
 import { resolveExpectedEffects, runVerification } from "../runtime-verifier.ts";
 import { sanitizeProviderErrorMessage, serializeMessages } from "../serialize.ts";
@@ -117,11 +121,13 @@ export async function finalizeCompleted(mgr: SubagentManagerHost, instance: Suba
 
     // 2. Runtime 验证
     const changedFiles = task.changedFiles ?? (verifierMutatedFiles.length > 0 ? verifierMutatedFiles : []);
+    const contractDefaults = getDefaultTaskContractFields(task.role);
     const contract = instance.taskContract ?? {
       taskId: task.taskId,
       parentSessionId: task.parentSessionId,
       role: task.role,
       goal: task.taskTitle,
+      ...contractDefaults,
     };
     const verification = runVerification(changedFiles, contract, rawMessages, task.logs ?? []);
     if (verifierMutationError) {
@@ -555,4 +561,3 @@ export async function executeSubagentCompletion(mgr: SubagentManagerHost, instan
       "Subagent termination reason could not be determined safely.",
     );
   }
-

@@ -55,25 +55,27 @@ describe("Product Design capability gate", () => {
       productDesign: true,
       imageInput: true,
       imageGeneration: true,
+      webSearch: true,
     });
     assert.deepEqual(getMainSessionCapabilities({ provider: "deepseek", id: "deepseek-chat" }), {
       productDesign: false,
       imageInput: false,
       imageGeneration: false,
+      webSearch: false,
     });
   });
 
   it("Gate policy 与 capability fact 解耦", () => {
     assert.equal(
-      canUseProductDesign({ productDesign: true, imageInput: true, imageGeneration: false }),
+      canUseProductDesign({ productDesign: true, imageInput: true, imageGeneration: false, webSearch: false }),
       false,
     );
     assert.equal(
-      canUseProductDesign({ productDesign: true, imageInput: false, imageGeneration: true }),
+      canUseProductDesign({ productDesign: true, imageInput: false, imageGeneration: true, webSearch: false }),
       false,
     );
     assert.equal(
-      canUseProductDesign({ productDesign: true, imageInput: true, imageGeneration: true }),
+      canUseProductDesign({ productDesign: true, imageInput: true, imageGeneration: true, webSearch: false }),
       true,
     );
   });
@@ -83,7 +85,7 @@ describe("Product Design capability gate", () => {
     registerMainModelCapabilityBinding({
       id: bindingId,
       selector: { provider: "openai-codex", modelIds: ["codex-no-image"] },
-      capabilities: { productDesign: false, imageInput: true, imageGeneration: false },
+      capabilities: { productDesign: false, imageInput: true, imageGeneration: false, webSearch: false },
     });
     try {
       assert.equal(

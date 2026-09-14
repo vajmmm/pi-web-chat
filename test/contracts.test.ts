@@ -162,18 +162,26 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       }
     });
 
-    it("4 & 5. Coordinator role defines optional delegation, evidence handling, and Runtime-owned cleanup", () => {
+    it("4 & 5. Coordinator role defines proactive read-only scouting, evidence handling, and Runtime-owned cleanup", () => {
       const coordinator = getRoleDefinition("coordinator");
       const coordinatorCfg = getRoleConfig("coordinator");
       assert.ok(
         coordinator.instructions?.includes("Delegation is optional, not a goal"),
         "Coordinator instructions must explicitly declare 'Delegation is optional, not a goal'",
       );
-      assert.ok(
-        coordinator.instructions?.includes("少量定向读取可由 Coordinator 直接完成"),
-        "Coordinator instructions must allow small targeted reads",
-      );
-      assert.ok(coordinator.instructions?.includes("Researcher preferred, not required"));
+      assert.match(coordinator.description, /低成本、高频、可并行.*只读探索/);
+      assert.match(coordinator.instructions ?? "", /implementation delegation.*read-only scouting/);
+      assert.match(coordinator.instructions ?? "", /低成本、高频、可并行的只读探索工具/);
+      assert.match(coordinator.instructions ?? "", /可处理自包含事实探索/);
+      assert.match(coordinator.instructions ?? "", /不要等到调查已经变大或变复杂/);
+      assert.match(coordinator.instructions ?? "", /preserve Coordinator context or gain useful parallelism/);
+      assert.match(coordinator.instructions ?? "", /小而明确、自包含的 factual probe.*合法且鼓励/);
+      assert.match(coordinator.instructions ?? "", /简单、明确的一次性定向 read\/grep.*Coordinator 直接完成/);
+      assert.doesNotMatch(coordinator.instructions ?? "", /Researcher preferred, not required/);
+      assert.doesNotMatch(coordinator.instructions ?? "", /仅当.*(?:large|complex|复杂|大量)/i);
+      assert.doesNotMatch(coordinator.instructions ?? "", /每次.*(?:必须|至少|固定).*(?:Scout|Researcher)/);
+      assert.doesNotMatch(coordinator.instructions ?? "", /(?:至少|固定).*(?:Scout|Researcher)/);
+      assert.doesNotMatch(coordinator.instructions ?? "", /比例|调用次数/);
       assert.equal(coordinator.responsibilities.length, 5);
       assert.match(coordinator.instructions ?? "", /#### Runtime Contract/);
       assert.match(coordinator.instructions ?? "", /Worktree \/ runtime branch lifecycle is owned by Runtime/);
@@ -190,8 +198,12 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         "Coordinator must prohibit defaulting to subagent delegation",
       );
       assert.ok(
-        coordinator.strictProhibitions.some((p) => p.includes("机械拆分缺乏独立闭环的微任务")),
-        "Coordinator must prohibit decomposing micro-tasks without independent closure",
+        coordinator.strictProhibitions.some((p) => p.includes("没有独立信息价值的流程性微任务")),
+        "Coordinator must prohibit process-only micro-task decomposition",
+      );
+      assert.ok(
+        coordinator.strictProhibitions.some((p) => p.includes("不适用于自包含的低成本 Researcher factual probe")),
+        "Coordinator must not apply the process-only micro-task ban to factual Researcher probes",
       );
       assert.ok(
         coordinator.strictProhibitions.some((p) => p.includes("禁止在已委派 scope 上直接修改")),

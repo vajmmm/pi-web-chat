@@ -9,6 +9,7 @@ import type { ProductDesignImageBackend } from "../product-design-image-backend.
 export const PRODUCT_DESIGN_SKILL_NAME = "product-design";
 export const PRODUCT_DESIGN_IMAGEGEN_TOOL_NAME = "product_design_imagegen";
 export const PRODUCT_DESIGN_SCREENSHOT_TOOL_NAME = "product_design_screenshot";
+export const WEB_SEARCH_TOOL_NAME = "web_search";
 
 export type MainModelIdentity = {
   provider?: string;
@@ -29,7 +30,7 @@ export interface MainModelCapabilityBinding {
 
 const bindings: MainModelCapabilityBinding[] = [];
 
-/** 中央 capability registry。Product Design 不读取模型身份。 */
+/** 中央模型 capability registry；工具门控通过解析结果工作，不读取模型身份。 */
 export function registerMainModelCapabilityBinding(binding: MainModelCapabilityBinding): void {
   const existing = bindings.findIndex((candidate) => candidate.id === binding.id);
   if (existing >= 0) bindings.splice(existing, 1);
@@ -55,6 +56,7 @@ const DISABLED_CAPABILITIES: MainModelCapabilities = Object.freeze({
   productDesign: false,
   imageInput: false,
   imageGeneration: false,
+  webSearch: false,
 });
 
 export function getMainSessionCapabilities(
@@ -81,7 +83,17 @@ export function hasProductDesignSkill(skillNames: readonly string[] | undefined)
   return (skillNames ?? []).includes(PRODUCT_DESIGN_SKILL_NAME);
 }
 
-// 当前唯一 backend registration。未来 Grok 只需新增另一条 binding/backend。
+/** 最终 active tools 的 capability gate；RoleConfig.allowedTools 本身不被修改。 */
+export function filterCapabilityGatedTools(
+  toolNames: readonly string[],
+  capabilities: MainModelCapabilities,
+): string[] {
+  return toolNames.filter(
+    (toolName) => toolName !== WEB_SEARCH_TOOL_NAME || capabilities.webSearch,
+  );
+}
+
+// Product Design backend 与 web_search capability 复用同一套模型 binding。
 registerMainModelCapabilityBinding({
   id: CODEX_IMAGEGEN_BACKEND_ID,
   selector: { provider: CODEX_PROVIDER },
@@ -89,7 +101,19 @@ registerMainModelCapabilityBinding({
     productDesign: true,
     imageInput: true,
     imageGeneration: true,
+    webSearch: true,
   },
   nativeImageGenerationTool: "codex_imagegen",
   imageGeneration: codexImageBackend,
+});
+
+registerMainModelCapabilityBinding({
+  id: "xai-web-search",
+  selector: { provider: "xai" },
+  capabilities: {
+    productDesign: false,
+    imageInput: false,
+    imageGeneration: false,
+    webSearch: true,
+  },
 });
