@@ -1,6 +1,5 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium } from "playwright";
 import { getAgentDir, type ExtensionAPI, type InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -79,6 +78,9 @@ export async function captureLocalScreenshot(
   const screenshotPath = makeScreenshotPath();
   await mkdir(join(getAgentDir(), "product-design-screenshots"), { recursive: true });
 
+  // Loaded lazily: `playwright` (and its browser binaries) must not be pulled in on
+  // server startup / extension registration — only when a screenshot is actually taken.
+  const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });

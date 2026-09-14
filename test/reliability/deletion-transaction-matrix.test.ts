@@ -844,6 +844,7 @@ describe("Session Deletion Transaction & Fail-Closed Matrix (22 Scenarios)", () 
     const persistedTasks = loadPersistedTasks();
     assert.ok(persistedTasks.has("t-m21-task"), "persisted tasks must be reloaded from disk");
     subagentManager = new SubagentManager({} as any);
+    await subagentManager.persistedTasksReady;
     assert.ok(subagentTasks.has("t-m21-task"), "tasks must be loaded in subagentManager");
 
     // 4) reload Git ownership

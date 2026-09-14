@@ -27,7 +27,7 @@ import {
 } from "./reusable-subagent.ts";
 import {
   buildSubagentUserPrompt,
-  loadPersistedTasks,
+  loadPersistedTasksAsync,
   subagentTasks,
   type ContinueSubagentOptions,
   type SpawnSubagentOptions,
@@ -106,18 +106,33 @@ export class SubagentManager implements SubagentManagerHost {
   inFlightCompletions = new Map<string, Set<Promise<void>>>();
   autoFinalize: boolean = true;
 
+  /**
+   * Resolves once persisted tasks have been loaded off the event loop. Hydration is
+   * started but not awaited by the constructor so server startup (`listen`) is never
+   * blocked by a synchronous readdir + full JSON parse of the task directory.
+   */
+  public readonly persistedTasksReady: Promise<void>;
+
   constructor(modelRuntime: ModelRuntime, options?: { autoFinalize?: boolean }) {
     this.modelRuntime = modelRuntime;
     this.autoFinalize = options?.autoFinalize ?? true;
-    const persisted = loadPersistedTasks();
-    for (const [id, task] of persisted) {
-      if (!subagentTasks.has(id)) {
-        subagentTasks.set(id, { task, taskContract: task.taskContract });
+    this.persistedTasksReady = this.hydratePersistedTasks();
+  }
+
+  private async hydratePersistedTasks(): Promise<void> {
+    try {
+      const persisted = await loadPersistedTasksAsync();
+      for (const [id, task] of persisted) {
+        if (!subagentTasks.has(id)) {
+          subagentTasks.set(id, { task, taskContract: task.taskContract });
+        }
+        // Reconstruct dependency graph from persisted task contracts
+        if (task.taskContract?.dependsOn && task.taskContract.dependsOn.length > 0) {
+          this.taskGraph.addTask(task.taskId, task.taskContract.dependsOn);
+        }
       }
-      // Reconstruct dependency graph from persisted task contracts
-      if (task.taskContract?.dependsOn && task.taskContract.dependsOn.length > 0) {
-        this.taskGraph.addTask(task.taskId, task.taskContract.dependsOn);
-      }
+    } catch (err) {
+      console.warn("[SubagentManager] Failed to hydrate persisted tasks:", err);
     }
   }
 

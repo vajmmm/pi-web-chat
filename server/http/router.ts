@@ -26,7 +26,7 @@ export async function handleHttpRequest(
     if (await handleFsRoutes(url, req, res, ctx)) return;
     if (await handleRolesRoutes(url, req, res, ctx)) return;
     if (await handleModelsRoutes(url, req, res, ctx)) return;
-    if (handleStaticRoutes(url, req, res, ctx.distDir)) return;
+    if (await handleStaticRoutes(url, req, res, ctx.distDir)) return;
 
     res.writeHead(404);
     res.end("Not found. Run `npm run build` first, or use `npm run dev`.");

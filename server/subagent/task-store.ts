@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFile as readFileAsync, readdir as readdirAsync } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { UISubagentTask } from "../../shared/protocol.ts";
@@ -44,6 +45,38 @@ export function persistTask(task: UISubagentTask): void {
   }
 }
 
+/**
+ * Apply the canonical-role gate and restart status transitions to one parsed task.
+ * Returns the task when it should be kept, or undefined when it must be quarantined.
+ */
+function ingestPersistedTask(task: UISubagentTask | undefined | null): UISubagentTask | undefined {
+  if (!task || !task.taskId) return undefined;
+  const role = (task as any).role;
+  const contractRole = (task as any).taskContract?.role;
+  if (
+    !isCanonicalRole(role) ||
+    (contractRole && !isCanonicalRole(contractRole)) ||
+    (contractRole && contractRole !== role)
+  ) {
+    console.warn(
+      `[SubagentManager] Quarantined legacy/invalid persisted task ${task.taskId} with non-canonical role: "${role}". Skipping.`,
+    );
+    return undefined;
+  }
+
+  if (task.status === "running") {
+    task.status = "interrupted";
+    task.error = "服务重启已终止";
+    task.completedAt = task.completedAt || new Date().toISOString();
+    task.durationMs = computeDurationMs(task);
+    persistTask(task);
+  } else if (task.completedAt && task.durationMs === undefined) {
+    task.durationMs = computeDurationMs(task);
+    persistTask(task);
+  }
+  return task;
+}
+
 export function loadPersistedTasks(): Map<string, UISubagentTask> {
   const map = new Map<string, UISubagentTask>();
   const dir = subagentsDir();
@@ -54,33 +87,36 @@ export function loadPersistedTasks(): Map<string, UISubagentTask> {
     for (const f of files) {
       try {
         const content = readFileSync(join(dir, f), "utf8");
-        const task = JSON.parse(content) as UISubagentTask;
-        if (task && task.taskId) {
-          const role = (task as any).role;
-          const contractRole = (task as any).taskContract?.role;
-          if (
-            !isCanonicalRole(role) ||
-            (contractRole && !isCanonicalRole(contractRole)) ||
-            (contractRole && contractRole !== role)
-          ) {
-            console.warn(
-              `[SubagentManager] Quarantined legacy/invalid persisted task ${task.taskId} with non-canonical role: "${role}". Skipping.`,
-            );
-            continue;
-          }
+        const task = ingestPersistedTask(JSON.parse(content) as UISubagentTask);
+        if (task) map.set(task.taskId, task);
+      } catch (err) {
+        console.warn(`[SubagentManager] Failed to read task file ${f}:`, err);
+      }
+    }
+  } catch (err) {
+    console.warn("[SubagentManager] Failed to scan subagents dir:", err);
+  }
 
-          if (task.status === "running") {
-            task.status = "interrupted";
-            task.error = "服务重启已终止";
-            task.completedAt = task.completedAt || new Date().toISOString();
-            task.durationMs = computeDurationMs(task);
-            persistTask(task);
-          } else if (task.completedAt && task.durationMs === undefined) {
-            task.durationMs = computeDurationMs(task);
-            persistTask(task);
-          }
-          map.set(task.taskId, task);
-        }
+  return map;
+}
+
+/**
+ * Non-blocking variant of `loadPersistedTasks`. Uses async fs so the startup path
+ * (`new SubagentManager(...)` before `listen`) never blocks the event loop on a
+ * synchronous readdir + full per-file JSON parse.
+ */
+export async function loadPersistedTasksAsync(): Promise<Map<string, UISubagentTask>> {
+  const map = new Map<string, UISubagentTask>();
+  const dir = subagentsDir();
+  if (!existsSync(dir)) return map;
+
+  try {
+    const files = (await readdirAsync(dir)).filter((f: string) => f.endsWith(".json"));
+    for (const f of files) {
+      try {
+        const content = await readFileAsync(join(dir, f), "utf8");
+        const task = ingestPersistedTask(JSON.parse(content) as UISubagentTask);
+        if (task) map.set(task.taskId, task);
       } catch (err) {
         console.warn(`[SubagentManager] Failed to read task file ${f}:`, err);
       }
