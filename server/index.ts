@@ -141,8 +141,9 @@ const subagentReportDispatcher = new SubagentReportDispatcher({
 });
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
-  // A runtime exists before switchSession() reveals the canonical session ID. Never
-  // invent a temporary artifact scope: event handlers resolve this bound scope only.
+  // The canonical session ID is only known once the runtime binds the session
+  // file (see sessionIdOf(runtime.session.sessionFile)). Never invent a
+  // temporary artifact scope: event handlers resolve this bound scope only.
   let recoveryScope: { runId: string; taskId: string } | undefined;
   const taskContextState: TaskContextRuntimeState = { compactionCount: 0 };
   const bindRecoveryScope = (scope: { runId: string; taskId: string }) => {
@@ -240,9 +241,13 @@ async function createEntry(id: string | null, customCwd?: string): Promise<Sessi
   const runtime = await createAgentSessionRuntime(createRuntime, {
     cwd: effectiveCwd,
     agentDir: getAgentDir(),
-    sessionManager: SessionManager.create(effectiveCwd),
+    sessionManager: path
+      ? SessionManager.open(path, undefined, effectiveCwd)
+      : SessionManager.create(effectiveCwd),
+    ...(path
+      ? { sessionStartEvent: { type: "session_start" as const, reason: "resume" as const } }
+      : {}),
   });
-  if (path) await runtime.switchSession(path);
   const entry: SessionEntry = {
     id: sessionIdOf(runtime.session.sessionFile),
     runtime,

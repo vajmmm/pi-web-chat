@@ -47,14 +47,28 @@ function textFromContent(content: unknown): string {
   return "";
 }
 
-export function serializeMessages(messages: unknown[]): UIMessage[] {
+/**
+ * Snapshot hot-path cap for tool result text. Matches the defensive slice in
+ * `ToolCallCard` (slice(0, 4000)); other serializeMessages callers stay full.
+ */
+export const TOOL_RESULT_SNAPSHOT_MAX_CHARS = 4000;
+
+export function serializeMessages(
+  messages: unknown[],
+  options?: { maxToolResultChars?: number },
+): UIMessage[] {
   const msgs = messages as AnyMessage[];
+  const maxToolResultChars = options?.maxToolResultChars;
 
   const results = new Map<string, SerializedToolResult>();
   for (const m of msgs) {
     if (m.role === "toolResult" && typeof m.toolCallId === "string") {
+      const text = textFromContent(m.content);
       results.set(m.toolCallId, {
-        text: textFromContent(m.content),
+        text:
+          typeof maxToolResultChars === "number" && text.length > maxToolResultChars
+            ? `${text.slice(0, maxToolResultChars)}\n…(truncated)`
+            : text,
         isError: m.isError === true,
       });
     }

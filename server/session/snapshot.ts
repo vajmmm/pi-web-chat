@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type { UISnapshot, UIThinkingLevel } from "../../shared/protocol.ts";
-import { serializeMessages } from "../serialize.ts";
+import { serializeMessages, TOOL_RESULT_SNAPSHOT_MAX_CHARS } from "../serialize.ts";
 import type { SubagentManager } from "../subagent-manager.ts";
 import { canUseProductDesign, getMainSessionCapabilities } from "./capabilities.ts";
 import type { SessionEntry } from "./session-registry.ts";
@@ -14,7 +14,9 @@ export function buildSnapshot(
   const model = session.model;
   const capabilities = getMainSessionCapabilities(model);
   return {
-    messages: serializeMessages(session.messages),
+    messages: serializeMessages(session.messages, {
+      maxToolResultChars: TOOL_RESULT_SNAPSHOT_MAX_CHARS,
+    }),
     isStreaming: session.isStreaming,
     isCompacting: !!entry.isCompacting,
     model: model

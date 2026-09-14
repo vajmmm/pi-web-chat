@@ -159,12 +159,15 @@ export function MessageList({
   streamThinking,
   activeTools,
   isStreaming,
+  sessionId,
 }: {
   messages: UIMessage[];
   streamText: string;
   streamThinking: string;
   activeTools: ActiveTool[];
   isStreaming: boolean;
+  /** When defined (including null), a change resets stick-to-bottom for the new session. */
+  sessionId?: string | null;
 }) {
   const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -203,6 +206,15 @@ export function MessageList({
   const recentScrollHeights = useRef<number[]>([]);
   const lastScrollTop = useRef(0);
   const touchStartY = useRef<number | null>(null);
+
+  // The list no longer remounts per session (ChatPage dropped the per-session key).
+  // Reset the scroll-follow state explicitly once the bound session changes.
+  useEffect(() => {
+    if (sessionId === undefined) return;
+    stickToBottom.current = true;
+    recentScrollHeights.current = [];
+    lastScrollTop.current = 0;
+  }, [sessionId]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -296,8 +308,8 @@ export function MessageList({
           </div>
         )}
         {streamText && !looksLikeHtmlErrorPage(streamText) && (
-          <div className="text-[15px]">
-            <LazyMarkdown text={streamText} />
+          <div className="text-[15px] whitespace-pre-wrap leading-relaxed break-words [overflow-wrap:anywhere]">
+            {streamText}
           </div>
         )}
         {activeTools.map((tool) => (
