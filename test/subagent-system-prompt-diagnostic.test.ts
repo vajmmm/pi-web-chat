@@ -172,7 +172,7 @@ describe("Pi 0.84.4 real Subagent system prompt regression", () => {
         providerPrompt,
         PromptAssembler.assemble(effectiveContext, {
           runtimeModel: { provider: session.model.provider, id: session.model.id },
-        }).taskSystemPrompt,
+        }).systemPrompt,
       );
       const providerUserText = providerCalls[0]!.context.messages
         .flatMap((message: any) => Array.isArray(message.content) ? message.content : [])
@@ -188,17 +188,23 @@ describe("Pi 0.84.4 real Subagent system prompt regression", () => {
         piProjectContext: providerPrompt.indexOf("<project_context>"),
         piAvailableSkills: providerPrompt.indexOf("<available_skills>"),
         piCwd: providerPrompt.indexOf("Current working directory:"),
+        taskContextUserMessage: providerUserText.indexOf("## Task Context"),
         workspaceContextUserMessage: providerUserText.indexOf("## Workspace Context"),
-        taskKickoffUserMessage: providerUserText.indexOf("## Task Kickoff"),
       };
       const report = {
         runtime_model_count: count(providerPrompt, '"runtime_model"'),
         task_contract_count: count(providerPrompt, '"task_contract"'),
+        task_context_count: count(providerUserText, "## Task Context"),
+        workspace_context_count: count(providerUserText, "## Workspace Context"),
         AGENTS_marker_count: count(providerPrompt, agentsMarker),
         available_skills_count: count(providerPrompt, "<available_skills>"),
         current_working_directory_count: count(providerPrompt, "Current working directory:"),
         worktree_absolute_path_present: providerPrompt.includes(worktree),
+        task_context_contains_task_id: providerUserText.includes(taskContract.taskId),
+        task_context_contains_goal: providerUserText.includes(taskContract.goal),
         workspace_context_contains_same_cwd: providerUserText.includes(`- cwd: ${worktree}`),
+        workspace_context_contains_branch: providerUserText.includes("- git_branch: codex/diagnostic"),
+        workspace_context_contains_is_worktree: providerUserText.includes("- is_worktree: true"),
         native_skill_locations: nativeSkillLocations,
         native_skill_location_contains_worktree: nativeSkillLocations.some((path) => path.startsWith(worktree)),
         final_session_model: resolvedModelDetails,
@@ -212,11 +218,16 @@ describe("Pi 0.84.4 real Subagent system prompt regression", () => {
         assert.equal(call.model.id, session.model.id);
       }
       assert.equal(report.runtime_model_count, 1);
-      assert.equal(report.task_contract_count, 1);
+      assert.equal(report.task_contract_count, 0);
+      assert.equal(report.task_context_count, 1);
+      assert.equal(report.workspace_context_count, 1);
       assert.equal(report.AGENTS_marker_count, 1);
       assert.equal(report.available_skills_count, 0);
       assert.equal(report.current_working_directory_count, 0);
       assert.equal(report.worktree_absolute_path_present, false);
+      assert.equal(providerPrompt.includes(taskContract.taskId), false);
+      assert.equal(providerPrompt.includes(taskContract.goal), false);
+      assert.equal(providerPrompt.includes("codex/diagnostic"), false);
       assert.equal(report.workspace_context_contains_same_cwd, true);
       assert.equal(report.native_skill_location_contains_worktree, false);
       assert.deepEqual(resolvedModelDetails && {
@@ -229,12 +240,13 @@ describe("Pi 0.84.4 real Subagent system prompt regression", () => {
       assert.deepEqual(session.getActiveToolNames(), effectiveContext.runtime.activeTools);
       assert.ok(sectionOrder.harnessGlobal >= 0);
       assert.ok(sectionOrder.runtimeModel > sectionOrder.harnessGlobal);
-      assert.ok(sectionOrder.taskContract > sectionOrder.runtimeModel);
+      assert.equal(sectionOrder.taskContract, -1);
       assert.equal(sectionOrder.piProjectContext, -1);
       assert.equal(sectionOrder.piAvailableSkills, -1);
       assert.equal(sectionOrder.piCwd, -1);
+      assert.ok(sectionOrder.taskContextUserMessage >= 0);
       assert.ok(sectionOrder.workspaceContextUserMessage >= 0);
-      assert.ok(sectionOrder.taskKickoffUserMessage > sectionOrder.workspaceContextUserMessage);
+      assert.ok(sectionOrder.workspaceContextUserMessage > sectionOrder.taskContextUserMessage);
 
       await runtime.dispose();
     } finally {

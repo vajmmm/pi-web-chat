@@ -198,8 +198,8 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
     });
   });
 
-  describe("4. Subagent Task Stable Prefix + Kickoff Assembly", () => {
-    it("keeps contract fields out of the ordinary kickoff history", () => {
+  describe("4. Subagent Task Context + First User Prompt Assembly", () => {
+    it("places the complete contract in the first User Prompt", () => {
       const contract: TaskContract = {
         taskId: "task-123",
         parentSessionId: "session-abc",
@@ -215,19 +215,21 @@ describe("Pi Multi-Agent Runtime Integration Tests", () => {
       };
 
       const userPrompt = buildSubagentUserPrompt("请实现用户登录组件具体UI逻辑 (Task)", contract);
-      assert.ok(userPrompt.includes("## Task Kickoff"));
-      assert.ok(userPrompt.includes("assigned immutable Task Contract"));
-      assert.equal(userPrompt.includes("请实现用户登录组件具体UI逻辑 (Task)"), false);
+      assert.ok(userPrompt.includes("## Task Context"));
+      assert.ok(userPrompt.includes("请实现用户登录组件具体UI逻辑 (Task)"));
+      assert.ok(userPrompt.includes('"goal": "重构登录体系保障安全性 (Goal)"'));
+      assert.ok(userPrompt.includes('"scope": {'));
+      assert.ok(userPrompt.includes("src/components/Login.tsx"));
+      assert.equal(userPrompt.split("## Task Context").length - 1, 1);
       assert.equal(userPrompt.includes("Initial instruction:"), false);
-      assert.equal(userPrompt.includes("## Goal"), false);
-      assert.equal(userPrompt.includes("## Scope"), false);
       const assembled = PromptAssembler.assemble(ConstraintResolver.resolve({
         role: "developer",
         cwd: process.cwd(),
         taskContract: contract,
       }));
-      assert.ok(assembled.taskSystemPrompt.includes("重构登录体系保障安全性 (Goal)"));
-      assert.ok(assembled.taskSystemPrompt.includes("src/components/Login.tsx"));
+      assert.equal(assembled.systemPrompt.includes("重构登录体系保障安全性 (Goal)"), false);
+      assert.equal(assembled.systemPrompt.includes("src/components/Login.tsx"), false);
+      assert.equal(assembled.systemPrompt.includes("task-123"), false);
     });
   });
 

@@ -759,9 +759,11 @@ describe("Reusable Subagent (Scheme B)", () => {
           },
         }),
       });
-      assert.ok(prompt.includes("## Task Kickoff"));
+      assert.ok(prompt.includes("## Task Context"));
+      assert.ok(prompt.includes('"goal": "follow-up"'));
       assert.ok(prompt.includes("===== NEW TASK ====="));
       assert.ok(prompt.includes("/opt/anaconda3/envs/py39/bin/python"));
+      assert.equal(prompt.split("## Task Context").length - 1, 1);
       assert.ok(!prompt.includes("toolCall"));
     });
   });

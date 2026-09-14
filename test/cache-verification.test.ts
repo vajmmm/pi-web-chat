@@ -290,22 +290,30 @@ describe("Provider-level Request Cache Stability & Deterministic Fingerprints", 
     assert.equal(systemPromptStr.includes(wmPath), false, "workingMemoryPath must NOT be in system prompt");
     assert.equal(systemPromptStr.includes(pjPath), false, "processJournalPath must NOT be in system prompt");
 
-    // Task Contract lives in the immutable task suffix; kickoff only carries workspace + trigger.
+    // Task Contract and Workspace Context live in the first User Prompt.
     const userPrompt = buildSubagentUserPrompt("Perform leak check", effectiveContext.taskContract, {
       workspaceContext: {
         cwd: worktreePath,
         projectRoot: repoRoot,
         workspaceType: "isolated_worktree",
         gitBranch: branchName,
+        isWorktree: true,
       },
     });
 
+    assert.ok(userPrompt.includes("## Task Context"), "User prompt must contain Task Context block");
+    assert.ok(userPrompt.includes('"taskId": "' + taskId + '"'), "User prompt must contain the TaskContract");
+    assert.ok(userPrompt.includes("Leak check verification"), "User prompt must contain the task goal");
     assert.ok(userPrompt.includes(worktreePath), "User prompt must contain worktree cwd");
     assert.ok(userPrompt.includes(branchName), "User prompt must contain branchName");
+    assert.ok(userPrompt.includes("- is_worktree: true"), "User prompt must contain is_worktree");
     assert.equal(userPrompt.includes(wmPath), false, "legacy working memory must not be injected");
     assert.equal(userPrompt.includes(pjPath), false, "legacy process journal must not be injected");
     assert.ok(userPrompt.includes("## Workspace Context"), "User prompt must contain Workspace Context block");
-    assert.ok(assembled.taskSystemPrompt.includes(taskId), "task suffix must contain the contract");
+    assert.equal(userPrompt.split("## Task Context").length - 1, 1);
+    assert.equal(userPrompt.split("## Workspace Context").length - 1, 1);
+    assert.equal(assembled.systemPrompt.includes(taskId), false, "System prompt must not contain the contract");
+    assert.equal(assembled.systemPrompt.includes("Leak check verification"), false);
   });
 
   it("3. AGENTS.md / Project Rules semantic modification correctly updates system fingerprint (semantic cache invalidation)", () => {

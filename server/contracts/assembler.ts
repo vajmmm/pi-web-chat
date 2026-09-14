@@ -17,7 +17,7 @@ export interface AssembledPromptResult {
    * When a runtime model is provided, this is Global Stable Prefix + Model Identity.
    */
   systemPrompt: string;
-  /** Global prefix + optional model identity + immutable task-scoped suffix. */
+  /** Backward-compatible alias of systemPrompt; task-specific data is never included. */
   taskSystemPrompt: string;
   /**
    * 结构化 JSON 对象
@@ -25,6 +25,7 @@ export interface AssembledPromptResult {
   jsonPayload: Record<string, unknown>;
   globalStablePrefix: string;
   modelIdentity?: string;
+  /** Internal task projection for callers that need task metadata; never injected into System Prompt. */
   taskStableSuffix?: string;
   globalPrefixHash: string;
   taskPrefixHash?: string;
@@ -45,11 +46,11 @@ function sha256(value: string): string {
  * 5. Shared Defaults (通用工程默认指引，无具体任务指令时生效)
  *
  * Prompt cache topology:
- *   Global Stable Prefix → Model Identity → Task Stable Suffix
+ *   Global Stable Prefix → Model Identity
  * Model identity uses session.model after resolution/fallback and is never
  * inserted into the Global Stable Prefix.
- * Task Contract 位于 JSON 尾部的 task_stable_suffix。全局字段仍保持跨 Task
- * 字节稳定，而 task_stable_suffix 在单个 Task 生命周期内冻结。
+ * Task Contract remains available as an internal task projection only. It is
+ * injected into the Subagent's first User Prompt, never into System Prompt.
  */
 export class PromptAssembler {
   /**
@@ -123,15 +124,14 @@ export class PromptAssembler {
         }
       : undefined;
     const taskStableSuffix = taskPayload ? JSON.stringify(taskPayload, null, 2) : undefined;
-    const payload: Record<string, unknown> = {
-      ...globalPayload,
-      ...(taskPayload ? { task_stable_suffix: taskPayload } : {}),
-    };
+    // jsonPayload mirrors the actual System Prompt. Keep task metadata out of
+    // this payload so no System Prompt representation can carry task context.
+    const payload: Record<string, unknown> = { ...globalPayload };
 
     const systemPrompt = modelIdentity
       ? `${globalStablePrefix}\n\n${modelIdentity}`
       : globalStablePrefix;
-    const taskSystemPrompt = [globalStablePrefix, modelIdentity, taskStableSuffix]
+    const taskSystemPrompt = [globalStablePrefix, modelIdentity]
       .filter((part): part is string => Boolean(part))
       .join("\n\n");
 

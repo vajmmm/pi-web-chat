@@ -88,7 +88,6 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         SHARED_DEFAULTS.some(
           (d) =>
             d.includes("recovery_manifest") &&
-            d.includes("read_artifact") &&
             d.includes("continuation hint"),
         ),
       );
@@ -123,11 +122,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         assert.ok(def.description.length > 0, `${def.id} must have non-empty description`);
         assert.ok(def.responsibilities.length >= 1, `${def.id} must have at least 1 responsibility`);
         assert.ok(typeof def.instructions === "string" && def.instructions.length > 0, `${def.id} must have non-empty instructions`);
-        assert.match(
-          def.instructions ?? "",
-          /#### Context recovery/,
-          `${def.id} instructions must teach request-time recovery_manifest`,
-        );
+        assert.doesNotMatch(def.instructions ?? "", /#### Context recovery|firstCompactedEntryId/);
         assert.doesNotMatch(
           def.instructions ?? "",
           /recovery_manifest\.boundary/,
@@ -167,7 +162,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       }
     });
 
-    it("4 & 5. Coordinator role instructions explicitly state delegation is optional and prioritize doing it themselves when small/localized", () => {
+    it("4 & 5. Coordinator role defines optional delegation, evidence handling, and Runtime-owned cleanup", () => {
       const coordinator = getRoleDefinition("coordinator");
       const coordinatorCfg = getRoleConfig("coordinator");
       assert.ok(
@@ -175,77 +170,36 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         "Coordinator instructions must explicitly declare 'Delegation is optional, not a goal'",
       );
       assert.ok(
-        coordinator.instructions?.includes("优先自己完成"),
-        "Coordinator instructions must detail when to finish tasks themselves without subagents",
+        coordinator.instructions?.includes("少量定向读取可由 Coordinator 直接完成"),
+        "Coordinator instructions must allow small targeted reads",
+      );
+      assert.ok(coordinator.instructions?.includes("Researcher preferred, not required"));
+      assert.equal(coordinator.responsibilities.length, 5);
+      assert.match(coordinator.instructions ?? "", /#### Runtime Contract/);
+      assert.match(coordinator.instructions ?? "", /Worktree \/ runtime branch lifecycle is owned by Runtime/);
+      assert.match(coordinator.instructions ?? "", /Coordinator does not own Harness worktree cleanup/);
+      assert.match(coordinator.instructions ?? "", /不要通过 bash\/git 手工清理 Harness 创建的 Task\/Integration Worktree 或 Task\/Integration runtime branch/);
+      assert.match(coordinator.instructions ?? "", /Integration Workspace remains available through required verification\/rework/);
+      assert.match(coordinator.instructions ?? "", /Runtime owns final resource reclamation/);
+      assert.doesNotMatch(
+        coordinator.instructions ?? "",
+        /Scout Gate|Worktree Reclamation|git worktree remove|同步(?:后|完成后).*(?:立即|主动).*(?:回收|cleanup)|删除.*runtime branch/,
       );
       assert.ok(
-        coordinator.instructions?.includes("Direct Path"),
-        "Coordinator instructions must define Direct Path",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("Delegated Path"),
-        "Coordinator instructions must define Delegated Path",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("Promotion Rule"),
-        "Coordinator instructions must define Promotion Rule",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("Mutation Ownership"),
-        "Coordinator instructions must define Mutation Ownership",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("Worktree Reclamation"),
-        "Coordinator instructions must define Worktree Reclamation after sync",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("Prefer promotion before the first repository mutation"),
-        "Coordinator instructions must prefer promotion before the first repository mutation",
-      );
-      assert.equal(coordinator.responsibilities.length, 6);
-      assert.ok(
-        coordinator.instructions?.includes("Behavior-Complete Outcome"),
-        "Coordinator instructions must emphasize behavior-complete task decomposition",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("Risk-Based Verification"),
-        "Coordinator instructions must define risk-based verification rather than mandatory verifier",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("#### Scout Gate"),
-        "Coordinator instructions must define the Researcher-first gate",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("报告已被消费"),
-        "Coordinator must consume the Researcher report before contract/developer dispatch",
-      );
-      assert.ok(
-        coordinator.instructions?.includes("不得据自己的亲读结论编写依赖该调查的 Task Contract"),
-        "Coordinator must not use overlapping self-investigation to bypass the Scout Gate",
-      );
-      assert.ok(
-        coordinator.responsibilities.some((r) => r.includes("Delegation is optional")),
-        "Coordinator responsibilities must include 'Delegation is optional'",
-      );
-      assert.ok(
-        coordinator.strictProhibitions.some((p) => p.includes("禁止默认将所有工作拆分并委派给 Subagent")),
+        coordinator.strictProhibitions.some((p) => p.includes("禁止为了满足 Multi-Agent 流程而委派")),
         "Coordinator must prohibit defaulting to subagent delegation",
       );
       assert.ok(
-        coordinator.strictProhibitions.some((p) => p.includes("禁止拆分缺乏独立验证与验收闭环的微任务")),
+        coordinator.strictProhibitions.some((p) => p.includes("机械拆分缺乏独立闭环的微任务")),
         "Coordinator must prohibit decomposing micro-tasks without independent closure",
       );
       assert.ok(
-        coordinator.strictProhibitions.some((p) => p.includes("禁止在已通过 Task Contract 委派的同一 scope 上同时进行 repository mutation")),
+        coordinator.strictProhibitions.some((p) => p.includes("禁止在已委派 scope 上直接修改")),
         "Coordinator must prohibit mutating a delegated scope",
       );
       assert.ok(
-        coordinator.strictProhibitions.some((p) => p.includes("禁止在改动已同步到主工作区后遗留本轮创建的 Task/Integration Worktree")),
-        "Coordinator must prohibit leaving this-run worktrees after sync",
-      );
-      assert.ok(
-        coordinator.responsibilities.some((r) => r.includes("回收本轮创建的 Task/Integration Worktree")),
-        "Coordinator responsibilities must include reclaiming this-run worktrees after sync",
+        coordinator.strictProhibitions.some((p) => p.includes("禁止在派发 Subagent 后主动轮询或探测状态")),
+        "Coordinator must prohibit polling after dispatch",
       );
       assert.doesNotMatch(
         coordinator.instructions ?? "",
@@ -265,21 +219,9 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(coordinatorCfg.allowedTools?.includes("web_search"), "Coordinator must have web_search");
       assert.equal(coordinatorCfg.allowedTools?.includes("url_context"), false);
       assert.match(coordinator.instructions ?? "", /#### Web search/);
-      assert.match(coordinator.instructions ?? "", /#### Context recovery/);
-      assert.match(coordinator.instructions ?? "", /firstCompactedEntryId/);
       assert.doesNotMatch(coordinator.instructions ?? "", /recovery_manifest\.boundary/);
       assert.match(coordinator.instructions ?? "", /get_task_summary/);
-      assert.match(coordinator.instructions ?? "", /TaskEpisodeView/);
-      assert.match(coordinator.instructions ?? "", /current run\/task only/);
-      assert.doesNotMatch(
-        coordinator.instructions ?? "",
-        /pass ArtifactRef via the new Task Contract|由执行角色在其任务范围内用 read_artifact/,
-      );
-      assert.ok(
-        coordinator.strictProhibitions.some((p) =>
-          p.includes("read_artifact") && p.includes("其他 Task"),
-        ),
-      );
+      assert.match(coordinator.instructions ?? "", /current session\/task after compaction/);
     });
 
     it("6. Developer Role handles frontend, backend, and debug tasks with root cause and baseline evidence", () => {
@@ -294,8 +236,6 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(developer.responsibilities.some((r) => r.includes("Baseline")));
       assert.ok(developer.instructions?.includes("Contract → Root Cause → Minimal Change → Verification → Evidence"));
       assert.ok(developer.instructions?.includes("Baseline"));
-      assert.match(developer.instructions ?? "", /#### Context recovery/);
-      assert.match(developer.instructions ?? "", /firstCompactedEntryId/);
       assert.ok(developer.strictProhibitions.some((p) => p.includes("禁止在没有复现或代码证据的情况下盲目猜测修改")));
     });
 
@@ -311,7 +251,6 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(verifier.instructions?.includes("PASS"));
       assert.ok(verifier.instructions?.includes("REWORK"));
       assert.ok(verifier.instructions?.includes("verdict"));
-      assert.match(verifier.instructions ?? "", /#### Context recovery/);
     });
 
     it("8. Researcher Role performs technical research without implementation", () => {
@@ -329,7 +268,6 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.match(researcher.instructions ?? "", /只读/);
       assert.match(researcher.instructions ?? "", /file:line/);
       assert.match(researcher.instructions ?? "", /探子/);
-      assert.match(researcher.instructions ?? "", /#### Context recovery/);
     });
   });
 
@@ -417,7 +355,7 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(!coordinatorDef.instructions?.includes("junior_be"));
       assert.ok(!coordinatorDef.instructions?.includes("Deployer"));
       assert.ok(coordinatorDef.instructions?.includes("Developer"));
-      assert.ok(coordinatorDef.instructions?.includes("Verifier"));
+      assert.ok(coordinatorDef.instructions?.includes("Verification"));
       assert.ok(coordinatorDef.instructions?.includes("Researcher"));
       assert.ok(!coordinatorDef.responsibilities.some((r) => r.includes("Reviewer")));
 
@@ -528,6 +466,9 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.equal((parsed as any).task_contract, undefined, "task_contract must not be in system prompt");
       assert.equal((parsed as any).current_task, undefined, "Dynamic task must not be in system prompt");
       assert.equal((parsed as any).workspace_context, undefined, "workspace_context must not be in system prompt");
+      assert.equal((assembled.jsonPayload as any).task_stable_suffix, undefined, "System payload must not carry task context");
+      assert.equal(assembled.systemPrompt.includes("task-003"), false, "taskId must not be in system prompt");
+      assert.equal(assembled.systemPrompt.includes("全栈特性"), false, "task goal must not be in system prompt");
     });
 
     it("projects assigned skills as a catalog and never inlines SKILL.md bodies into any prompt", () => {
@@ -698,10 +639,14 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       assert.ok(userPromptA.includes("pi-subagent-task-A"));
       assert.ok(userPromptB.includes("/Users/dev/project/.pi/agent/worktrees/task-B"));
       assert.ok(userPromptB.includes("pi-subagent-task-B"));
-      assert.equal(userPromptA.includes("Run CK tests"), false);
+      assert.ok(userPromptA.includes("## Task Context"));
+      assert.ok(userPromptA.includes("Verify subagent CK isolation"));
+      assert.equal(userPromptA.split("## Task Context").length - 1, 1);
+      assert.equal(userPromptA.split("## Workspace Context").length - 1, 1);
+      assert.ok(userPromptA.includes("Run CK tests"));
     });
 
-    it("places resolved runtime model identity between global prefix and task suffix", () => {
+    it("keeps resolved runtime model identity in the stable System Prompt only", () => {
       const context = ConstraintResolver.resolve({
         role: "developer",
         cwd: "/tmp/project",
@@ -722,7 +667,8 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
       const modelIdx = assembled.taskSystemPrompt.indexOf("claude-fallback-sonnet");
       const taskIdx = assembled.taskSystemPrompt.indexOf("TASK_SCOPED_STABLE_PREFIX");
       assert.ok(modelIdx > assembled.globalStablePrefix.length);
-      assert.ok(taskIdx > modelIdx);
+      assert.equal(taskIdx, -1);
+      assert.equal(assembled.taskSystemPrompt, assembled.systemPrompt);
       assert.match(assembled.systemPrompt, /"provider": "anthropic"/);
       assert.equal(assembled.systemPrompt.includes("configured-target-model"), false);
     });
@@ -828,8 +774,8 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
     });
   });
 
-  describe("7. Subagent kickoff and task-stable boundaries", () => {
-    it("keeps legacy memory out of the kickoff user turn", () => {
+  describe("7. Subagent first User Prompt task context", () => {
+    it("includes the complete Task Context without legacy memory", () => {
       const prompt = buildSubagentUserPrompt(
         "Investigate ClickHouse clean config",
         {
@@ -840,9 +786,11 @@ describe("Pi Multi-Agent Execution Contracts & Prompts", () => {
         },
       );
 
-      assert.ok(prompt.includes("## Task Kickoff"));
-      assert.ok(prompt.includes("assigned immutable Task Contract"));
-      assert.equal(prompt.includes("Investigate ClickHouse clean config"), false);
+      assert.ok(prompt.includes("## Task Context"));
+      assert.ok(prompt.includes("authoritative runtime context"));
+      assert.ok(prompt.includes("Investigate ClickHouse clean config"));
+      assert.ok(prompt.includes('"goal": "Verify CK isolation"'));
+      assert.equal(prompt.split("## Task Context").length - 1, 1);
       assert.equal(prompt.includes("Initial instruction:"), false);
       assert.equal(prompt.includes("Working Memory"), false);
       assert.equal(prompt.includes("Process Journal"), false);

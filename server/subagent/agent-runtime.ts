@@ -56,11 +56,6 @@ export function createRecoveryTools(getScope: () => { runId: string; taskId: str
       description:
         "Read a small slice of this task's durable transcript from before compaction. Use only when the Pi continuation summary is not enough. firstEntryId = recovery_manifest.firstCompactedEntryId. firstKeptEntryId is the first uncompacted entry; it is not lastEntryId (lastEntryId is inclusive). Current run/task only.",
       promptSnippet: "按 recovery_manifest.firstCompactedEntryId 读取当前任务压缩前的少量 transcript",
-      promptGuidelines: [
-        "read_transcript: Pi continuation summary is a continuation hint. firstEntryId = recovery_manifest.firstCompactedEntryId; firstKeptEntryId is not lastEntryId.",
-        "read_transcript covers the current run/task only.",
-        "read_transcript: keep limit small; do not use it for a full-history investigation.",
-      ],
       parameters: Type.Object({
         firstEntryId: Type.Optional(Type.String()),
         lastEntryId: Type.Optional(Type.String()),
@@ -83,10 +78,6 @@ export function createRecoveryTools(getScope: () => { runId: string; taskId: str
       description:
         "Search this task's durable transcript by keyword for a small number of matching records. Targeted lookup only, not a full-history investigation. Current run/task only.",
       promptSnippet: "在当前任务 durable transcript 中做定向关键词查找",
-      promptGuidelines: [
-        "search_transcript is for targeted keyword lookup, not a large-volume investigation.",
-        "search_transcript covers the current run/task only.",
-      ],
       parameters: Type.Object({
         query: Type.String({ minLength: 1 }),
         limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
@@ -108,10 +99,6 @@ export function createRecoveryTools(getScope: () => { runId: string; taskId: str
       description:
         "Read a bounded durable artifact by artifacts:// from this task's recovery_manifest transcriptRef / criticalArtifactRefs, or from a pointer in this session's tool preview. preview_only is not complete raw output. Covers the current run/task only; foreign artifacts:// refs are rejected.",
       promptSnippet: "按 artifacts:// 读取当前任务 recovery_manifest 中的 artifact",
-      promptGuidelines: [
-        "read_artifact: Pi continuation summary is a continuation hint; prefer the durable artifact when they conflict.",
-        "read_artifact covers the current run/task only. Do not pass another Task's artifacts:// ref.",
-      ],
       parameters: Type.Object({
         artifactRef: Type.String({ minLength: 1 }),
         maxBytes: Type.Optional(Type.Number({ minimum: 1, maximum: 32 * 1024 })),
@@ -154,7 +141,7 @@ function createAuthoritativePromptExtension(options: {
         const assembled = PromptAssembler.assemble(options.effectiveContext, {
           runtimeModel,
         });
-        return { systemPrompt: assembled.taskSystemPrompt };
+        return { systemPrompt: assembled.systemPrompt };
       });
     },
   };
@@ -250,7 +237,7 @@ export async function createSubagentSessionRuntime(options: CreateSubagentRuntim
                 const assembled = PromptAssembler.assemble(effectiveContext, {
                   runtimeModel: runtimeModelRef.current,
                 });
-                return assembled.taskSystemPrompt;
+                return assembled.systemPrompt;
               },
               appendSystemPromptOverride: () => [],
               extensionFactories: [

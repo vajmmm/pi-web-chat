@@ -896,6 +896,8 @@ export async function startBlockedTask(mgr: SubagentManagerHost, taskId: string)
           projectRoot: instance.repoRoot,
           workspaceType: instance.task.worktreePath ? "isolated_worktree" : "main_project",
           gitBranch: instance.task.branchName,
+          targetCwd: instance.task.targetCwd,
+          isWorktree: Boolean(instance.task.worktreePath),
         },
       });
       instance.runtime.session.prompt(userPrompt).catch((err) => {

@@ -83,7 +83,7 @@ describe("Context / Memory / Compaction v1.1", () => {
     assert.equal(pointer.completeness, "preview_only");
   });
 
-  it("keeps the global prefix stable while freezing a distinct task suffix", () => {
+  it("keeps the System Prompt stable while retaining an internal task projection", () => {
     const make = (taskId: string) => ConstraintResolver.resolve({
       role: "developer",
       cwd: process.cwd(),
@@ -100,7 +100,8 @@ describe("Context / Memory / Compaction v1.1", () => {
     assert.equal(a.globalPrefixHash, b.globalPrefixHash);
     assert.notEqual(a.taskStableSuffix, b.taskStableSuffix);
     assert.ok(a.taskSystemPrompt.startsWith(a.globalStablePrefix));
-    assert.match(a.taskSystemPrompt, /TASK_SCOPED_STABLE_PREFIX/);
+    assert.equal(a.taskSystemPrompt, a.systemPrompt);
+    assert.doesNotMatch(a.systemPrompt, /TASK_SCOPED_STABLE_PREFIX/);
   });
 
   it("uses deterministic evidence ordering and projects latest-only after compaction", async () => {
@@ -469,7 +470,7 @@ describe("Context / Memory / Compaction v1.1", () => {
     assert.ok(lineage.length < 100);
     const assembled = PromptAssembler.assemble(ConstraintResolver.resolve({ role: "developer", cwd: root,
       taskContract: { taskId: "next", parentSessionId: "episode", role: "developer", goal: "next" }, taskLineage: lineage }));
-    const injected = (assembled.jsonPayload.task_stable_suffix as any).bounded_lineage;
+    const injected = JSON.parse(assembled.taskStableSuffix || "{}").bounded_lineage;
     assert.ok(Buffer.byteLength(JSON.stringify(injected, null, 2)) <= 6144);
   });
 
