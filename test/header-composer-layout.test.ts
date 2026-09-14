@@ -51,8 +51,11 @@ describe("Sidebar top actions", () => {
   it("hosts LLM TURNS and CONTEXT at the top of the sidebar panel", () => {
     assert.ok(sessionsDrawer.includes("LLM TURNS"), "LLM TURNS must live in the sidebar");
     assert.ok(sessionsDrawer.includes("CONTEXT"), "CONTEXT must live in the sidebar");
-    assert.ok(sessionsDrawer.includes("<LLMTurnsModal"), "LLMTurnsModal must be rendered from the sidebar");
-    assert.ok(sessionsDrawer.includes("<PromptInspectorModal"), "PromptInspectorModal must be rendered from the sidebar");
+    // The modals are still rendered from the sidebar, but now go through the
+    // lazy-loading indirection (see src/components/lazy-modals.ts) so the heavy
+    // dialog code stays out of the initial bundle.
+    assert.ok(sessionsDrawer.includes("<LazyLLMTurnsModal"), "LLMTurnsModal must be rendered from the sidebar");
+    assert.ok(sessionsDrawer.includes("<LazyPromptInspectorModal"), "PromptInspectorModal must be rendered from the sidebar");
   });
 });
 
