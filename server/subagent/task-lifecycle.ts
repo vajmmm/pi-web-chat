@@ -65,6 +65,56 @@ export function armTimeout(instance: SubagentInstance, mgr: SubagentManagerHost)
   instance.timeoutTimer.unref?.();
 }
 
+/**
+ * 空闲(stall)看门狗超时:一个正在 running 的子任务在此毫秒数内没有产生任何
+ * 会话事件(无 token 流、无工具事件),即判定其底层模型流已挂起并强制终止。
+ * 0 表示禁用。可用 PI_SUBAGENT_STALL_TIMEOUT_MS 覆盖。
+ *
+ * 默认 4 分钟:健康的生成会持续吐 text/message_update 事件,合法的静默间隙
+ * (首字延迟、重试退避 ≤8s)远小于此;真正的静默挂起(provider hang)才会触发。
+ */
+export const SUBAGENT_STALL_TIMEOUT_MS = (() => {
+  const raw = process.env.PI_SUBAGENT_STALL_TIMEOUT_MS;
+  const n = raw !== undefined ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 240_000;
+})();
+
+/**
+ * (重新)武装空闲看门狗。每收到一个会话事件都调用一次以复位计时器。
+ * 触发时:若仍有工具在执行(长命令是合法的静默),仅重新武装;否则强制终止。
+ * 自守卫——任务已进入终态时静默返回,故终态后残留的一次晚触发是无害空操作。
+ */
+export function bumpStallWatchdog(instance: SubagentInstance, mgr: SubagentManagerHost): void {
+  if (SUBAGENT_STALL_TIMEOUT_MS <= 0) return;
+  if (instance.stallTimer) {
+    clearTimeout(instance.stallTimer);
+    instance.stallTimer = undefined;
+  }
+  if (instance.task.status !== "running") return;
+  const taskId = instance.task.taskId;
+  instance.stallTimer = setTimeout(() => {
+    instance.stallTimer = undefined;
+    if (
+      instance.reported ||
+      instance.aborting ||
+      instance.terminalizing ||
+      instance.task.status !== "running"
+    ) {
+      return;
+    }
+    // 工具仍在执行:模型没挂,是命令跑得久。重新武装,不误杀。
+    if (mgr.listActiveToolNames(instance).length > 0) {
+      bumpStallWatchdog(instance, mgr);
+      return;
+    }
+    console.warn(
+      `[SubagentManager] Task ${taskId} stalled for ${SUBAGENT_STALL_TIMEOUT_MS}ms with no activity (likely a hung provider stream); aborting.`,
+    );
+    void mgr.abort(taskId, { source: "timeout" });
+  }, SUBAGENT_STALL_TIMEOUT_MS);
+  instance.stallTimer.unref?.();
+}
+
   /**
    * 严格校验返工关联目标 (rework_of_task_id) 的合法性，收敛为线性返工链 (Fail-closed)
    */
@@ -688,6 +738,7 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
       instance.timeoutMs = options.executionOptions.timeoutMs;
     }
     armTimeout(instance, mgr);
+    bumpStallWatchdog(instance, mgr);
 
     persistTask(instance.task);
     mgr.notifyUpdate(instance);
@@ -703,6 +754,10 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
         }
         return;
       }
+
+      // Any activity (token stream, tool events, retries...) resets the
+      // inactivity watchdog. Silence past the window => hung stream => abort.
+      bumpStallWatchdog(instance, mgr);
 
       try {
         // Pi emits message_end before appending that message. Subsequent events,
@@ -916,6 +971,9 @@ export async function startBlockedTask(mgr: SubagentManagerHost, taskId: string)
       instance.task.status = "running";
       persistTask(instance.task);
       mgr.notifyUpdate(instance);
+      // Re-arm the inactivity watchdog for the reused (already-subscribed)
+      // session now that this blocked task is running again.
+      bumpStallWatchdog(instance, mgr);
 
       const contract = instance.taskContract;
       const userPrompt = buildSubagentUserPrompt(instance.task.taskPrompt, contract, {

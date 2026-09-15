@@ -66,6 +66,15 @@ export interface SubagentInstance {
   workspaceBaseline?: any;
   timeoutTimer?: NodeJS.Timeout;
   /**
+   * Inactivity watchdog. Reset on every session event; fires when the subagent
+   * emits nothing for {@link SUBAGENT_STALL_TIMEOUT_MS} — the failure mode where
+   * a provider stream hangs silently (e.g. a retried "Stream ended without
+   * finish_reason") so no settling `agent_end` ever arrives and the task would
+   * otherwise sit in `running` forever. Self-guards on fire, so a stray late
+   * fire after a terminal transition is a harmless no-op.
+   */
+  stallTimer?: NodeJS.Timeout;
+  /**
    * Wall-clock budget (ms) for a single task execution. Persisted on the
    * instance so the max_tokens auto-continuation can re-arm the same watchdog.
    */
