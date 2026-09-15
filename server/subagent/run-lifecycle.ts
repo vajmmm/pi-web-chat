@@ -58,7 +58,10 @@ export async function tryAutoFinalizeRun(mgr: SubagentManagerHost, parentSession
     const integration = mgr.integrations.get(parentSessionId);
     if (!integration) return null;
 
-    if (!mgr.isSessionLineageSatisfied(parentSessionId)) {
+    // 纯机械就绪检查:只要没有真·执行中的任务 (blocked/ready/running) 即可自动写回。
+    // 质量判断 (verification/review/rework) 已交由 Coordinator 决定,runtime 不再介入;
+    // conflict 等已结束态不阻塞——冲突任务的改动本就未进集成分支,finalize 时天然被排除。
+    if (!mgr.isSessionMechanicallyReady(parentSessionId)) {
       return null;
     }
 
@@ -732,20 +735,19 @@ export async function finalizeRun(
     const integration = mgr.integrations.get(parentSessionId);
     let repoRoot: string | undefined;
 
-    // 门禁检查：所有属于当前 Run 的任务必须全部进入终态（completed, failed, aborted, interrupted, incomplete）
+    // 门禁检查（机械）：只阻塞真·执行中的任务 (blocked/ready/running)。
+    // conflict/failed/interrupted/incomplete 等已结束态不阻塞 finalize——
+    // 冲突任务的改动本就未进集成分支,写回时天然被排除,并由 Coordinator 走 rework 机制处理。
     const nonTerminalStates: TaskExecutionStatus[] = [
       "blocked",
       "ready",
       "running",
-      "conflict",
     ];
 
     const activeTasks: { taskId: string; status: TaskExecutionStatus }[] = [];
     const taskInstances: { worktreePath?: string; branchName?: string }[] = [];
-    const sessionTasks: UISubagentTask[] = [];
     for (const inst of subagentTasks.values()) {
       if (inst.task.parentSessionId === parentSessionId) {
-        sessionTasks.push(inst.task);
         if (nonTerminalStates.includes(inst.task.status)) {
           activeTasks.push({ taskId: inst.task.taskId, status: inst.task.status });
         }
@@ -769,25 +771,9 @@ export async function finalizeRun(
       };
     }
 
-    // 门禁检查 2：质量与返工闭环检查 (Quality & Lineage Gate)
-    // 所有任务谱系必须得到满足：不存在未解决的 verification.fail / partially_verified / REQUEST_CHANGES
-    const unsatisfiedTasks = sessionTasks.filter((t) => !mgr.isTaskLineageSatisfied(t.taskId, parentSessionId));
-    if (unsatisfiedTasks.length > 0) {
-      const details = unsatisfiedTasks
-        .map((t) => {
-          const ver = t.verification?.overall ?? t.taskResult?.verification?.overall;
-          const rev = t.review?.verdict ?? t.taskResult?.review?.verdict;
-          return `${t.taskId} (status=${t.status}, verification=${ver ?? "none"}, review=${rev ?? "none"})`;
-        })
-        .join(", ");
-      return {
-        success: false,
-        status: "ERROR",
-        mode: options?.mode || "working_tree",
-        changedFiles: [],
-        error: `Cannot finalize run: unsatisfied task lineage(s) exist: ${details}. Quality gate requires all tasks to be completed with passing verification/review or be resolved by a successful rework.`,
-      };
-    }
+    // 质量与返工闭环判断已移除:runtime 不再做质量门禁。
+    // 是否写回未通过 verification/review 的改动,由 Coordinator 通过显式工具 (finalize_run / reclaim_run) 决定。
+    // 质量状态仍可经 isSessionLineageSatisfied / list_subagents 查询。
 
     if (!integration || !repoRoot) {
       if (mgr.finalizedRuns.has(parentSessionId)) {

@@ -363,6 +363,7 @@ export class SessionRegistry {
     canPrune?: (sessionId: string) => boolean,
     ttlMs = 15 * 60_000,
     intervalMs = 60_000,
+    onPruned?: (sessionId: string, cwdHint?: string) => void | Promise<void>,
   ): NodeJS.Timeout {
     const timer = setInterval(() => {
       const now = Date.now();
@@ -370,9 +371,14 @@ export class SessionRegistry {
         if (entry.clients.size > 0 || entry.runtime.session.isStreaming) continue;
         if (now - entry.lastActive < ttlMs) continue;
         if (canPrune && !canPrune(entry.id)) continue;
-        void this.disposeAndRemoveStrict(entry.id).catch((err) => {
-          console.warn(`[SessionRegistry] Idle prune dispose-first failed for ${entry.id}:`, err);
-        });
+        const prunedId = entry.id;
+        // 在 dispose 前捕获 cwd:entry 一旦从 registry 移除,onPruned 时便取不到。
+        const cwdHint = entry.cwd;
+        void this.disposeAndRemoveStrict(prunedId)
+          .then(() => onPruned?.(prunedId, cwdHint))
+          .catch((err) => {
+            console.warn(`[SessionRegistry] Idle prune dispose-first failed for ${prunedId}:`, err);
+          });
       }
     }, intervalMs);
     timer.unref();

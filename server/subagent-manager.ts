@@ -324,6 +324,20 @@ export class SubagentManager implements SubagentManagerHost {
     return tasks.every((t) => this.isTaskLineageSatisfied(t.taskId, parentSessionId));
   }
 
+  /**
+   * 纯机械就绪判断:是否可以安全地对该 Run 执行自动写回。
+   * 仅当没有任何任务处于真·执行中状态 (blocked/ready/running) 时返回 true。
+   * 不做任何质量判断——质量 (verification/review/rework) 由 Coordinator 决定;
+   * conflict/failed/interrupted/incomplete 等已结束态不阻塞写回。
+   */
+  public isSessionMechanicallyReady(parentSessionId: string): boolean {
+    const tasks = this.getTasksForParent(parentSessionId);
+    if (tasks.length === 0) return false;
+
+    const executingStates: TaskExecutionStatus[] = ["blocked", "ready", "running"];
+    return !tasks.some((t) => executingStates.includes(t.status));
+  }
+
   public async tryAutoFinalizeRun(parentSessionId: string): Promise<FinalizeResult | null> {
     return tryAutoFinalizeRunLifecycle(this, parentSessionId);
   }

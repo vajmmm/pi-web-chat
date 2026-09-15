@@ -130,14 +130,27 @@ const entries = sessionRegistry.entries;
 const wsEntry = sessionRegistry.wsEntry;
 sessionRegistry.isDeleting = (id) => subagentManager.isDeleting(id) || isPendingDeletion(id);
 
-sessionRegistry.startIdlePruning((sessionId) => {
-  if (isPendingDeletion(sessionId) || subagentManager.isDeleting(sessionId)) return false;
-  if (subagentManager.hasActiveTasksForParent(sessionId)) return false;
-  if (subagentManager.isCoordinatorActive(sessionId)) return false;
-  const entry = sessionRegistry.get(sessionId);
-  if (entry?.queuedMessages && entry.queuedMessages.length > 0) return false;
-  return true;
-});
+sessionRegistry.startIdlePruning(
+  (sessionId) => {
+    if (isPendingDeletion(sessionId) || subagentManager.isDeleting(sessionId)) return false;
+    if (subagentManager.hasActiveTasksForParent(sessionId)) return false;
+    if (subagentManager.isCoordinatorActive(sessionId)) return false;
+    const entry = sessionRegistry.get(sessionId);
+    if (entry?.queuedMessages && entry.queuedMessages.length > 0) return false;
+    return true;
+  },
+  undefined,
+  undefined,
+  // 兜底 GC:空闲 session 被 prune 后,回收其残留的 worktree/分支。
+  // cleanupRunResourcesForParent 自带 ownership+namespace 双重校验与 fail-closed,不会误删无关资源。
+  async (sessionId, cwdHint) => {
+    try {
+      await subagentManager.cleanupRunResourcesForParent(sessionId, cwdHint);
+    } catch (err) {
+      console.warn(`[IdleSweep] worktree reclaim failed for pruned session ${sessionId}:`, err);
+    }
+  },
+);
 
 function broadcastSnapshot(entry: SessionEntry) {
   broadcastEntrySnapshot(entry, subagentManager);
