@@ -66,6 +66,14 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 const HOME = homedir();
 const DEFAULT_AGENT_CWD = join(HOME, ".pi", "web-chat");
 const AGENT_CWD = resolve(process.env.PI_WEB_CWD ?? DEFAULT_AGENT_CWD);
+// 模型流"字节间"空闲超时:流连续这么久不吐字节即中止,并按可重试错误自动重试。
+// pi 默认 5 分钟,这里收到 3 分钟——把挂起流的重试间隔从 5 分钟缩短到 3 分钟。
+// 0 表示禁用(用 pi 默认)。可用 PI_HTTP_IDLE_TIMEOUT_MS 覆盖。
+const HTTP_IDLE_TIMEOUT_MS = (() => {
+  const raw = process.env.PI_HTTP_IDLE_TIMEOUT_MS;
+  const n = raw !== undefined ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 180_000;
+})();
 mkdirSync(AGENT_CWD, { recursive: true });
 
 // Process-level safety net (S2): a single bad WebSocket frame, a missing
@@ -229,9 +237,12 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
       triggerRatio: 0.8,
       customInstructions: getCompactionInstructions(),
     },
-    // 注意:这里刻意不覆盖 pi 的 HTTP idle 超时(默认 5 分钟)。挂起的 provider 流
-    // 由子任务的空闲看门狗(SUBAGENT_STALL_TIMEOUT_MS,默认 3 分钟)统一封顶——
-    // 它必须低于 idle 超时才能先于 idle 重试触发,详见 task-lifecycle.ts 的说明。
+    // 挂起的 provider 流(如返回 "Stream ended without finish_reason" 后又静默挂死)
+    // 的重试间隔:3 分钟不吐字节即中止并自动重试。它是"字节间"空闲超时,健康流
+    // 每秒都在吐 token 不受影响;仅对首字延迟>3 分钟的非流式慢模型有误伤。
+    // 子任务的空闲看门狗(SUBAGENT_STALL_TIMEOUT_MS)设在此之上,只在连 idle 重试
+    // 都不触发的病态情况下兜底终止,详见 task-lifecycle.ts。
+    httpIdleTimeoutMs: HTTP_IDLE_TIMEOUT_MS,
   });
   const result = await createAgentSessionFromServices({
     services,

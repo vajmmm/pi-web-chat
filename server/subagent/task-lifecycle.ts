@@ -68,20 +68,18 @@ export function armTimeout(instance: SubagentInstance, mgr: SubagentManagerHost)
 /**
  * 空闲(stall)看门狗超时:一个正在 running 的子任务在此毫秒数内没有产生任何
  * 会话事件(无 token 流、无工具事件),即判定其底层模型流已挂起并强制终止。
- * 0 表示禁用。可用 PI_SUBAGENT_STALL_TIMEOUT_MS 覆盖,默认 3 分钟。
+ * 0 表示禁用。可用 PI_SUBAGENT_STALL_TIMEOUT_MS 覆盖,默认 6 分钟。
  *
- * 这是卡死(如返回 "Stream ended without finish_reason" 后重试又静默挂死)的
- * 权威时限。关键点:挂起的流是"静默"的——不吐字节、不发事件,故本看门狗一路
- * 累加、不被复位,在满 3 分钟时触发中止。它必须低于 pi 的 HTTP idle 超时
- * (默认 5 分钟);否则 idle 会先在流上中止并自动重试,重试事件复位本看门狗,
- * 反而把卡死时限拖长到整个重试周期。因此这里不下调 idle 超时:让本看门狗在
- * 首次静默挂起时就先于 idle 触发,把任何卡死统一封顶在 3 分钟。健康生成持续
- * 吐 token,每个 token 都复位计时器,不会误触发。
+ * 这是纯兜底,不是主路径:挂起流的主处理是 3 分钟的 HTTP idle 超时
+ * (见 index.ts HTTP_IDLE_TIMEOUT_MS)——流静默 3 分钟即中止并自动重试。
+ * 每次 idle 重试都会发事件复位本看门狗,故健康的重试周期永远不会触发它。
+ * 本看门狗必须高于 idle 超时,只在连 idle 重试都不触发(全程零事件、退无可退)
+ * 的病态情况下兜底终止,避免任务永久卡在 running。健康生成持续吐 token,不误触发。
  */
 export const SUBAGENT_STALL_TIMEOUT_MS = (() => {
   const raw = process.env.PI_SUBAGENT_STALL_TIMEOUT_MS;
   const n = raw !== undefined ? Number(raw) : NaN;
-  return Number.isFinite(n) && n >= 0 ? n : 180_000;
+  return Number.isFinite(n) && n >= 0 ? n : 360_000;
 })();
 
 /**
