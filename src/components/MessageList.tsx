@@ -123,6 +123,35 @@ export function Blocks({ blocks, markdown }: { blocks: UIContentBlock[]; markdow
   );
 }
 
+/**
+ * UIMessage has no stable id in the shared protocol (out of scope to add one), so
+ * the top-level list key is a composite: bound session + position + role +
+ * first-block shape. The session prefix is the important part — it stops keys
+ * from being reused across a session switch, which previously let uncontrolled
+ * DOM state (<details> expand, <img> load) bleed into the next session's messages
+ * at the same array position. toolCall ids are stable when present; text/thinking
+ * contribute only their type so a first block that grows during streaming never
+ * forces a mid-stream remount of an otherwise unchanged message.
+ */
+function firstBlockKey(m: UIMessage): string {
+  const first = m.content[0];
+  if (!first) return "empty";
+  switch (first.type) {
+    case "toolCall":
+      return `toolCall:${first.id}`;
+    case "text":
+      return "text";
+    case "thinking":
+      return "thinking";
+    case "image":
+      return "image";
+  }
+}
+
+function messageKey(m: UIMessage, index: number, sessionId: string | null | undefined): string {
+  return `${sessionId ?? "-"}::${index}::${m.role}::${firstBlockKey(m)}`;
+}
+
 export function Message({ message }: { message: UIMessage }) {
   if (message.role === "user") {
     return (
@@ -299,7 +328,7 @@ export function MessageList({
           </div>
         )}
         {messages.map((m, i) => (
-          <Message key={i} message={m} />
+          <Message key={messageKey(m, i, sessionId)} message={m} />
         ))}
         {streamThinking && <Thinking text={streamThinking} />}
         {streamText && looksLikeHtmlErrorPage(streamText) && (

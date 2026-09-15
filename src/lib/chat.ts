@@ -41,6 +41,12 @@ class ChatClient {
   private intentionalClose = false;
   /** After a drop, stay on "connecting" briefly before showing disconnected. */
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Pending auto-reconnect handle. Must be saved so an explicit connect (e.g. the
+   * user switching sessions) can cancel it; otherwise the stale timer fires later
+   * and silently tears down the session the user is actually on.
+   */
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private everConnected = false;
   private target: string | null = null;
   private currentCwd: string | null = null;
@@ -55,6 +61,10 @@ class ChatClient {
   }
 
   connect(sessionId: string | null = null, opts?: { force?: boolean; cwd?: string }) {
+    // Any explicit connect invalidates a reconnect scheduled for a previous drop.
+    // Without this, switching away from a dropped session leaves the old timer
+    // armed; it later runs against the new session and rebinds the stale target.
+    this.clearReconnectTimer();
     if (opts?.force) this.haltReconnect = false;
     if (opts?.cwd) {
       this.currentCwd = opts.cwd;
@@ -103,7 +113,10 @@ class ChatClient {
     };
     ws.onclose = () => {
       this.ws = null;
-      if (this.intentionalClose || this.haltReconnect) return;
+      if (this.intentionalClose || this.haltReconnect) {
+        this.clearReconnectTimer();
+        return;
+      }
 
       // Soft state while retrying — don't flash red on first paint / brief blips.
       if (this.state.connection === "connected") {
@@ -112,8 +125,14 @@ class ChatClient {
       this.scheduleDisconnected();
       const retryTarget = this.state.sessionId ?? this.target;
       const retryCwd = this.currentCwd;
-      setTimeout(() => {
-        if (this.haltReconnect) return;
+      this.clearReconnectTimer();
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.intentionalClose || this.haltReconnect) return;
+        // Abandon if the user switched sessions while we waited: reconnecting now
+        // would closeSocket() the newly bound session and rebind the stale target.
+        const currentTarget = this.state.sessionId ?? this.target;
+        if (currentTarget !== retryTarget) return;
         this.target = retryTarget;
         this.connect(retryTarget, retryCwd ? { cwd: retryCwd } : undefined);
       }, this.reconnectDelay);
@@ -123,6 +142,7 @@ class ChatClient {
   }
 
   private closeSocket() {
+    this.clearReconnectTimer();
     const ws = this.ws;
     this.ws = null;
     if (!ws) return;
@@ -157,6 +177,13 @@ class ChatClient {
     if (this.disconnectTimer !== null) {
       clearTimeout(this.disconnectTimer);
       this.disconnectTimer = null;
+    }
+  }
+
+  private clearReconnectTimer() {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
   }
 
@@ -249,6 +276,7 @@ class ChatClient {
         console.error("[pi-web-chat]", event.message);
         if (event.message.startsWith("Session not found:")) {
           this.haltReconnect = true;
+          this.clearReconnectTimer();
         }
         break;
     }
