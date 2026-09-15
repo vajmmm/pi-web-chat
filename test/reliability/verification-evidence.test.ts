@@ -571,7 +571,7 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       assert.notEqual(task.status, "failed");
     });
 
-    it("verification fail report must not use success fallback copy or completion_reason normal", async () => {
+    it("verification fail verdict is decoupled from the coordinator report (evidence only)", async () => {
       const manager = new SubagentManager(mockModelRuntime);
       const mockSession = {
         messages: [
@@ -611,14 +611,17 @@ export function registerVerificationEvidenceTests(getGitRepoDir: () => string) {
       await manager.handleSubagentCompletion(task.taskId);
       // May be completed with fail, or incomplete if empty-stop heuristics apply
       if (task.status === "completed") {
+        // 质量判决仍在 task 对象上计算(供 DAG 依赖门用),但不再被编织进
+        // 给 coordinator 的报告 —— 避免锚定其自主判断。
         assert.equal(task.verification?.overall, "fail");
         assert.ok(!reportText.includes("（子任务执行完成）"));
-        assert.ok(!reportText.includes('"completion_reason": "normal"'));
-        assert.ok(
-          reportText.includes("verification_failed") ||
-            reportText.includes("未产出") ||
-            reportText.includes("verification"),
-        );
+        // 报告不再携带 pass/fail 总判决,也不再用"验证未通过"结论化措辞。
+        assert.ok(!reportText.includes("verification_failed"));
+        assert.ok(!reportText.includes("验证未通过"));
+        assert.ok(!reportText.includes('"overall"'));
+        // 报告改用中性 completion_reason,并保留客观证据块(runtime_verification)。
+        assert.ok(reportText.includes('"completion_reason": "normal"'));
+        assert.ok(reportText.includes("runtime_verification"));
       }
     });
 

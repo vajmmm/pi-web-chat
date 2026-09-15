@@ -170,14 +170,11 @@ export async function finalizeCompleted(mgr: SubagentManagerHost, instance: Suba
       task.status = "completed";
     }
 
-    const verificationFailed =
-      verification.overall === "fail" || verification.overall === "partially_verified";
-    // Never use success-sounding fallback: agent_end / empty text ≠ task success.
+    // 质量结论(pass/fail)不再由 runtime 编织进给 coordinator 的总结文本里,
+    // 避免锚定其判断;空总结统一用中性措辞。客观证据(测试通过数、越界文件等)
+    // 仍在报告的结构化字段中,由 coordinator 自行判断成败。
     const cleanSummary =
-      lastAssistantText ||
-      (verificationFailed
-        ? "（子任务已停止，Runtime 验证未通过，未形成成功交付）"
-        : "（子任务已停止，未产出有效总结）");
+      lastAssistantText || "（子任务已停止，未产出有效总结）";
 
     // 4. 尝试解析 Reviewer / Verifier 结构化结果
     let reviewResult: ReviewResult | undefined;
@@ -251,7 +248,7 @@ export async function finalizeCompleted(mgr: SubagentManagerHost, instance: Suba
       roleName: roleConfig.name,
       branch: task.branchName,
       status: task.status,
-      completionReason: verificationFailed ? "verification_failed" : "normal",
+      completionReason: "normal",
       changedFiles: task.changedFiles,
       lastCommit,
       startedAt: task.startedAt,

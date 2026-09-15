@@ -131,12 +131,6 @@ function SubagentConversationDialog({
               {isCompleted && (
                 <span className="flex items-center gap-1 border border-mint bg-mint/10 px-2 py-0.5 text-[10px] font-bold text-mint">
                   ✓ COMPLETED
-                  {task.verification?.overall === "pass" && (
-                    <span className="text-[9px] px-1 py-0.2 bg-emerald-600/20 text-emerald-600 rounded">PASS</span>
-                  )}
-                  {task.verification?.overall === "fail" && (
-                    <span className="text-[9px] px-1 py-0.2 bg-red-600/20 text-red-500 rounded">FAIL</span>
-                  )}
                 </span>
               )}
               {isConflict && (
@@ -366,12 +360,6 @@ function SubagentCard({
           {isCompleted && (
             <span className="flex items-center gap-1 border border-mint bg-mint/10 px-2 py-0.5 text-[10px] font-bold text-mint">
               ✓ COMPLETED
-              {task.verification?.overall === "pass" && (
-                <span className="text-[9px] px-1 py-0.2 bg-emerald-600/20 text-emerald-600 rounded">PASS</span>
-              )}
-              {task.verification?.overall === "fail" && (
-                <span className="text-[9px] px-1 py-0.2 bg-red-600/20 text-red-500 rounded">FAIL</span>
-              )}
             </span>
           )}
           {isConflict && (

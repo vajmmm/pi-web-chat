@@ -150,11 +150,9 @@ function formatReport(
     input.completionReason ??
     (input.status === "incomplete"
       ? "output_truncated"
-      : input.taskResult?.verification?.overall === "fail"
-        ? "verification_failed"
-        : input.error
-          ? "error"
-          : "normal");
+      : input.error
+        ? "error"
+        : "normal");
 
   const meta: Record<string, unknown> = {
     subagent_completion_report: {
@@ -173,10 +171,10 @@ function formatReport(
       started_at: input.startedAt ?? null,
       completed_at: input.completedAt ?? null,
       ...(input.durationMs !== undefined ? { duration_ms: input.durationMs } : {}),
-      // Runtime verification results (objective, not LLM-self-reported)
+      // Runtime verification 只提供客观检查结果(不含 pass/fail 总判决),由
+      // coordinator 自行据此判断成败,避免被 runtime 的结论锚定。
       ...(input.taskResult?.verification ? {
         runtime_verification: {
-          overall: input.taskResult.verification.overall,
           diff: input.taskResult.verification.diff.status,
           scope: input.taskResult.verification.scope.status,
           ...(input.taskResult.verification.testExecution
@@ -192,7 +190,6 @@ function formatReport(
       // Structured review results (if reviewer role)
       ...(input.taskResult?.review ? {
         review: {
-          verdict: input.taskResult.review.verdict,
           findings_count: input.taskResult.review.findings.length,
           blockers: input.taskResult.review.findings.filter((f) => f.severity === "blocker").length,
           majors: input.taskResult.review.findings.filter((f) => f.severity === "major").length,
@@ -219,10 +216,7 @@ export function buildBoundedCompletionReport(input: CompletionReportInput): Boun
   const emptySummary =
     input.status === "incomplete" || input.completionReason === "output_truncated"
       ? "（模型输出被截断，未能生成有效总结）"
-      : input.completionReason === "verification_failed" ||
-          input.taskResult?.verification?.overall === "fail"
-        ? "（子任务已停止，Runtime 验证未通过，未形成成功交付）"
-        : "（子任务已停止，未产出有效总结）";
+      : "（子任务已停止，未产出有效总结）";
   const rawSummary = fullSummary || emptySummary;
 
   const untruncated = formatReport(input, files, filesOmitted, rawSummary, false);
