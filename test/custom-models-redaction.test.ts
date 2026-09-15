@@ -13,6 +13,7 @@ const {
   readCustomModels,
   writeCustomModels,
   sanitizeCustomModelsResponse,
+  resolveProbeApiKey,
 } = await import("../server/models-config.ts");
 const { handleModelsRoutes } = await import("../server/http/routes-models.ts");
 import type { ServerContext } from "../server/http/context.ts";
@@ -97,6 +98,35 @@ describe("writeCustomModels key preservation", () => {
     // A non-empty key still overwrites.
     writeCustomModels([provider({ apiKey: "sk-rotated" })]);
     assert.equal(readCustomModels().providers[0]?.apiKey, "sk-rotated");
+  });
+});
+
+describe("resolveProbeApiKey", () => {
+  it("falls back to the persisted secret when the probe key is redacted/empty", () => {
+    writeCustomModels([provider({ baseUrl: "https://api.acme.test/v1", apiKey: "sk-persisted" })]);
+
+    // Edit form re-probes a saved provider: GET redacted the key, so the
+    // request carries an empty/undefined apiKey.
+    assert.equal(resolveProbeApiKey("https://api.acme.test/v1", ""), "sk-persisted");
+    assert.equal(resolveProbeApiKey("https://api.acme.test/v1", undefined), "sk-persisted");
+    assert.equal(resolveProbeApiKey("https://api.acme.test/v1", "   "), "sk-persisted");
+  });
+
+  it("matches baseUrl ignoring a trailing slash", () => {
+    writeCustomModels([provider({ baseUrl: "https://api.acme.test/v1", apiKey: "sk-persisted" })]);
+    assert.equal(resolveProbeApiKey("https://api.acme.test/v1/", ""), "sk-persisted");
+  });
+
+  it("prefers the supplied key when the user typed a new one", () => {
+    writeCustomModels([provider({ baseUrl: "https://api.acme.test/v1", apiKey: "sk-persisted" })]);
+    assert.equal(resolveProbeApiKey("https://api.acme.test/v1", "sk-typed"), "sk-typed");
+    // A `$ENV` reference is preserved verbatim for later expansion.
+    assert.equal(resolveProbeApiKey("https://api.acme.test/v1", "$ACME_KEY"), "$ACME_KEY");
+  });
+
+  it("returns undefined when no saved provider matches the baseUrl", () => {
+    writeCustomModels([provider({ baseUrl: "https://api.acme.test/v1", apiKey: "sk-persisted" })]);
+    assert.equal(resolveProbeApiKey("https://other.test/v1", ""), undefined);
   });
 });
 

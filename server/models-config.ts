@@ -94,6 +94,26 @@ export function sanitizeCustomModelsResponse(
   };
 }
 
+/**
+ * Resolve the API key to use for an internal model probe. GET /api/custom-models
+ * redacts each provider's apiKey (see sanitizeCustomModelsResponse), so the edit
+ * form re-probes an already-saved provider with an empty key. When no key is
+ * supplied, fall back to the persisted secret configured for the same baseUrl so
+ * the probe still authenticates. A `$ENV` form the user typed is preserved
+ * verbatim (probeCustomModels expands it later).
+ */
+export function resolveProbeApiKey(
+  baseUrl: string,
+  requestedKey?: string,
+): string | undefined {
+  if (requestedKey?.trim()) return requestedKey;
+  const normalize = (u: string) => u.trim().replace(/\/+$/, "");
+  const target = normalize(baseUrl);
+  return readCustomModels().providers.find(
+    (p) => normalize(p.baseUrl) === target && p.apiKey?.trim(),
+  )?.apiKey;
+}
+
 export function validateProviders(providers: unknown): string | null {
   if (!Array.isArray(providers)) return "providers must be an array";
   const seen = new Set<string>();

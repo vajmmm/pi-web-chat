@@ -15,6 +15,7 @@ import {
 import {
   probeCustomModels,
   readCustomModels,
+  resolveProbeApiKey,
   sanitizeCustomModelsResponse,
   validateProviders,
   writeCustomModels,
@@ -375,7 +376,11 @@ export async function handleModelsRoutes(
         return true;
       }
 
-      const result = await probeCustomModels(baseUrl.trim(), apiKey, api);
+      // GET /api/custom-models redacts apiKey, so the edit form re-probes an
+      // already-saved provider with an empty key. Fall back to the persisted
+      // secret for the matching baseUrl so the probe still authenticates.
+      const effectiveApiKey = resolveProbeApiKey(baseUrl, apiKey);
+      const result = await probeCustomModels(baseUrl.trim(), effectiveApiKey, api);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(result));
       return true;
