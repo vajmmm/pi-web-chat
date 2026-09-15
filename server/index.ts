@@ -229,6 +229,9 @@ const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionMan
       triggerRatio: 0.8,
       customInstructions: getCompactionInstructions(),
     },
+    // 注意:这里刻意不覆盖 pi 的 HTTP idle 超时(默认 5 分钟)。挂起的 provider 流
+    // 由子任务的空闲看门狗(SUBAGENT_STALL_TIMEOUT_MS,默认 3 分钟)统一封顶——
+    // 它必须低于 idle 超时才能先于 idle 重试触发,详见 task-lifecycle.ts 的说明。
   });
   const result = await createAgentSessionFromServices({
     services,

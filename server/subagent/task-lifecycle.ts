@@ -68,15 +68,20 @@ export function armTimeout(instance: SubagentInstance, mgr: SubagentManagerHost)
 /**
  * 空闲(stall)看门狗超时:一个正在 running 的子任务在此毫秒数内没有产生任何
  * 会话事件(无 token 流、无工具事件),即判定其底层模型流已挂起并强制终止。
- * 0 表示禁用。可用 PI_SUBAGENT_STALL_TIMEOUT_MS 覆盖。
+ * 0 表示禁用。可用 PI_SUBAGENT_STALL_TIMEOUT_MS 覆盖,默认 3 分钟。
  *
- * 默认 4 分钟:健康的生成会持续吐 text/message_update 事件,合法的静默间隙
- * (首字延迟、重试退避 ≤8s)远小于此;真正的静默挂起(provider hang)才会触发。
+ * 这是卡死(如返回 "Stream ended without finish_reason" 后重试又静默挂死)的
+ * 权威时限。关键点:挂起的流是"静默"的——不吐字节、不发事件,故本看门狗一路
+ * 累加、不被复位,在满 3 分钟时触发中止。它必须低于 pi 的 HTTP idle 超时
+ * (默认 5 分钟);否则 idle 会先在流上中止并自动重试,重试事件复位本看门狗,
+ * 反而把卡死时限拖长到整个重试周期。因此这里不下调 idle 超时:让本看门狗在
+ * 首次静默挂起时就先于 idle 触发,把任何卡死统一封顶在 3 分钟。健康生成持续
+ * 吐 token,每个 token 都复位计时器,不会误触发。
  */
 export const SUBAGENT_STALL_TIMEOUT_MS = (() => {
   const raw = process.env.PI_SUBAGENT_STALL_TIMEOUT_MS;
   const n = raw !== undefined ? Number(raw) : NaN;
-  return Number.isFinite(n) && n >= 0 ? n : 240_000;
+  return Number.isFinite(n) && n >= 0 ? n : 180_000;
 })();
 
 /**
