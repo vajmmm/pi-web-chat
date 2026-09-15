@@ -29,6 +29,7 @@ import type { SubagentInstance } from "./types.ts";
 import { detectWorkspaceMutations } from "./workspace-baseline.ts";
 import { tryParseReviewResult } from "./review-result.ts";
 import { queuePendingTerminal } from "./runtime-control.ts";
+import { armTimeout } from "./task-lifecycle.ts";
 import type { SubagentManagerHost } from "./manager-host.ts";
 
   /**
@@ -501,6 +502,11 @@ export async function executeSubagentCompletion(mgr: SubagentManagerHost, instan
         const sendContinuation = (session.isStreaming || !session.isIdle)
           ? session.followUp(continuationPrompt)
           : session.prompt(continuationPrompt);
+
+        // The watchdog was cleared on entry to this completion handler. Re-arm it
+        // for the continuation run so a stalled continuation is still aborted
+        // (source=timeout) instead of leaving the task stuck in `running`.
+        armTimeout(instance, mgr);
 
         sendContinuation.catch((err: unknown) => {
           console.error(`[SubagentManager] Subagent ${taskId} continuation error:`, err);

@@ -30,6 +30,32 @@ export interface CommandHandlerContext {
   createRuntime: CreateAgentSessionRuntimeFactory;
 }
 
+type QueueDispatchSession = {
+  steer: (text: string) => Promise<void>;
+  followUp: (text: string) => Promise<void>;
+};
+
+/**
+ * Re-dispatch a queued user message as steer/followUp without blocking the WS
+ * command handler. The operation is intentionally fire-and-forget, but its
+ * rejection (queue/session divergence, abort race) must be captured here so it
+ * cannot surface as an unhandledRejection.
+ */
+function dispatchQueueItem(
+  session: QueueDispatchSession,
+  item: { mode?: string; text: string },
+  sessionId: string,
+  forceSteer = false,
+): void {
+  const op = forceSteer || item.mode === "steer" ? session.steer(item.text) : session.followUp(item.text);
+  op.catch((err: unknown) => {
+    console.error(
+      `[CommandHandler] queued message re-dispatch failed (session=${sessionId}, mode=${item.mode ?? "followUp"}):`,
+      err,
+    );
+  });
+}
+
 export async function handleCommand(
   cmd: ClientCommand,
   ws: WebSocket,
@@ -269,11 +295,7 @@ export async function handleCommand(
       session.clearQueue();
       entry.queuedMessages = itemsToRequeue;
       for (const item of itemsToRequeue) {
-        if (item.mode === "steer") {
-          void session.steer(item.text);
-        } else {
-          void session.followUp(item.text);
-        }
+        dispatchQueueItem(session, item, entry.id);
       }
       broadcastSnapshot(entry, subagentManager);
       break;
@@ -288,11 +310,7 @@ export async function handleCommand(
       session.clearQueue();
       entry.queuedMessages = itemsToRequeue;
       for (const item of itemsToRequeue) {
-        if (item.mode === "steer") {
-          void session.steer(item.text);
-        } else {
-          void session.followUp(item.text);
-        }
+        dispatchQueueItem(session, item, entry.id);
       }
       broadcastSnapshot(entry, subagentManager);
       break;
@@ -308,21 +326,13 @@ export async function handleCommand(
       entry.queuedMessages = remainingItems;
       if (session.isStreaming) {
         // 作为 steer 立即插话并介入当前运行流
-        void session.steer(item.text);
+        dispatchQueueItem(session, item, entry.id, true);
         for (const remaining of remainingItems) {
-          if (remaining.mode === "steer") {
-            void session.steer(remaining.text);
-          } else {
-            void session.followUp(remaining.text);
-          }
+          dispatchQueueItem(session, remaining, entry.id);
         }
       } else {
         for (const remaining of remainingItems) {
-          if (remaining.mode === "steer") {
-            void session.steer(remaining.text);
-          } else {
-            void session.followUp(remaining.text);
-          }
+          dispatchQueueItem(session, remaining, entry.id);
         }
         void sessionRegistry.trackInFlightOp(entry.id, async () => {
           try {
