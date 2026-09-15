@@ -50,12 +50,16 @@ export function ChatPage() {
     streamText,
     streamThinking,
     activeTools,
+    openError,
   } = useChat();
 
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const subagentsMounted = useMountedOnce(subagentsOpen);
   const isStreaming = snapshot?.isStreaming ?? false;
-  const showConnectingOverlay = connection === "disconnected";
+  // No snapshot = the panel has nothing to show yet (initial load, mid-switch,
+  // or a failed open). Show a loading/error overlay instead of a blank
+  // transcript so a click never looks like it did nothing.
+  const showConnectingOverlay = openError !== null || !snapshot;
   const sidebarPinned = useSidebarPinned();
   const subagents = snapshot?.subagents ?? [];
   const runningSubagents = subagents.filter((s) => s.status === "running").length;
@@ -152,11 +156,21 @@ export function ChatPage() {
         {showConnectingOverlay ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
             <span
-              className={`size-3 rounded-full ${connectionDotClass(connection)}`}
+              className={`size-3 rounded-full ${
+                openError
+                  ? "bg-red-500"
+                  : connection === "disconnected"
+                    ? "bg-red-500"
+                    : "bg-amber-400 animate-pulse"
+              }`}
               aria-hidden
             />
             <p className="font-mono text-xs text-muted">
-              {connection === "disconnected" ? t("connectionLost") : t("connectingHint")}
+              {openError
+                ? openError
+                : connection === "disconnected"
+                  ? t("connectionLost")
+                  : t("connectingHint")}
             </p>
           </div>
         ) : (

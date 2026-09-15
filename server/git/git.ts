@@ -69,28 +69,57 @@ export async function probeGitWorktree(repoRoot: string, worktreePath: string): 
   }
 }
 
+// 短 TTL 缓存,避免会话冷开时在关键路径上重复 spawn `git`。
+// repo root 对同一 cwd 基本恒定;branch 仅用于 UI 展示,秒级过期可接受。
+// 缓存收益主要落在"同一仓库下多个会话轮流冷开"——首个解析后,其余命中缓存。
+interface GitCacheEntry<T> {
+  value: T;
+  expires: number;
+}
+const REPO_ROOT_TTL_MS = 30_000;
+const BRANCH_TTL_MS = 3_000;
+const repoRootCache = new Map<string, GitCacheEntry<string | null>>();
+const branchCache = new Map<string, GitCacheEntry<string | null>>();
+
+function readCache<T>(cache: Map<string, GitCacheEntry<T>>, key: string): { hit: boolean; value?: T } {
+  const entry = cache.get(key);
+  if (entry && entry.expires > Date.now()) return { hit: true, value: entry.value };
+  if (entry) cache.delete(key);
+  return { hit: false };
+}
+
 /**
  * 检查指定目录是否在 Git 仓库内，并返回仓库根目录
  */
 export async function resolveGitRepoRoot(cwd: string): Promise<string | null> {
+  const cached = readCache(repoRootCache, cwd);
+  if (cached.hit) return cached.value ?? null;
+  let value: string | null = null;
   try {
     const root = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
-    return root && existsSync(root) ? resolve(root) : null;
+    value = root && existsSync(root) ? resolve(root) : null;
   } catch {
-    return null;
+    value = null;
   }
+  repoRootCache.set(cwd, { value, expires: Date.now() + REPO_ROOT_TTL_MS });
+  return value;
 }
 
 /**
  * 获取指定目录当前的 Git 分支名
  */
 export async function getCurrentGitBranch(cwd: string): Promise<string | null> {
+  const cached = readCache(branchCache, cwd);
+  if (cached.hit) return cached.value ?? null;
+  let value: string | null = null;
   try {
     const branch = await runGit(cwd, ["branch", "--show-current"]);
-    return branch || null;
+    value = branch || null;
   } catch {
-    return null;
+    value = null;
   }
+  branchCache.set(cwd, { value, expires: Date.now() + BRANCH_TTL_MS });
+  return value;
 }
 
 /**

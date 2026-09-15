@@ -20,6 +20,12 @@ export interface ChatState {
   focusToken: number;
   /** Increments whenever the server reports a session title change. */
   sessionNameToken: number;
+  /**
+   * Last fatal open/bind error surfaced by the server (e.g. "Session not
+   * found"). Non-null means the panel could not be opened; the UI shows it
+   * instead of a silent blank. Cleared on every new connect / snapshot.
+   */
+  openError: string | null;
 }
 
 const initialState: ChatState = {
@@ -32,6 +38,7 @@ const initialState: ChatState = {
   injectText: null,
   focusToken: 0,
   sessionNameToken: 0,
+  openError: null,
 };
 
 class ChatClient {
@@ -66,6 +73,8 @@ class ChatClient {
     // armed; it later runs against the new session and rebinds the stale target.
     this.clearReconnectTimer();
     if (opts?.force) this.haltReconnect = false;
+    // A fresh open attempt supersedes any prior fatal error.
+    if (this.state.openError !== null) this.update({ openError: null });
     if (opts?.cwd) {
       this.currentCwd = opts.cwd;
     }
@@ -201,7 +210,12 @@ class ChatClient {
           this.currentCwd = event.snapshot.cwd;
         }
         this.flushPendingDeltas();
-        this.update({ snapshot: event.snapshot, streamText: "", streamThinking: "" });
+        this.update({
+          snapshot: event.snapshot,
+          streamText: "",
+          streamThinking: "",
+          openError: null,
+        });
         break;
       case "delta":
         if (event.kind === "text") {
@@ -274,6 +288,9 @@ class ChatClient {
         break;
       case "error":
         console.error("[pi-web-chat]", event.message);
+        // Surface open/bind failures to the UI instead of leaving a silent
+        // blank panel that looks like the click did nothing.
+        this.update({ openError: event.message });
         if (event.message.startsWith("Session not found:")) {
           this.haltReconnect = true;
           this.clearReconnectTimer();
