@@ -2,6 +2,31 @@ import type { SessionRegistry, SessionEntry } from "../session/session-registry.
 import type { SubagentManager } from "../subagent-manager.ts";
 import { broadcastTo } from "../ws/index.ts";
 
+type QueueDispatchSession = {
+  steer: (text: string) => Promise<void>;
+  followUp: (text: string) => Promise<void>;
+};
+
+/**
+ * Re-dispatch a queued coordinator message as steer/followUp without blocking
+ * the report pipeline. Rejections are captured so a divergence between the
+ * outstanding queue snapshot and the live session cannot escape as an
+ * unhandledRejection.
+ */
+function dispatchQueueItem(
+  session: QueueDispatchSession,
+  item: { mode?: string; text: string },
+  sessionId: string,
+): void {
+  const op = item.mode === "steer" ? session.steer(item.text) : session.followUp(item.text);
+  op.catch((err: unknown) => {
+    console.error(
+      `[SubagentReportDispatcher] queued message re-dispatch failed (session=${sessionId}, mode=${item.mode ?? "followUp"}):`,
+      err,
+    );
+  });
+}
+
 export interface PendingSubagentReport {
   task: any;
   reportText: string;
@@ -115,11 +140,7 @@ export class SubagentReportDispatcher {
         }
         currentEntry.queuedMessages = remainingUserMessages;
         for (const item of remainingUserMessages) {
-          if (item.mode === "steer") {
-            void session.steer(item.text);
-          } else {
-            void session.followUp(item.text);
-          }
+          dispatchQueueItem(session, item, sessionId);
         }
         this.options.broadcastSnapshot(currentEntry);
 

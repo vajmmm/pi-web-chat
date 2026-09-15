@@ -65,6 +65,11 @@ export interface SubagentInstance {
   spawnOptions?: SpawnSubagentOptions;
   workspaceBaseline?: any;
   timeoutTimer?: NodeJS.Timeout;
+  /**
+   * Wall-clock budget (ms) for a single task execution. Persisted on the
+   * instance so the max_tokens auto-continuation can re-arm the same watchdog.
+   */
+  timeoutMs?: number;
   autoContinuationCount?: number;
   reported?: boolean;
   aborting?: boolean;

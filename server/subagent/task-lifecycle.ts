@@ -43,6 +43,28 @@ import {
   recordContextPressure,
 } from "./stall-arbiter.ts";
 
+/**
+ * Arm (or re-arm) the per-task wall-clock watchdog. Called at task start and
+ * again after the max_tokens auto-continuation, so a stalled continuation can
+ * still be aborted instead of pinning the task (and its worktree) in `running`.
+ */
+export function armTimeout(instance: SubagentInstance, mgr: SubagentManagerHost): void {
+  const timeoutMs = instance.timeoutMs;
+  if (!timeoutMs || timeoutMs <= 0) return;
+
+  if (instance.timeoutTimer) {
+    clearTimeout(instance.timeoutTimer);
+    instance.timeoutTimer = undefined;
+  }
+
+  const taskId = instance.task.taskId;
+  instance.timeoutTimer = setTimeout(() => {
+    console.warn(`[SubagentManager] Task ${taskId} timed out after ${timeoutMs}ms`);
+    void mgr.abort(taskId, { source: "timeout" });
+  }, timeoutMs);
+  instance.timeoutTimer.unref?.();
+}
+
   /**
    * 严格校验返工关联目标 (rework_of_task_id) 的合法性，收敛为线性返工链 (Fail-closed)
    */
@@ -663,12 +685,9 @@ export async function startTaskExecution(mgr: SubagentManagerHost, instance: Sub
     instance.task.status = "running";
 
     if (options.executionOptions?.timeoutMs && options.executionOptions.timeoutMs > 0) {
-      instance.timeoutTimer = setTimeout(() => {
-        console.warn(`[SubagentManager] Task ${taskId} timed out after ${options.executionOptions!.timeoutMs}ms`);
-        void mgr.abort(taskId, { source: "timeout" });
-      }, options.executionOptions.timeoutMs);
-      instance.timeoutTimer.unref?.();
+      instance.timeoutMs = options.executionOptions.timeoutMs;
     }
+    armTimeout(instance, mgr);
 
     persistTask(instance.task);
     mgr.notifyUpdate(instance);
