@@ -1,9 +1,12 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ServerEvent, UIQueuedMessage } from "../../shared/protocol.ts";
 import { createAutoTitleState, maybeAutoTitle } from "../session/auto-title.ts";
+import { applyRoleToSession } from "../session/role-binding.ts";
 import type { SessionEntry } from "../session/session-registry.ts";
 import { buildSnapshot } from "../session/snapshot.ts";
+import { createShadowTranscriptRecorder } from "../subagent/shadow-transcript.ts";
 import type { SubagentManager } from "../subagent-manager.ts";
+import { installTurnRecorderOnSession } from "../turn-recorder.ts";
 import { broadcastSnapshot, broadcastTo } from "./websocket-server.ts";
 
 function newQueueId(): string {
@@ -210,6 +213,35 @@ export function syncQueuedMessagesFromSession(entry: SessionEntry): void {
     session.getSteeringMessages?.() ?? [],
     session.getFollowUpMessages?.() ?? [],
   );
+}
+
+/**
+ * Bind the coordinator-scoped hooks that live on the session/runtime itself:
+ * recovery scope, active role, turn recorder, and the shadow transcript
+ * subscriber. These bindings are runtime-scoped, so any code that replaces
+ * `entry.runtime` (createEntry and set_session_cwd) MUST re-run this helper on
+ * the new session before wiring transport events via `bindSessionEvents`.
+ *
+ * `bindSessionEvents` is deliberately kept out of this helper: it owns
+ * `entry.unsubscribe`, so callers keep their existing ordering (bind runtime,
+ * then bind session events) without double-subscribing.
+ */
+export function bindCoordinatorSessionRuntime(entry: SessionEntry): void {
+  const session = entry.runtime.session;
+  const bindRecoveryScope = (session as any).__bindRecoveryScope as
+    | ((scope: { runId: string; taskId: string }) => void)
+    | undefined;
+  if (!bindRecoveryScope) throw new Error("Coordinator recovery scope binder is unavailable");
+  const recoveryScope = { runId: entry.id, taskId: "coordinator" };
+  bindRecoveryScope(recoveryScope);
+  applyRoleToSession(entry, entry.activeRole);
+  installTurnRecorderOnSession(session, () => entry.id);
+  const flushTranscript = createShadowTranscriptRecorder(recoveryScope.runId, recoveryScope.taskId);
+  session.subscribe((event: any) => {
+    if (["message_end", "turn_end", "agent_end", "compaction_start"].includes(event.type)) {
+      flushTranscript(session);
+    }
+  });
 }
 
 export function bindSessionEvents(

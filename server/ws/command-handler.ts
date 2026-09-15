@@ -16,7 +16,7 @@ import { applyRoleToSession } from "../session/role-binding.ts";
 import { sessionIdOf, type SessionEntry, type SessionRegistry } from "../session/session-registry.ts";
 import type { SubagentManager } from "../subagent-manager.ts";
 import { getCurrentGitBranch, resolveGitRepoRoot } from "../worktree.ts";
-import { bindSessionEvents, extractUserMessageTexts } from "./session-binding.ts";
+import { bindCoordinatorSessionRuntime, bindSessionEvents, extractUserMessageTexts } from "./session-binding.ts";
 import { broadcastSnapshot, publishEntry, sendTo } from "./websocket-server.ts";
 
 import { isPendingDeletion } from "../session/deletion-tombstone.ts";
@@ -209,6 +209,10 @@ export async function handleCommand(
         entry.gitBranch = gitBranch;
         sessionRegistry.rekey(entry);
 
+        // The new runtime's session carries its own recovery scope / turn recorder /
+        // shadow transcript subscriber; rebind them exactly like createEntry does
+        // before wiring transport events (bindSessionEvents owns entry.unsubscribe).
+        bindCoordinatorSessionRuntime(entry);
         bindSessionEvents(entry, subagentManager, ctx.getModelRuntime);
         broadcastSnapshot(entry, subagentManager);
       });

@@ -31,8 +31,6 @@ import {
   type TaskContextRuntimeState,
 } from "./subagent/compaction-evidence-index.ts";
 import { initializeTaskFactStore } from "./runtime-artifacts.ts";
-import { createShadowTranscriptRecorder } from "./subagent/shadow-transcript.ts";
-import { installTurnRecorderOnSession } from "./turn-recorder.ts";
 import { readCustomModels } from "./models-config.ts";
 import { sanitizeEmptyAvailableModelIds } from "./auth-config.ts";
 import { startBackgroundCatalogRefresh } from "./model-catalog.ts";
@@ -40,7 +38,6 @@ import { SubagentManager } from "./subagent-manager.ts";
 import { getCurrentGitBranch, recoverRuntimeResources, resolveGitRepoRoot } from "./worktree.ts";
 import { registerKnownProjectPath } from "./projects.ts";
 import {
-  applyRoleToSession,
   bindExistingSession,
   isPendingDeletion,
   sessionIdOf,
@@ -48,6 +45,7 @@ import {
   type SessionEntry,
 } from "./session/index.ts";
 import {
+  bindCoordinatorSessionRuntime,
   bindSessionEvents,
   broadcastSnapshot as broadcastEntrySnapshot,
   broadcastTo,
@@ -272,20 +270,7 @@ async function createEntry(id: string | null, customCwd?: string): Promise<Sessi
     gitBranch,
     queuedMessages: [],
   };
-  const bindRecoveryScope = (runtime.session as any).__bindRecoveryScope as
-    | ((scope: { runId: string; taskId: string }) => void)
-    | undefined;
-  if (!bindRecoveryScope) throw new Error("Coordinator recovery scope binder is unavailable");
-  bindRecoveryScope({ runId: entry.id, taskId: "coordinator" });
-  applyRoleToSession(entry, entry.activeRole);
-  installTurnRecorderOnSession(runtime.session, () => entry.id);
-  const recoveryScope = { runId: entry.id, taskId: "coordinator" };
-  const flushTranscript = createShadowTranscriptRecorder(recoveryScope.runId, recoveryScope.taskId);
-  runtime.session.subscribe((event: any) => {
-    if (["message_end", "turn_end", "agent_end", "compaction_start"].includes(event.type)) {
-      flushTranscript(runtime.session);
-    }
-  });
+  bindCoordinatorSessionRuntime(entry);
 
   sessionRegistry.set(entry.id, entry);
   bindSessionEvents(entry, subagentManager, () => modelRuntime);
