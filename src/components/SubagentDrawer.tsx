@@ -315,6 +315,7 @@ function SubagentCard({
   onOpenConversation: (task: UISubagentTask) => void;
 }) {
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [filesExpanded, setFilesExpanded] = useState(false);
   const { durationText, isRunning: isDurationRunning } = useTaskDuration(task);
 
   const isBlocked = task.status === "blocked";
@@ -457,20 +458,28 @@ function SubagentCard({
           )}
         </div>
 
-        {/* 改动文件清单 */}
+        {/* 改动文件清单(默认收缩,仿工具调用简报) */}
         {task.changedFiles && task.changedFiles.length > 0 && (
           <div className="mt-2 border-t border-dashed border-line pt-2">
-            <span className="text-[11px] font-bold text-muted">
-              改动文件 ({task.changedFiles.length}):
-            </span>
-            <ul className="mt-1 space-y-0.5 pl-2 text-[11px] text-ink">
-              {task.changedFiles.map((file, i) => (
-                <li key={i} className="flex items-center gap-1.5">
-                  <span className="text-mint">▸</span>
-                  <code className="bg-canvas px-1 text-accent">{file}</code>
-                </li>
-              ))}
-            </ul>
+            <button
+              type="button"
+              onClick={() => setFilesExpanded(!filesExpanded)}
+              className="flex items-center gap-1 text-[11px] font-bold text-muted hover:text-accent"
+            >
+              <span>
+                {filesExpanded ? "▼ 收起改动文件" : "▶ 展开改动文件"} ({task.changedFiles.length})
+              </span>
+            </button>
+            {filesExpanded && (
+              <ul className="mt-1 space-y-0.5 pl-2 text-[11px] text-ink">
+                {task.changedFiles.map((file, i) => (
+                  <li key={i} className="flex items-center gap-1.5">
+                    <span className="text-mint">▸</span>
+                    <code className="bg-canvas px-1 text-accent">{file}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
