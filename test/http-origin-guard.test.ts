@@ -94,6 +94,30 @@ describe("handleHttpRequest CSWSH guard (state-changing methods)", () => {
     assert.equal(r.status, 403);
   });
 
+  it("rejects a raw public-IP Origin on POST with 403 (CSWSH from http://<ip>/)", async () => {
+    const r = await run("/api/__unknown", "POST", {
+      host: "localhost:3141",
+      origin: "http://1.2.3.4",
+    }, "{}");
+    assert.equal(r.status, 403);
+    assert.match(r.body, /forbidden origin/);
+  });
+
+  it("allows an Origin that is the server bind address", async () => {
+    const savedHost = process.env.HOST;
+    process.env.HOST = "192.168.1.5";
+    try {
+      const r = await run("/api/__unknown", "POST", {
+        host: "localhost:3141",
+        origin: "http://192.168.1.5:3141",
+      }, "{}");
+      assert.notEqual(r.status, 403);
+    } finally {
+      if (savedHost === undefined) delete process.env.HOST;
+      else process.env.HOST = savedHost;
+    }
+  });
+
   it("does not require an Origin (CLI/curl) for state-changing requests", async () => {
     const r = await run("/api/__unknown", "POST", { host: "localhost:3141" }, "{}");
     assert.notEqual(r.status, 403);

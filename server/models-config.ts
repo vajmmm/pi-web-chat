@@ -1,4 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { promises as dns } from "node:dns";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -179,6 +181,118 @@ export function writeCustomModels(providers: UICustomProvider[]): void {
   renameSync(tmp, file);
 }
 
+/**
+ * SSRF guard for user-supplied provider base URLs.
+ *
+ * `probeCustomModels` fetches a URL entered by the user. Without a check a
+ * crafted baseUrl could make the server request loopback / private / link-local
+ * addresses (cloud metadata, internal dashboards, other local services) and
+ * exfiltrate the response via the model list. We therefore reject such targets
+ * BEFORE issuing any fetch.
+ *
+ * Only literal addresses are judged directly; hostnames are resolved first and
+ * every resolved address is checked, so `http://internal.corp/` that resolves
+ * to 10.0.0.5 is refused too.
+ */
+
+function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return true; // malformed ⇒ treat as unsafe
+  }
+  const [a, b] = parts as [number, number, number, number];
+  if (a === 0) return true; // "this network" 0.0.0.0/8
+  if (a === 10) return true; // private 10.0.0.0/8
+  if (a === 127) return true; // loopback 127.0.0.0/8
+  if (a === 169 && b === 254) return true; // link-local 169.254.0.0/16
+  if (a === 172 && b >= 16 && b <= 31) return true; // private 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // private 192.168.0.0/16
+  if (a === 192 && b === 0) return true; // 192.0.0.0/24 + 192.0.2.0/24
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking 198.18.0.0/15
+  if (a === 198 && b === 51) return true; // documentation 198.51.100.0/24
+  if (a === 203 && b === 0) return true; // documentation 203.0.113.0/24
+  if (a >= 224) return true; // multicast 224.0.0.0/4 + reserved 240.0.0.0/4
+  return false;
+}
+
+function isPrivateIPv6(ip: string): boolean {
+  const h = ip.toLowerCase();
+  // IPv4-mapped (::ffff:a.b.c.d) — judge the embedded IPv4 address.
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h);
+  if (mapped) return isPrivateIPv4(mapped[1] as string);
+  if (h === "::1" || h === "::") return true; // loopback / unspecified
+  if (h.startsWith("fc") || h.startsWith("fd")) return true; // unique-local fc00::/7
+  if (h.startsWith("fe8") || h.startsWith("fe9") || h.startsWith("fea") || h.startsWith("feb")) {
+    return true; // link-local fe80::/10
+  }
+  return false;
+}
+
+/** True when an IP literal points at loopback/private/reserved space. */
+export function isPrivateOrReservedAddress(ip: string): boolean {
+  const stripped = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
+  const version = isIP(stripped);
+  if (version === 4) return isPrivateIPv4(stripped);
+  if (version === 6) return isPrivateIPv6(stripped);
+  return true; // not a recognisable literal ⇒ unsafe
+}
+
+function formatPrivateAddressError(hostname: string, detail: string): Error {
+  return new Error(
+    `拒绝探测 ${hostname}：目标地址属于回环/私有/保留网段（SSRF 防护${detail ? `，${detail}` : ""}）。`,
+  );
+}
+
+/**
+ * Reject a probe target that is (or resolves to) a loopback/private/reserved
+ * address. Must run before any `fetch`.
+ */
+export async function assertProbeTargetAllowed(baseUrl: string): Promise<void> {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error(`无效的 Base URL：${baseUrl}`);
+  }
+
+  const hostname = url.hostname.startsWith("[") && url.hostname.endsWith("]")
+    ? url.hostname.slice(1, -1)
+    : url.hostname;
+
+  if (!hostname) throw formatPrivateAddressError(baseUrl, "无法解析主机名");
+
+  if (isIP(hostname) !== 0) {
+    if (isPrivateOrReservedAddress(hostname)) {
+      throw formatPrivateAddressError(hostname, "字面 IP 位于受限网段");
+    }
+    return;
+  }
+
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    throw formatPrivateAddressError(hostname, "回环主机名");
+  }
+
+  let addresses: Array<{ address: string; family: number }>;
+  try {
+    addresses = await dns.lookup(hostname, { all: true });
+  } catch (err) {
+    throw formatPrivateAddressError(
+      hostname,
+      `DNS 解析失败：${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (addresses.length === 0) {
+    throw formatPrivateAddressError(hostname, "DNS 未返回地址");
+  }
+  for (const { address } of addresses) {
+    if (isPrivateOrReservedAddress(address)) {
+      throw formatPrivateAddressError(hostname, `解析到受限地址 ${address}`);
+    }
+  }
+}
+
 export async function probeCustomModels(
   baseUrl: string,
   apiKey?: string,
@@ -188,6 +302,9 @@ export async function probeCustomModels(
   if (!urlTrimmed) {
     throw new Error("Base URL is required");
   }
+
+  // SSRF guard: reject loopback/private targets before any network request.
+  await assertProbeTargetAllowed(urlTrimmed);
 
   let resolvedApiKey = "";
   if (apiKey?.trim()) {

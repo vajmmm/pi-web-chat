@@ -54,8 +54,26 @@ describe("isTrustedOrigin (CSWSH guard)", () => {
     assert.equal(isTrustedOrigin(req({ origin: "://///" })), false);
   });
 
-  it("allows raw IP-literal Origins (direct/LAN access, not a rebinding vector)", () => {
+  it("rejects raw public/private IP-literal Origins (CSWSH from http://<ip>/)", () => {
+    for (const origin of [
+      "http://1.2.3.4",
+      "http://1.2.3.4:3141",
+      "http://192.168.1.5:3141",
+      "http://10.0.0.9",
+      "http://127.0.0.2:8080",
+      "http://[2001:db8::1]:3141",
+    ]) {
+      assert.equal(isTrustedOrigin(req({ origin })), false, `expected rejected: ${origin}`);
+    }
+  });
+
+  it("still allows the actual bind-address Origin (HOST env) and allowlisted hosts", () => {
+    process.env.HOST = "192.168.1.5";
+    process.env.PI_WEB_TRUSTED_HOSTS = "box.lan";
     assert.equal(isTrustedOrigin(req({ origin: "http://192.168.1.5:3141" })), true);
+    assert.equal(isTrustedOrigin(req({ origin: "http://box.lan:3141" })), true);
+    // A different private IP is still not trusted.
+    assert.equal(isTrustedOrigin(req({ origin: "http://192.168.1.6:3141" })), false);
   });
 });
 

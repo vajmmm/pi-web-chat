@@ -10,21 +10,29 @@ import type { IncomingMessage } from "node:http";
  *   - CSWSH (Cross-Site WebSocket Hijacking): a malicious page a user visits
  *     opens `ws://localhost:3141/ws`. The browser attaches an `Origin` header
  *     identifying the attacker site — we reject any Origin whose hostname is not
- *     a trusted local host.
+ *     a trusted local host. A page hosted at `http://1.2.3.4/` therefore sends
+ *     `Origin: http://1.2.3.4`, so raw public/private IP literals must NOT be
+ *     trusted unconditionally; only the server's actual bind address (or an
+ *     operator allowlisted host) qualifies.
  *
  *   - DNS rebinding: `attacker.com` first resolves to the attacker, then rebinds
  *     to 127.0.0.1 so the page can reach the local server. The browser sends
  *     `Host: attacker.com`, so we reject any Host header that is not a trusted
  *     local hostname.
  *
+ * The two guards therefore use different trust rules:
+ *   - `isTrustedHost` (rebinding) also trusts raw IP literals: a raw IP Host is a
+ *     direct connection, and rebinding requires a *hostname*.
+ *   - `isTrustedOrigin` (CSWSH) trusts only hostnames in the trusted set. A raw
+ *     public/private IP Origin is rejected unless it is the server's bind address
+ *     or an allowlisted host — otherwise any page on `http://<ip>/` could hijack
+ *     a locally-bound session.
+ *
  * Design constraints (must not break existing integrations):
  *   - Missing Origin ⇒ trusted. Non-browser clients (pi CLI, curl) never send
  *     Origin; browsers always do for cross-origin/WS requests.
  *   - Port is never checked, only the hostname. `npm run dev` serves the UI from
  *     vite on :5173 and proxies to :3141, so its Origin is `localhost:5173`.
- *   - Raw IP literals are trusted. DNS rebinding requires a *hostname*; a raw IP
- *     in Host/Origin means a direct connection (loopback or LAN when the
- *     operator opted into HOST=0.0.0.0), which is not a rebinding vector.
  */
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]);
@@ -55,13 +63,17 @@ export function getTrustedHostnames(): Set<string> {
   return set;
 }
 
-function isTrustedHostname(hostname: string | null | undefined): boolean {
+/**
+ * Strict hostname check used for Origins: only hostnames in the trusted set
+ * (loopback names, bound HOST, PI_WEB_TRUSTED_HOSTS) are accepted. Unlike the
+ * Host check it does NOT blanket-trust raw IP literals, so `http://1.2.3.4/`
+ * cannot cross-site-hijack a loopback-bound server.
+ */
+function isTrustedName(hostname: string | null | undefined): boolean {
   if (!hostname) return false;
   const h = stripBrackets(hostname.trim().toLowerCase());
   if (!h) return false;
-  if (getTrustedHostnames().has(h)) return true;
-  // Raw IP literals are not a DNS-rebinding vector (see module docblock).
-  return isIP(h) !== 0;
+  return getTrustedHostnames().has(h);
 }
 
 /** Extract the hostname (no port) from a `Host:` header value. */
@@ -82,7 +94,12 @@ function hostnameFromHostHeader(host: string): string | null {
 export function isTrustedHost(req: IncomingMessage): boolean {
   const host = req.headers.host;
   if (!host) return true;
-  return isTrustedHostname(hostnameFromHostHeader(host));
+  const hostname = hostnameFromHostHeader(host);
+  if (!hostname) return false;
+  if (isTrustedName(hostname)) return true;
+  // Raw IP literals are not a DNS-rebinding vector (see module docblock), so a
+  // direct-IP Host (loopback or LAN) is still accepted here.
+  return isIP(stripBrackets(hostname.trim().toLowerCase())) !== 0;
 }
 
 /**
@@ -99,5 +116,8 @@ export function isTrustedOrigin(req: IncomingMessage): boolean {
   } catch {
     return false;
   }
-  return isTrustedHostname(hostname);
+  // CSWSH guard: only the trusted-name set is accepted here. A raw public or
+  // private IP Origin is rejected unless it is exactly the bind address or an
+  // allowlisted host (see module docblock).
+  return isTrustedName(hostname);
 }
