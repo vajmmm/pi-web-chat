@@ -634,7 +634,8 @@ describe("Q7.5 Session Resource Cleanup & Git Runtime Closure", () => {
       return res;
     };
 
-    // Make session satisfy lineage so tryAutoFinalizeRun proceeds
+    // Make session mechanically ready so tryAutoFinalizeRun proceeds
+    (manager as any).isSessionMechanicallyReady = () => true;
     (manager as any).isSessionLineageSatisfied = () => true;
 
     // Start in-flight Auto Finalize
@@ -943,6 +944,7 @@ describe("Q7.5 Session Resource Cleanup & Git Runtime Closure", () => {
     // Part 2: clear_subagent_tasks does NOT clear in-flight finalize tracking
     const sessionId2 = `session-locks-j2-${Date.now()}`;
     await manager.getOrCreateIntegration(sessionId2, gitRepoDir);
+    (manager as any).isSessionMechanicallyReady = () => true;
     (manager as any).isSessionLineageSatisfied = () => true;
 
     let finalizeCallCount = 0;

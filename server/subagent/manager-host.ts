@@ -43,6 +43,7 @@ export interface SubagentManagerHost {
   trackInFlightStart<T>(parentSessionId: string, action: () => Promise<T>): Promise<T>;
   isTaskLineageSatisfied(taskId: string, parentSessionId?: string): boolean;
   isSessionLineageSatisfied(parentSessionId: string): boolean;
+  isSessionMechanicallyReady(parentSessionId: string): boolean;
   isCoordinatorActive(parentSessionId: string): boolean;
   getTasksForParent(parentSessionId: string): UISubagentTask[];
   getOrCreateIntegration(parentSessionId: string, repoRoot: string): Promise<IntegrationWorkspace>;

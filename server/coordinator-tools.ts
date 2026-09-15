@@ -820,6 +820,118 @@ export function createCoordinatorExtension(
         }),
       );
 
+      // 5.1 显式写回工具 (finalize_run)
+      pi.registerTool(
+        defineTool({
+          name: "finalize_run",
+          label: "写回集成改动",
+          description:
+            "将本次 Run 集成分支的累计改动写回用户工作区。默认 working_tree 模式(落成未提交的工作区改动,不自动 commit、不碰主分支),另可选 squash_commit / keep_commits。写回成功后自动回收本 Run 的 worktree/分支。合并冲突的子任务改动本就未进集成分支,会被自动排除——请对其单独走 rework。是否写回未通过 verification/review 的改动由你判断,runtime 不再做质量门禁。",
+          promptSnippet: "把子任务成果从集成分支写回用户工作区(默认未提交改动),并回收 worktree",
+          parameters: Type.Object({
+            mode: Type.Optional(
+              Type.Union(
+                [
+                  Type.Literal("working_tree"),
+                  Type.Literal("squash_commit"),
+                  Type.Literal("keep_commits"),
+                ],
+                {
+                  description:
+                    "写回模式:working_tree(默认,落成未提交工作区改动) / squash_commit(压成一个提交) / keep_commits(保留提交历史)",
+                },
+              ),
+            ),
+            commit_message: Type.Optional(
+              Type.String({ description: "squash_commit 模式下的提交信息" }),
+            ),
+          }),
+          async execute(_toolCallId, params) {
+            const ctx = getSessionContext();
+            if (ctx.activeRole !== "coordinator") {
+              return {
+                isError: true,
+                details: undefined,
+                content: [{ type: "text", text: JSON.stringify({ error: "tool_not_available_for_role" }) }],
+              };
+            }
+            try {
+              const result = await subagentManager.finalizeRun(ctx.parentSessionId, {
+                mode: params.mode,
+                commitMessage: params.commit_message,
+              });
+              const { content } = truncateCoordinatorToolContent([
+                { type: "text", text: JSON.stringify(result, null, 2) },
+              ]);
+              return { isError: !result.success, details: undefined, content };
+            } catch (err) {
+              return {
+                isError: true,
+                details: undefined,
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      error: "finalize_failed",
+                      message: String(err instanceof Error ? err.message : err),
+                    }),
+                  },
+                ],
+              };
+            }
+          },
+        }),
+      );
+
+      // 5.2 显式丢弃并回收工具 (reclaim_run)
+      pi.registerTool(
+        defineTool({
+          name: "reclaim_run",
+          label: "丢弃并回收 Run",
+          description:
+            "放弃本次 Run:不写回任何改动,直接回收本 Run 的所有 worktree/分支(task 与 integration)。回收只作用于本 Run 名下、且路径合法的资源(ownership + namespace 双重校验),不会误删无关 worktree。用于确认放弃整批子任务成果。",
+          promptSnippet: "放弃本 Run 全部改动,回收所有 worktree/分支(不写回)",
+          parameters: Type.Object({}),
+          async execute() {
+            const ctx = getSessionContext();
+            if (ctx.activeRole !== "coordinator") {
+              return {
+                isError: true,
+                details: undefined,
+                content: [{ type: "text", text: JSON.stringify({ error: "tool_not_available_for_role" }) }],
+              };
+            }
+            try {
+              const result = await subagentManager.cleanupRunResourcesForParent(
+                ctx.parentSessionId,
+                ctx.parentCwd,
+              );
+              const { content } = truncateCoordinatorToolContent([
+                {
+                  type: "text",
+                  text: JSON.stringify(result ?? { success: true, note: "no_resources_to_reclaim" }, null, 2),
+                },
+              ]);
+              return { isError: result ? !result.success : false, details: undefined, content };
+            } catch (err) {
+              return {
+                isError: true,
+                details: undefined,
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      error: "reclaim_failed",
+                      message: String(err instanceof Error ? err.message : err),
+                    }),
+                  },
+                ],
+              };
+            }
+          },
+        }),
+      );
+
       // 6. Task context owns raw-first tool-result persistence and virtualization for every role.
 
       // 7. 拦截 before_agent_start 动态注入当前活跃角色的分层系统提示词与首轮 Workspace Context

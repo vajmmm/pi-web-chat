@@ -402,7 +402,7 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
     });
 
     // 9. 未解决失败不能 Finalize: A completed + fail (no successful rework) -> Run 不允许 finalize
-    it("Scenario 9: Run finalize is rejected when unresolved failed task exists", async () => {
+    it("Scenario 9: Run finalize is NOT blocked by an unresolved failed task (quality is coordinator's call)", async () => {
       const sessionId = `session-fin-unresolved-${Date.now()}`;
       const manager = new SubagentManager(mockModelRuntime);
 
@@ -422,13 +422,18 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
         overall: "fail",
       };
 
+      // 质量查询仍准确报告未满足(供 UI/工具使用),但已与 finalize 触发解耦
+      assert.equal(manager.isSessionLineageSatisfied(sessionId), false);
+
+      // runtime 不再做质量门禁:finalize 不因 verification.fail 被拒
       const res = await manager.finalizeRun(sessionId);
-      assert.equal(res.success, false);
-      assert.ok(res.error?.includes("unsatisfied task lineage") || res.error?.includes("Quality gate"));
+      assert.equal(res.success, true);
+      assert.ok(!res.error?.includes("unsatisfied task lineage"));
+      assert.ok(!res.error?.includes("Quality gate"));
     });
 
-    // 10. Partially Verified 不能 Finalize: A completed + partially_verified -> Run 不允许 finalize
-    it("Scenario 10: Run finalize is rejected when task is partially_verified", async () => {
+    // 10. Partially Verified 不再阻塞 Finalize: 质量判断交给 Coordinator
+    it("Scenario 10: Run finalize is NOT blocked when task is partially_verified", async () => {
       const sessionId = `session-fin-partially-${Date.now()}`;
       const manager = new SubagentManager(mockModelRuntime);
 
@@ -448,9 +453,12 @@ export function registerTaskLineageFinalizeTests(getGitRepoDir: () => string) {
         overall: "partially_verified",
       };
 
+      assert.equal(manager.isSessionLineageSatisfied(sessionId), false);
+
       const res = await manager.finalizeRun(sessionId);
-      assert.equal(res.success, false);
-      assert.ok(res.error?.includes("unsatisfied task lineage") || res.error?.includes("partially_verified"));
+      assert.equal(res.success, true);
+      assert.ok(!res.error?.includes("unsatisfied task lineage"));
+      assert.ok(!res.error?.includes("partially_verified"));
     });
 
     // 11. 全部 Lineage 满足后自动 Finalize: A fail -> B rework pass, C pass, D pass -> Runtime 自动 finalize

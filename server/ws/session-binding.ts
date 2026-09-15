@@ -290,14 +290,18 @@ export function bindSessionEvents(
         broadcast({ type: "agent_start" });
         break;
       case "agent_end": {
-        broadcast({ type: "agent_end" });
-        syncQueuedMessagesFromSession(entry);
-        const snap = buildSnapshot(entry, subagentManager);
-        snap.isStreaming = false;
-        broadcast({ type: "snapshot", snapshot: snap });
-
-        // 标记 Coordinator 当前 turn 结束
-        subagentManager.notifyCoordinatorTurnEnd(entry.id);
+        // turnEnd 必须在 finally 中执行:若前面的 broadcast/snapshot/sync 抛错而跳过它,
+        // Coordinator 的 isExecuting 会永久卡在 true,导致 auto-finalize 与 idle prune 双双永久失败。
+        try {
+          broadcast({ type: "agent_end" });
+          syncQueuedMessagesFromSession(entry);
+          const snap = buildSnapshot(entry, subagentManager);
+          snap.isStreaming = false;
+          broadcast({ type: "snapshot", snapshot: snap });
+        } finally {
+          // 标记 Coordinator 当前 turn 结束
+          subagentManager.notifyCoordinatorTurnEnd(entry.id);
+        }
 
         // 若队列已空且 Coordinator 空闲，触发 Auto Finalize 检查
         if (!entry.queuedMessages || entry.queuedMessages.length === 0) {
