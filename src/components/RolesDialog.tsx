@@ -67,7 +67,7 @@ export function RolesDialog({
 }) {
   const t = useT();
   const { data, refetch } = useRolesConfig(open);
-  const { data: models = [] } = useRoleModels(open);
+  const { data: models = [], isPending: modelsLoading, isError: modelsLoadError } = useRoleModels(open);
   const { snapshot } = useChat();
   const { data: allTools = [] } = useAllTools(snapshot?.sessionId);
   const { data: allSkills = [] } = useSkills(undefined, open, snapshot?.sessionId);
@@ -120,6 +120,27 @@ export function RolesDialog({
   }, [open, data]);
 
   const activeRoleConfig = draft?.find((r) => r.id === selectedRole) ?? draft?.[0];
+
+  const selectedRoleModel =
+    activeRoleConfig?.model?.provider && activeRoleConfig.model.modelId
+      ? {
+          provider: activeRoleConfig.model.provider,
+          id: activeRoleConfig.model.modelId,
+        }
+      : null;
+  const modelsForSelect = useMemo(() => {
+    if (!selectedRoleModel) return models;
+    const selectedKey = `${selectedRoleModel.provider}:${selectedRoleModel.id}`;
+    if (models.some((model) => `${model.provider}:${model.id}` === selectedKey)) return models;
+    return [
+      {
+        provider: selectedRoleModel.provider,
+        id: selectedRoleModel.id,
+        name: selectedRoleModel.id,
+      },
+      ...models,
+    ];
+  }, [models, selectedRoleModel?.id, selectedRoleModel?.provider]);
 
   const updateActiveRole = (updates: Partial<RoleConfig>) => {
     if (!activeRoleConfig || !draft) return;
@@ -360,7 +381,9 @@ export function RolesDialog({
                           }}
                         >
                           <option value="inherit">默认: 继承主会话模型</option>
-                          {models.map((m) => (
+                          {modelsLoading && <option disabled>模型列表加载中…</option>}
+                          {modelsLoadError && <option disabled>模型列表加载失败，可继续使用默认模型</option>}
+                          {modelsForSelect.map((m) => (
                             <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>
                               [{m.provider}] {m.name || m.id}
                             </option>

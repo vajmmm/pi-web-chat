@@ -34,6 +34,7 @@ import { initializeTaskFactStore } from "./runtime-artifacts.ts";
 import { readCustomModels } from "./models-config.ts";
 import { sanitizeEmptyAvailableModelIds } from "./auth-config.ts";
 import { startBackgroundCatalogRefresh } from "./model-catalog.ts";
+import { refreshAgyCatalogModels } from "./subagent/agy/models.ts";
 import { SubagentManager } from "./subagent-manager.ts";
 import { getCurrentGitBranch, recoverRuntimeResources, resolveGitRepoRoot } from "./worktree.ts";
 import { registerKnownProjectPath } from "./projects.ts";
@@ -475,3 +476,4 @@ httpServer.listen(PORT, HOST, () => {
 // official catalog over the network while the server is already listening;
 // bounded and fail-open, so startup never waits on the network.
 void startBackgroundCatalogRefresh(modelRuntime);
+void refreshAgyCatalogModels();

@@ -38,7 +38,14 @@ export interface ModelCatalogRefreshOutcome {
   errors: ReadonlyMap<string, Error>;
 }
 
-export async function refreshModelCatalog(
+type InFlightRefresh = {
+  force: boolean;
+  promise: Promise<ModelCatalogRefreshOutcome>;
+};
+
+const inFlightRefreshes = new WeakMap<CatalogRefreshableRuntime, InFlightRefresh>();
+
+async function refreshModelCatalogNow(
   runtime: CatalogRefreshableRuntime,
   options: { force: boolean; timeoutMs?: number },
 ): Promise<ModelCatalogRefreshOutcome> {
@@ -61,6 +68,28 @@ export async function refreshModelCatalog(
     console.warn("[server] model catalog refresh failed; serving cached models:", err);
     return { completed: false, aborted: false, errors: new Map() };
   }
+}
+
+/** Shares an in-flight refresh so startup and GET requests do not supersede each other. */
+export function refreshModelCatalog(
+  runtime: CatalogRefreshableRuntime,
+  options: { force: boolean; timeoutMs?: number },
+): Promise<ModelCatalogRefreshOutcome> {
+  const existing = inFlightRefreshes.get(runtime);
+  if (existing && (!options.force || existing.force)) return existing.promise;
+  if (existing) {
+    return existing.promise.then(() => refreshModelCatalog(runtime, options));
+  }
+
+  const pending = refreshModelCatalogNow(runtime, options);
+  let tracked: Promise<ModelCatalogRefreshOutcome>;
+  tracked = pending.finally(() => {
+    if (inFlightRefreshes.get(runtime)?.promise === tracked) {
+      inFlightRefreshes.delete(runtime);
+    }
+  });
+  inFlightRefreshes.set(runtime, { force: options.force, promise: tracked });
+  return tracked;
 }
 
 /**

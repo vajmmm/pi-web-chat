@@ -31,7 +31,7 @@ import {
 } from "../subscription-preferences.ts";
 import { refreshModelCatalog } from "../model-catalog.ts";
 import { readBody, type ServerContext } from "./context.ts";
-import { getAgyCatalogModels } from "../subagent/agy/models.ts";
+import { getAgyCatalogModels, refreshAgyCatalogModels } from "../subagent/agy/models.ts";
 
 /**
  * Collect the user-visible model list: available models from the live runtime,
@@ -66,6 +66,7 @@ async function collectVisibleModels(ctx: ServerContext, options: { includeAgy?: 
 
   if (options.includeAgy) {
     // AGY is a subagent-only provider; expose its catalog only to role config.
+    void refreshAgyCatalogModels();
     for (const m of getAgyCatalogModels()) {
       const key = `${m.provider}\0${m.id}`;
       if (seen.has(key)) continue;
@@ -129,11 +130,10 @@ export async function handleModelsRoutes(
       }
     }
 
-    // Standalone catalog freshness: best-effort network refresh of the live
-    // runtime's model catalog (pi-ai throttles per provider, so this is cheap
-    // when nothing changed). Fail-open: on failure/timeout the cached snapshot
-    // below is still served with a 200.
-    await refreshModelCatalog(ctx.getModelRuntime(), {
+    // Standalone catalog freshness: refresh the live runtime's model catalog in
+    // the background. The cached snapshot below is served immediately with a
+    // 200, so model-list reads never wait for provider network I/O.
+    void refreshModelCatalog(ctx.getModelRuntime(), {
       force: false,
       timeoutMs: ctx.modelCatalogRefreshTimeoutMs,
     });

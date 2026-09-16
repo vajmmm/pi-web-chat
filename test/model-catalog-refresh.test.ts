@@ -107,24 +107,27 @@ describe("Model catalog refresh (standalone web catalog)", () => {
     }
   });
 
-  it("GET /api/models triggers a non-force allowNetwork refresh and returns refreshed models", async () => {
-    const mock = makeModelRuntimeMock(ALPHA, () => {
-      // Catalog lands between refresh and list collection.
-      mock.setAvailable([
-        { provider: "mock-prov", id: "model-beta", name: "Model Beta", reasoning: true },
-      ]);
-      return { aborted: false, errors: new Map<string, Error>() };
+  it("GET /api/models returns the cached list without waiting for refresh", async () => {
+    let resolveRefresh!: (value: RefreshResult) => void;
+    const refreshSettled = new Promise<RefreshResult>((resolve) => {
+      resolveRefresh = resolve;
     });
+    const mock = makeModelRuntimeMock(ALPHA, () => refreshSettled);
 
     await withServer(makeCtx(mock.runtime), async (baseUrl) => {
+      const startedAt = performance.now();
       const res = await fetch(`${baseUrl}/api/models`);
+      const elapsedMs = performance.now() - startedAt;
       assert.equal(res.status, 200);
-      assert.equal(mock.calls.length, 1, "GET /api/models must refresh the live runtime catalog");
+      assert.ok(elapsedMs < 500, `GET /api/models unexpectedly waited ${elapsedMs.toFixed(1)}ms`);
+      assert.equal(mock.calls.length, 1, "GET /api/models must start a live runtime refresh");
       assert.equal(mock.calls[0]?.allowNetwork, true);
       assert.notEqual(mock.calls[0]?.force, true, "GET must not force-bypass provider freshness");
       const data = (await res.json()) as MockModel[];
       assert.equal(data.length, 1);
-      assert.equal(data[0]?.id, "model-beta");
+      assert.equal(data[0]?.id, "model-alpha", "GET must serve the cached list immediately");
+
+      resolveRefresh({ aborted: false, errors: new Map<string, Error>() });
     });
   });
 
@@ -145,8 +148,14 @@ describe("Model catalog refresh (standalone web catalog)", () => {
       const refreshedModels = (await refreshResponse.json()) as MockModel[];
       assert.equal(refreshedModels.some((model) => model.provider === "agy"), false);
 
+      const roleStartedAt = performance.now();
       const roleResponse = await fetch(`${baseUrl}/api/models?scope=role`);
+      const roleElapsedMs = performance.now() - roleStartedAt;
       assert.equal(roleResponse.status, 200);
+      assert.ok(
+        roleElapsedMs < 500,
+        `role model list unexpectedly waited ${roleElapsedMs.toFixed(1)}ms for AGY models`,
+      );
       const roleModels = (await roleResponse.json()) as MockModel[];
       assert.equal(roleModels.some((model) => model.provider === "agy"), true);
       assert.equal(roleModels.some((model) => model.provider === "mock-prov"), true);
