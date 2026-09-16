@@ -50,8 +50,12 @@ describe("H2: queued steer/followUp rejections are captured", () => {
       "command-handler queued loops must use the helper",
     );
     assert.ok(
-      commandHandler.includes("dispatchQueueItem(session, item, entry.id, true)"),
-      "interject-now must preserve the forced steer semantics",
+      commandHandler.includes("await session.abort();"),
+      "interject-now must abort the running turn before resuming",
+    );
+    assert.ok(
+      !commandHandler.includes("dispatchQueueItem(session, item, entry.id, true)"),
+      "interject-now must no longer force the removed steer path",
     );
     assert.ok(
       reportDispatcher.includes("dispatchQueueItem(session, item, sessionId)"),

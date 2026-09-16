@@ -16,10 +16,17 @@ function createMockSession() {
   const prompts: string[] = [];
   const followUps: string[] = [];
   const steers: string[] = [];
+  // Ordered call log (e.g. "abort:start", "abort:end", "followUp", "prompt") so
+  // tests can assert abort strictly precedes the resumed prompt, not just that both ran.
+  const callLog: string[] = [];
+  const abortCalls: number[] = [];
 
   const session: any = {
     messages: [],
     isStreaming: false,
+    abortDelayMs: 0,
+    abortResolved: false,
+    promptSawAbortResolved: false,
     sessionFile: "/tmp/fake-session_test-1.jsonl",
     subscribe: (fn: (event: any) => void) => {
       subscribers.push(fn);
@@ -32,14 +39,18 @@ function createMockSession() {
       for (const s of [...subscribers]) s(event);
     },
     prompt: async (text: string) => {
+      callLog.push("prompt");
+      session.promptSawAbortResolved = session.abortResolved === true;
       prompts.push(text);
       return { ok: true };
     },
     followUp: async (text: string) => {
+      callLog.push("followUp");
       followUps.push(text);
       session.emit({ type: "queue_update", steering: [...steers], followUp: [...followUps] });
     },
     steer: async (text: string) => {
+      callLog.push("steer");
       steers.push(text);
       session.emit({ type: "queue_update", steering: [...steers], followUp: [...followUps] });
     },
@@ -53,13 +64,23 @@ function createMockSession() {
     },
     getSteeringMessages: () => [...steers],
     getFollowUpMessages: () => [...followUps],
-    abort: async () => {},
+    abort: async () => {
+      callLog.push("abort:start");
+      abortCalls.push(Date.now());
+      if (session.abortDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, session.abortDelayMs));
+      }
+      session.abortResolved = true;
+      callLog.push("abort:end");
+    },
     setModel: async () => {},
     setThinkingLevel: () => {},
     model: { provider: "mock", id: "mock-model" },
     prompts,
     followUps,
     steers,
+    callLog,
+    abortCalls,
   };
   return session;
 }
@@ -180,42 +201,91 @@ describe("Message Queue Tests", () => {
     assert.equal(session.followUps.length, 0);
   });
 
-  it("supports sending a queued message immediately via send_queued_message_now", async () => {
+  it("aborts the running turn then prompts the queued message via send_queued_message_now", async () => {
     session.isStreaming = true;
     const ctx = (entry as any).ctx;
 
     await handleCommand({ type: "prompt", text: "急需插话执行的消息" }, fakeWs, ctx);
+    await handleCommand({ type: "prompt", text: "后续排队消息" }, fakeWs, ctx);
 
-    assert.equal(entry.queuedMessages?.length, 1);
+    assert.equal(entry.queuedMessages?.length, 2);
     const queuedId = entry.queuedMessages![0].id;
+
+    // Make abort asynchronous so the ordering assertion is meaningful.
+    session.abortDelayMs = 15;
 
     await handleCommand({
       type: "send_queued_message_now",
       id: queuedId,
     }, fakeWs, ctx);
 
-    // Message is steered immediately to intervene
-    assert.equal(session.steers.length, 1);
-    assert.equal(session.steers[0], "急需插话执行的消息");
-    assert.equal(entry.queuedMessages?.length, 1);
-    assert.equal(entry.queuedMessages[0].mode, "steer");
+    // New semantics: abort the current run, never steer.
+    assert.equal(session.abortCalls.length, 1, "abort must be called exactly once");
+    assert.equal(session.steers.length, 0, "send_queued_message_now must no longer steer");
+    assert.equal(session.prompts.length, 1);
+    assert.equal(session.prompts[0], "急需插话执行的消息");
 
-    // Session dequeued, but user message not in messages yet → keep visible (no hole)
-    session.steers.length = 0;
-    session.emit({ type: "queue_update", steering: [], followUp: [] });
-    assert.equal(entry.queuedMessages?.length, 1);
-    assert.equal(entry.queuedMessages![0].text, "急需插话执行的消息");
+    // Strict ordering: abort starts, abort finishes (idle), only then prompt.
+    const abortStart = session.callLog.indexOf("abort:start");
+    const abortEnd = session.callLog.indexOf("abort:end");
+    const promptIdx = session.callLog.indexOf("prompt");
+    assert.ok(abortStart !== -1, "abort must be invoked");
+    assert.ok(abortStart < abortEnd, "abort must resolve");
+    assert.ok(abortEnd < promptIdx, "prompt must run after abort resolves (idle)");
+    assert.equal(session.promptSawAbortResolved, true, "prompt must observe abort completion");
 
-    // After the steered user message is present, UI queue may drop it
-    session.messages.push({
-      role: "user",
-      content: [{ type: "text", text: "急需插话执行的消息" }],
-    });
-    session.emit({
-      type: "message_end",
-      message: { role: "user", content: [{ type: "text", text: "急需插话执行的消息" }] },
-    });
-    assert.equal(entry.queuedMessages?.length, 0);
+    // The remaining queued item must survive in both UI and session queues.
+    assert.equal(entry.queuedMessages?.length, 1);
+    assert.equal(entry.queuedMessages![0].text, "后续排队消息");
+    assert.deepEqual(session.followUps, ["后续排队消息"]);
+  });
+
+  it("prompts immediately without aborting when send_queued_message_now is used while not streaming", async () => {
+    const ctx = (entry as any).ctx;
+    entry.queuedMessages = [
+      { id: "q-ns-1", text: "非流式目标", mode: "followUp", createdAt: new Date().toISOString(), deliverAfterUserMsgCount: 0 },
+      { id: "q-ns-2", text: "非流式剩余", mode: "followUp", createdAt: new Date().toISOString(), deliverAfterUserMsgCount: 0 },
+    ];
+
+    await handleCommand({ type: "send_queued_message_now", id: "q-ns-1" }, fakeWs, ctx);
+
+    assert.equal(session.abortCalls.length, 0, "non-streaming path must not abort");
+    assert.equal(session.prompts.length, 1);
+    assert.equal(session.prompts[0], "非流式目标");
+    assert.equal(entry.queuedMessages?.length, 1);
+    assert.equal(entry.queuedMessages![0].text, "非流式剩余");
+    assert.deepEqual(session.followUps, ["非流式剩余"]);
+  });
+
+  it("sends an error event (no unhandled rejection) when the immediate prompt rejects", async () => {
+    session.isStreaming = true;
+    const ctx = (entry as any).ctx;
+
+    await handleCommand({ type: "prompt", text: "会失败的消息" }, fakeWs, ctx);
+    const queuedId = entry.queuedMessages![0].id;
+
+    session.prompt = async () => {
+      throw new Error("prompt exploded");
+    };
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await handleCommand({ type: "send_queued_message_now", id: queuedId }, fakeWs, ctx);
+      // trackInFlightOp is fire-and-forget; wait for it to settle.
+      await registry.awaitInFlightOps(entry.id);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    const errors = receivedEvents.filter((e) => e.type === "error") as any[];
+    assert.equal(errors.length, 1, "client must receive a single error event");
+    assert.match(errors[0].message, /prompt exploded/);
+    assert.equal(unhandled.length, 0, "prompt rejection must not surface as unhandledRejection");
   });
 
   it("subagent report enqueues in unified queue as followUp when streaming", async () => {

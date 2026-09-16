@@ -143,7 +143,7 @@ function QueuedMessageBar({
             type="button"
             onClick={handleSendNow}
             className="flex items-center gap-1 rounded px-2 py-1 font-mono text-xs text-muted hover:text-accent hover:bg-hover transition-colors"
-            title="立即插话发送 (Steer now)"
+            title="打断并立即发送 (Steer now)"
           >
             <svg
               viewBox="0 0 24 24"
@@ -231,7 +231,7 @@ function QueuedMessageBar({
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-accent hover:bg-hover transition-colors"
                 >
                   <span>⚡</span>
-                  <span>立即发送 (Steer)</span>
+                  <span>打断并发送 (Steer)</span>
                 </button>
                 <button
                   type="button"

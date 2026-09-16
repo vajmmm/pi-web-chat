@@ -45,9 +45,8 @@ function dispatchQueueItem(
   session: QueueDispatchSession,
   item: { mode?: string; text: string },
   sessionId: string,
-  forceSteer = false,
 ): void {
-  const op = forceSteer || item.mode === "steer" ? session.steer(item.text) : session.followUp(item.text);
+  const op = item.mode === "steer" ? session.steer(item.text) : session.followUp(item.text);
   op.catch((err: unknown) => {
     console.error(
       `[CommandHandler] queued message re-dispatch failed (session=${sessionId}, mode=${item.mode ?? "followUp"}):`,
@@ -329,23 +328,22 @@ export async function handleCommand(
       session.clearQueue();
       entry.queuedMessages = remainingItems;
       if (session.isStreaming) {
-        // 作为 steer 立即插话并介入当前运行流
-        dispatchQueueItem(session, item, entry.id, true);
-        for (const remaining of remainingItems) {
-          dispatchQueueItem(session, remaining, entry.id);
-        }
-      } else {
-        for (const remaining of remainingItems) {
-          dispatchQueueItem(session, remaining, entry.id);
-        }
-        void sessionRegistry.trackInFlightOp(entry.id, async () => {
-          try {
-            await session.prompt(item.text);
-          } catch (err) {
-            sendTo(ws, { type: "error", message: String(err instanceof Error ? err.message : err) });
-          }
-        });
+        // 立即打断当前运行，等待其真正进入 idle（abort 完成后）再启动新一轮。
+        // 这替代了旧的 steer 语义（steer 需等当前 assistant turn 执行完工具调用）。
+        await session.abort();
       }
+      // 其余排队消息在 abort 完成之后、prompt 之前逐个恢复排队；
+      // 此时会话已非 streaming，按既有模式走 followUp 排队。
+      for (const remaining of remainingItems) {
+        dispatchQueueItem(session, remaining, entry.id);
+      }
+      void sessionRegistry.trackInFlightOp(entry.id, async () => {
+        try {
+          await session.prompt(item.text);
+        } catch (err) {
+          sendTo(ws, { type: "error", message: String(err instanceof Error ? err.message : err) });
+        }
+      });
       broadcastSnapshot(entry, subagentManager);
       break;
     }
