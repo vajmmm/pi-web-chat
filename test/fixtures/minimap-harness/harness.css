@@ -1,0 +1,3 @@
+/* Tailwind must scan the real component sources (outside the harness root). */
+@source "../../../src";
+@import "../../../src/styles.css";

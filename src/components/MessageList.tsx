@@ -9,6 +9,7 @@ import {
 import type { ActiveTool } from "../lib/chat";
 import { useT } from "../lib/i18n";
 import { LazyMarkdown } from "./LazyMarkdown";
+import { MessageMinimap } from "./MessageMinimap";
 
 export function ToolCallCard({ block }: { block: Extract<UIContentBlock, { type: "toolCall" }> }) {
   const args = block.args ? JSON.stringify(block.args, null, 2) : "";
@@ -307,54 +308,59 @@ export function MessageList({
     isStreaming && !streamText && !streamThinking && activeTools.length === 0 && waitingForAssistant;
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={handleScroll}
-      onWheel={handleWheel}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      className="thin-scroll min-h-0 flex-1 overflow-y-auto"
-    >
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
-        {messages.length === 0 && !streamText && (
-          <div className="mt-20 text-center">
-            <div className="mx-auto mb-3 flex size-12 items-center justify-center border-2 border-accent bg-purple-dark text-2xl font-black text-accent shadow-[var(--pixel-shadow)]">
-              π
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        className="thin-scroll min-h-0 flex-1 overflow-y-auto"
+      >
+        <div data-scroll-content className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
+          {messages.length === 0 && !streamText && (
+            <div className="mt-20 text-center">
+              <div className="mx-auto mb-3 flex size-12 items-center justify-center border-2 border-accent bg-purple-dark text-2xl font-black text-accent shadow-[var(--pixel-shadow)]">
+                π
+              </div>
+              <div className="font-mono text-base font-black tracking-widest text-ink">
+                PI // CHAT
+              </div>
+              <div className="mt-2 font-mono text-xs text-faint">{t("emptyPrompt")}</div>
             </div>
-            <div className="font-mono text-base font-black tracking-widest text-ink">
-              PI // CHAT
+          )}
+          {messages.map((m, i) => (
+            <div key={messageKey(m, i, sessionId)} data-msg-index={i} className="min-w-0">
+              <Message message={m} />
             </div>
-            <div className="mt-2 font-mono text-xs text-faint">{t("emptyPrompt")}</div>
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <Message key={messageKey(m, i, sessionId)} message={m} />
-        ))}
-        {streamThinking && <Thinking text={streamThinking} />}
-        {streamText && looksLikeHtmlErrorPage(streamText) && (
-          <div className="border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 break-words [overflow-wrap:anywhere]">
-            {sanitizeProviderErrorMessage(streamText)}
-          </div>
-        )}
-        {streamText && !looksLikeHtmlErrorPage(streamText) && (
-          <div className="text-[15px] whitespace-pre-wrap leading-relaxed break-words [overflow-wrap:anywhere]">
-            {streamText}
-          </div>
-        )}
-        {activeTools.map((tool) => (
-          <div key={tool.toolCallId} className="flex items-center gap-2 text-sm text-muted">
-            <span className="size-2 animate-pulse rounded-full bg-amber-400" />
-            {t("toolRunning", { name: tool.toolName })}
-          </div>
-        ))}
-        {showTyping && (
-          <div className="flex items-center gap-1.5 text-faint">
-            <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:0ms]" />
-            <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:150ms]" />
-            <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:300ms]" />
-          </div>
-        )}
+          ))}
+          {streamThinking && <Thinking text={streamThinking} />}
+          {streamText && looksLikeHtmlErrorPage(streamText) && (
+            <div className="border-2 border-red-300 bg-red-50 p-3 font-mono text-xs text-red-600 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 break-words [overflow-wrap:anywhere]">
+              {sanitizeProviderErrorMessage(streamText)}
+            </div>
+          )}
+          {streamText && !looksLikeHtmlErrorPage(streamText) && (
+            <div className="text-[15px] whitespace-pre-wrap leading-relaxed break-words [overflow-wrap:anywhere]">
+              {streamText}
+            </div>
+          )}
+          {activeTools.map((tool) => (
+            <div key={tool.toolCallId} className="flex items-center gap-2 text-sm text-muted">
+              <span className="size-2 animate-pulse rounded-full bg-amber-400" />
+              {t("toolRunning", { name: tool.toolName })}
+            </div>
+          ))}
+          {showTyping && (
+            <div className="flex items-center gap-1.5 text-faint">
+              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:0ms]" />
+              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:150ms]" />
+              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:300ms]" />
+            </div>
+          )}
+        </div>
       </div>
+      <MessageMinimap containerRef={containerRef} messages={messages} />
     </div>
   );
 }

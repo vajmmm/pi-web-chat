@@ -122,9 +122,10 @@ describe("M1: top-level message keys are not reused across sessions", () => {
       !messageList.includes("<Message key={i} message={m} />"),
       "top-level messages must not use the raw positional index as key",
     );
-    assert.ok(
-      messageList.includes("<Message key={messageKey(m, i, sessionId)} message={m} />"),
-      "top-level messages must use the composite messageKey",
+    assert.match(
+      messageList,
+      /<div key=\{messageKey\(m, i, sessionId\)\} data-msg-index=\{i\}[^>]*>\s*<Message message=\{m\} \/>/,
+      "the indexed top-level wrapper must carry the composite messageKey",
     );
   });
 
